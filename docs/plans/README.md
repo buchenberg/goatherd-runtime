@@ -30,7 +30,7 @@ test matrix. Plans 1–5 and 7 are written (1–3 implemented; 4, 5, 7 scoped/pa
 | **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | [`04-egress-and-seatbelt.md`](04-egress-and-seatbelt.md) | 🚧 Phases 2–3 (Linux) done; 1 (Seatbelt) planned |
 | **5** | Container-tier parity | overlay changes → typed effects, the `copy` carrier, the `clonefile` carrier | [`05-container-tier.md`](05-container-tier.md) | 📝 scoped |
 | **6** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
-| **7** | yaah integration | Landlock confinement on yaah's **sub-agent** worktree path (orchestrator stays host-normal); config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | 📝 scoped |
+| **7** | yaah integration | **retained sub-agents** (the proposal/settlement spine) + Landlock confinement on that one path (orchestrator stays host-normal); placement config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | 📝 scoped |
 
 ## Plan 1 — Linux Landlock containment (done)
 
@@ -137,28 +137,36 @@ object-based paddock. Go can install cBPF via `SECCOMP_SET_MODE_FILTER`, but the
 filter is arch-specific and fiddly; defer until a concrete need (untrusted code
 without containerd) justifies it.
 
-## Plan 7 — yaah integration (shepherd mechanics for sub-agents)
+## Plan 7 — yaah integration (retained sub-agents, confined)
 
 **The orchestrating agent runs as normal on the HOST; the shepherd mechanics —
-scope isolation, Landlock confinement, checkpoint/rollback — apply to
-SUB-AGENTS only.** That is the Terminal-Bench-proven model, and the plan does not
-confine the orchestrator.
+retained runs, settlement, and Landlock confinement — apply to SUB-AGENTS only.**
+That is the Terminal-Bench-proven model, and the plan does not confine the
+orchestrator.
 
-yaah already has the shepherd *sub-agent* path: a **workdir dispatch** roots the
-sub-agent's validator at its worktree (`runner.go:984`) and forks an **isolated**
-worktree scope (`ForkIsolated`, `runner.go:877-883`) — the path `supervised_task`
-uses. What it lacks is the **kernel boundary**: the sub-agent's shell still runs
-`exec.CommandContext` on the host, bounded by the worktree only *lexically*. This
-plan attaches a Landlock confiner there (writable root = that worktree), in one
-place, and leaves the orchestrator's `localWorkspace` untouched.
+**The spine: retention first, confinement as an attribute.** Shepherd's unit is
+the **retained run** — a bound world, a sealed proposal, settled once — and the
+jail bounds writes *inside* that world. A jail cannot bound a body that has no
+bound world yet: **isolation precedes confinement.** yaah already owns the
+settlement machine on one lane — `supervised_task` seals a worktree as a retained
+output and settles it with `choose`/`select`/`apply`/`discard` — so the parity
+move is to make that the **default** for every sub-agent (folding
+`spawn_subagent`, which today mutates the host directly), then attach the
+confiner to the one retained launch.
 
-- **Prerequisite (Phase 0):** tag the runtime + `sandbox/landlock` (drop the dev
-  `replace`); verify yaah builds against kernel v0.17.0 (up from v0.16.0).
-- **Config:** `agents.subagent.containment: auto|jail|off`, `agents.subagent.network:
-  allow_all|deny_all|broker` (default `allow_all` — write-jail; egress opt-in).
+- **Phase 0:** tag the runtime + `sandbox/landlock` (drop the dev `replace`);
+  verify yaah builds against kernel v0.17.0 (up from v0.16.0).
+- **Phase 1:** a thin **confinement seam spike** on the existing retained lane —
+  no behavior flip.
+- **Phase 2 (the spine):** every sub-agent dispatch returns a **proposal**;
+  `agents.subagent.mode: retained|shared` (default `retained`).
+- **Phase 3:** confinement on the unified retained path;
+  `agents.subagent.placement: auto|jail|advisory` (`jail` fails closed),
+  `agents.subagent.network` (default `allow_all` — write-jail); record the
+  resolved placement.
 - **Mandatory:** `landlock.MaybeRunTrampoline(os.Args)` in `yaah/main.go`.
-- **Level B** (reversibility for every sub-agent, not just `supervised_task`) is a
-  later phase. See [`07-yaah-integration.md`](07-yaah-integration.md).
+- See [`07-yaah-integration.md`](07-yaah-integration.md), incl. §11 (Python
+  parity).
 
 ## Small items
 
