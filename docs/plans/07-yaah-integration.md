@@ -284,12 +284,12 @@ it); the work was moved onto a branch and landed via PR #338.
 
 ### Phase 3 — Confinement on the unified retained path
 
-> **Status.** **Mechanism complete** (yaah PRs #339, #343, #344). The confiner
-> rides the retained workdir lane, the **env redirect + scrub** is in, the
-> **resolved placement is recorded** on the trace (`yaah.subagent.confinement.v1`),
-> and `yaah doctor` reports the capability. The **default flip to `auto` is
-> BLOCKED** — the acceptance ran, and found a real blocker in the lane the flip
-> would confine (below). Confinement stays opt-in. The config key stayed
+> **Status.** **Complete** (yaah PRs #339, #343, #344, #345). The confiner rides
+> the retained workdir lane, the **env redirect + scrub** is in, the **resolved
+> placement is recorded** on the trace (`yaah.subagent.confinement.v1`), `yaah
+> doctor` reports the capability, and the **default is `auto`** — the acceptance
+> ran, blocked the flip while a real gap was open, and the gap was settled as a
+> design decision rather than by widening the jail (below). The config key stayed
 > **`containment`** (shipped in Phase 1), not the `placement` spelling below.
 
 1. ✅ The confiner rides the one retained launch — a retained dispatch sets the
@@ -309,10 +309,28 @@ it); the work was moved onto a branch and landed via PR #338.
    mode / placement; a fail-closed `paddock` with no usable backend is a `FAIL`,
    and an unset setting now reports the real default `auto`).
 
-**Default flip (BLOCKED, yaah PR #344):** the intent remains `auto`, but it stays
-`off` (opt-in). The acceptance below — now a test, `TestConfinedBuild_Acceptance`,
-not a runbook — ran and found a blocker in the very lane the flip would confine.
-Flipping is gated on settling that, not on more evidence.
+**Default flip (landed, yaah PR #345):** an unset `agents.subagent.containment`
+means `auto` — jail where the host can, degrade visibly to advisory where it
+cannot. The opt-out is explicit (`off`/`none`/`advisory`), so the unconfined host
+path is a choice rather than an omission.
+
+The flip needed a decision first, not more evidence: the acceptance (below) found
+that the retained lane **cannot run git write commands under the jail**. That is
+now settled as **by design**, and the design is stated in three places — the
+sub-agent's prompt, the refusal message, and the config docs:
+
+- the sub-agent works in a linked `git worktree` whose index and object store
+  live in the *original* repository, outside the writable root, so `git
+  add`/`commit`/`stash` are refused by the kernel (read-only git is fine);
+- that is consistent with what retention already meant — the run is the unit,
+  settled once — so the sub-agent **prepares** changes and the **orchestrator
+  commits** when it settles the proposal;
+- widening the jail to include `<repo>/.git` is explicitly rejected: it would let
+  a confined sub-agent rewrite the host repository's refs and objects.
+
+Because the raw refusal is a bare `Permission denied`, a denied write now carries
+an explanation naming the writable root (and the git rule when applicable), and a
+confined sub-agent is told the rule before it meets it.
 
 #### The acceptance, and what it found — and why the flip is blocked (yaah PR #344)
 
@@ -342,24 +360,23 @@ everything below). It found three showstoppers, all invisible to the seam tests:
    `~/.git-credentials`, `~/.npmrc`, `~/.netrc`) are deliberately still not
    reachable: the **unconfined worktree bootstrap** is where authenticated
    inputs get prepared.
-3. **The retained lane cannot write git metadata under the jail — the blocker.**
-   A retained dispatch works in a **linked** worktree, whose index and object
-   store live in the original repository's `.git/worktrees/<name>` and
+3. **The retained lane cannot write git metadata under the jail — settled by
+   design.** A retained dispatch works in a **linked** worktree, whose index and
+   object store live in the original repository's `.git/worktrees/<name>` and
    `.git/objects`, outside the sole writable root. So inside the jail
    `git status`/`config`/`diff` work and `git add` dies with
-   `index.lock: Permission denied`. The fix cannot be "also grant `<repo>/.git`":
-   that hands a confined sub-agent write access to the host repository's refs and
-   objects, exactly what retention exists to prevent. **So the flip is blocked**,
-   and the acceptance pins the gap (the leg fails if it ever starts passing, so
-   it cannot go stale). Settling it means deciding the lane's git-write story —
-   the orchestrator settles, so a sub-agent need not commit — not widening the
-   jail.
+   `index.lock: Permission denied`. Granting `<repo>/.git` would hand a confined
+   sub-agent write access to the host repository's refs and objects — exactly
+   what retention exists to prevent — so the rule is accepted and **stated**:
+   the sub-agent prepares, the orchestrator commits at settlement. The refusal is
+   explained rather than left raw, and the acceptance pins both (it fails if the
+   write ever starts succeeding, so the design note cannot go stale).
 
 All three are pinned by the acceptance: disabling the redirect's shim, or
 re-pinning v0.1.0, fails it.
 
-**Still open before the flip:** the git-write story for the retained lane (#3
-above), and the `network` config beyond its default.
+**Still open (not gating the flip):** the `agents.subagent.network` config beyond
+its default.
 
 #### The writable-root problem — solved by redirecting ✅ (yaah PR #339)
 
@@ -450,9 +467,11 @@ meet.
 | 3 | `TestSubAgent_RecordsResolvedPlacement` | advisory vs jailed dispatch | the trace records which resolved |
 | 3 | `TestConfig_Placement` | `auto`/`jail`/`advisory` | selects the placement; `jail` fails closed |
 | 3 | `TestDoctor_Containment` | `yaah doctor` | reports the ABI / advisory; an unset setting reports the real default (`auto`) |
-| 3 | `TestConfinedBuild_Acceptance` | a real `go build`, `git config`, `git status` and `git add` under paddock, in a LINKED worktree | the build succeeds and its cache lands in the worktree scratch; both halves of a split global identity resolve; read-only git works; **`git add` is refused by the kernel (the pinned blocker — the flip stays gated)**; an out-of-root write is still refused |
+| 3 | `TestConfinedBuild_Acceptance` | a real `go build`, `git config`, `git status` and `git add` under paddock, in a LINKED worktree | the build succeeds and its cache lands in the worktree scratch; both halves of a split global identity resolve; read-only git works; **`git add` is refused by the kernel AND explained (the by-design git rule)**; an out-of-root write is still refused |
 | 3 | `TestConfinementScratchEnv_PointsGitAtGlobalConfig` | global configs (both, one, none, pre-set pointer) and the redirect | a shim includes whichever real files exist, in git's order, carrying paths not values |
 | 3 | `TestConfinementScratchEnv_RefusesSymlinkedScratch` | `.yaah-scratch` (or its `home`) planted as a symlink | refused before anything is created; the target is untouched |
+| 3 | `TestConfinementHint_ExplainsRefusedWrites` | a kernel-refused write (git metadata, and a plain path) | the hint names the writable root, and the git rule only for git metadata; no hint without a refusal |
+| 3 | `TestBuildSubAgentSysPrompt_ConfinementGuidance` | an enforced vs an unenforced placement | a confined sub-agent is told the writable root and the git rule up front; the others are not |
 
 ## 9. Risks & Mitigations
 
@@ -473,10 +492,12 @@ meet.
 - **Confinement vs. a linked worktree's git metadata.** A retained worktree's
   index and object store live in the *original* repository's `.git`, outside the
   jail's writable root, so a confined sub-agent cannot `git add`/`commit` there.
-  *Mitigation:* the default stays `off`, and the acceptance pins the gap so it
-  cannot be missed or go stale. Widening the jail to include `<repo>/.git` is
-  explicitly rejected — it would give a confined sub-agent write access to the
-  host repository, which retention exists to prevent.
+  *Mitigation:* **settled by design** — the sub-agent prepares changes and the
+  orchestrator commits at settlement — and stated where it will be met: the
+  sub-agent's prompt, the refusal message, and the config docs. The acceptance
+  pins it with the real linked layout. Widening the jail to include
+  `<repo>/.git` is explicitly rejected — it would give a confined sub-agent write
+  access to the host repository, which retention exists to prevent.
 - **macOS / Windows** (no jail). *Mitigation:* `auto` → advisory ⇒ today's behavior.
 - **The trampoline hook is load-bearing** (rc 3 → `ErrPaddockNotEstablished`).
   *Mitigation:* install it and assert (#5).

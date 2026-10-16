@@ -7,7 +7,9 @@ and the optional syscall filter (Plan 6) and the host integration (Plan 7).
 
 Each plan follows the same discipline: a parity checklist mapping Python symbols
 to Go targets with a covering test, an explicit scope/non-goals section, and a
-test matrix. Plans 1–5 and 7 are written (1–3 implemented; 4, 5, 7 scoped/partial).
+test matrix. Plans 1–5 and 7 are written: 1–3 implemented; 4 Linux-side done
+(Seatbelt planned); 5 scoped; 7 phases 0–3 done and its north star (§Phase 4)
+outlined.
 
 > **Vocabulary — "paddock".** The Go code renames Python Shepherd's `jail` to
 > **`paddock`** (an enclosed livestock area — it fits the shepherd/croft theme;
@@ -30,7 +32,7 @@ test matrix. Plans 1–5 and 7 are written (1–3 implemented; 4, 5, 7 scoped/pa
 | **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | [`04-egress-and-seatbelt.md`](04-egress-and-seatbelt.md) | 🚧 Phases 2–3 (Linux) done; 1 (Seatbelt) planned |
 | **5** | Container-tier parity | overlay changes → typed effects, the `copy` carrier, the `clonefile` carrier | [`05-container-tier.md`](05-container-tier.md) | 📝 scoped |
 | **6** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
-| **7** | yaah integration | **retained sub-agents** (the proposal/settlement spine) + Landlock confinement on that one path (orchestrator stays host-normal); placement config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | 📝 scoped |
+| **7** | yaah integration | **retained sub-agents** (the proposal/settlement spine) + Landlock confinement on that one path (orchestrator stays host-normal); placement config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | 🚧 Phases 0–3 done (defaults on); Phase 4 (north star) outlined |
 
 ## Plan 1 — Linux Landlock containment (done)
 
@@ -154,10 +156,10 @@ move is to make that the **default** for every sub-agent (folding
 `spawn_subagent`, which today mutates the host directly), then attach the
 confiner to the one retained launch.
 
-- **Phase 0:** ✅ done — `shepherd-runtime-go v0.17.0` and
-  `sandbox/landlock/v0.1.0` published (the nested module's dev `replace`
-  dropped); yaah ported onto the split modules (kernel v0.17.0 + runtime
-  v0.17.0) — a pure import rewrite across 44 files.
+- **Phase 0:** ✅ done — `shepherd-runtime-go v0.17.0`, `sandbox/landlock/v0.1.0`
+  then **`v0.1.1`** published (the nested module's dev `replace` dropped); yaah
+  ported onto the split modules (kernel v0.17.0 + runtime v0.17.0) — a pure
+  import rewrite across 44 files.
 - **Phase 1:** ✅ done — the confinement seam (PR #337): the trampoline hook,
   a confiner on `localWorkspace`, and the sub-agent workdir lane attaching it
   under the new `agents.subagent.containment` (default off — no behavior flip).
@@ -166,16 +168,22 @@ confiner to the one retained launch.
   tool settles it (`select`/`apply`/`release`/`discard`); `agents.subagent.mode:
   retained|shared` (default `retained`). Design:
   [`07-phase2-retention-spine.md`](07-phase2-retention-spine.md).
-- **Phase 3:** confinement on the unified retained path — the **env redirect**
-  (`HOME`/`TMPDIR`/`GOCACHE` → a scratch inside the worktree, scrubbed before
-  `Seal`) is ✅ in (PR #339), as is doctor's capability check, the runtime `/dev`
-  allowance (PR #4, shipped as `sandbox/landlock v0.1.1`) and recording the
-  resolved placement (PRs #343/#344). **The flip to `auto` is BLOCKED, not
-  pending:** the acceptance (PR #344) found that a retained dispatch works in a
-  **linked** worktree whose git metadata lives outside the jail's writable root,
-  so a confined `git add`/`commit` is refused — and the fix cannot be granting
-  `<repo>/.git`. Confinement stays opt-in until that lane's git-write story is
-  settled.
+- **Phase 3:** ✅ done — confinement on the unified retained path. The **env
+  redirect** (`HOME`/`TMPDIR`/`GOCACHE` → a scratch inside the worktree, scrubbed
+  before `Seal`) is in (PR #339), as is doctor's capability check, the runtime
+  `/dev` allowance (PR #4, shipped as `sandbox/landlock v0.1.1`), recording the
+  resolved placement (PRs #343/#344) and the **default flip to `auto`** (PR
+  #345). The flip was gated on an acceptance that first *blocked* it: a retained
+  dispatch works in a **linked** worktree whose git metadata lives outside the
+  jail's writable root, so a confined `git add`/`commit` is refused. That is now
+  settled **by design** — the sub-agent prepares changes, the orchestrator
+  commits at settlement — and stated in the sub-agent's prompt, the refusal
+  message, and the config docs. Granting `<repo>/.git` was rejected: it would let
+  a confined sub-agent rewrite the host repository.
+- **Phase 4 (north star):** 📝 outlined — `oversee(implement)`: retry-until-
+  acceptable as a first-class primitive over the retained proposal. Nothing it
+  needs is blocked, and the orchestrator can already run the loop by hand with
+  the `proposal` tool.
 - **Mandatory:** `landlock.MaybeRunTrampoline(os.Args)` in `yaah/main.go`.
 - See [`07-yaah-integration.md`](07-yaah-integration.md), incl. §11 (Python
   parity).
@@ -191,8 +199,9 @@ confiner to the one retained launch.
   the `DEVELOPMENT.md` backlog item is marked resolved.
 - **Foundation/`confinement` normalization** — ✅ done:
   `golang.org/x/text/unicode/norm` (Plan 1 §16.2 #5).
-- **Release mechanics** — open: drop the nested module's dev `replace` and tag
-  `sandbox/landlock/v0.1.0` once the root runtime is published.
+- **Release mechanics** — ✅ done: the nested module's dev `replace` is dropped
+  and both `sandbox/landlock/v0.1.0` and `v0.1.1` are tagged, with
+  `release-verify` proving each resolves from a clean consumer.
 
 ## Gap inventory → plan
 
