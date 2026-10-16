@@ -349,7 +349,7 @@ func (g *GitSandbox) Capabilities() sbx.SandboxCapabilities {
 	return sbx.SandboxCapabilities{
 		Lifecycle:   isolated,
 		Exec:        execEnabled,
-		FileIO:      false,
+		FileIO:      true,
 		Diff:        true,
 		Isolated:    isolated,
 		Containment: containmentLevel,
@@ -881,14 +881,94 @@ func (g *GitSandbox) mergeTree(ctx context.Context, baseSHA, treeSHA string) err
 	return nil
 }
 
-// ReadFile is not implemented.
-func (g *GitSandbox) ReadFile(context.Context, string) ([]byte, error) {
-	return nil, sbx.ErrUnsupported
+// ReadFile reads a file inside the sandbox workspace. The path is resolved
+// against the workspace root (a relative path joins it) and refused if it — or a
+// symlink on the way — escapes the workspace.
+func (g *GitSandbox) ReadFile(_ context.Context, path string) ([]byte, error) {
+	target, err := g.resolveWithin(path, false)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		return nil, fmt.Errorf("git sandbox: read %q: %w", path, err)
+	}
+	return data, nil
 }
 
-// WriteFile is not implemented.
-func (g *GitSandbox) WriteFile(context.Context, string, []byte, fs.FileMode) error {
-	return sbx.ErrUnsupported
+// WriteFile writes a file inside the sandbox workspace, creating parent
+// directories as needed. Path containment is symlink-safe: a target whose parent
+// (or the target itself) resolves outside the workspace is refused.
+func (g *GitSandbox) WriteFile(_ context.Context, path string, data []byte, perm fs.FileMode) error {
+	target, err := g.resolveWithin(path, true)
+	if err != nil {
+		return err
+	}
+	if perm == 0 {
+		perm = 0o644
+	}
+	if err := os.WriteFile(target, data, perm); err != nil {
+		return fmt.Errorf("git sandbox: write %q: %w", path, err)
+	}
+	return nil
+}
+
+// resolveWithin resolves path inside the workspace, refusing any path that
+// escapes it — including via a symlink. It resolves the workspace root and the
+// path's parent, and, when the target exists, the target itself, so a symlink
+// pointing outside the workspace is refused rather than followed.
+func (g *GitSandbox) resolveWithin(path string, createParents bool) (string, error) {
+	root, err := filepath.EvalSymlinks(g.workDir())
+	if err != nil {
+		root = absAddress(g.workDir())
+	}
+	abs := path
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(root, path)
+	}
+	abs = filepath.Clean(abs)
+
+	parentDir := filepath.Dir(abs)
+	parent, err := filepath.EvalSymlinks(parentDir)
+	if err != nil {
+		if !createParents {
+			return "", fmt.Errorf("git sandbox: resolve %q: %w", path, err)
+		}
+		if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+			return "", fmt.Errorf("git sandbox: create parent of %q: %w", path, mkErr)
+		}
+		if parent, err = filepath.EvalSymlinks(parentDir); err != nil {
+			return "", fmt.Errorf("git sandbox: resolve %q: %w", path, err)
+		}
+	}
+	if !withinOrEqual(parent, root) {
+		return "", fmt.Errorf("git sandbox: path %q escapes the workspace %s", path, root)
+	}
+
+	target := filepath.Join(parent, filepath.Base(abs))
+	if fi, err := os.Lstat(target); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		resolved, err := filepath.EvalSymlinks(target)
+		if err != nil {
+			return "", fmt.Errorf("git sandbox: resolve symlink %q: %w", path, err)
+		}
+		if !withinOrEqual(resolved, root) {
+			return "", fmt.Errorf("git sandbox: path %q escapes the workspace via a symlink", path)
+		}
+		return resolved, nil
+	}
+	return target, nil
+}
+
+// withinOrEqual reports whether child is parent or lies beneath it.
+func withinOrEqual(child, parent string) bool {
+	if parent == "" {
+		return false
+	}
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // AnnotateDeltaBase implements sbx.DeltaBaseAnnotator: it resolves the fork

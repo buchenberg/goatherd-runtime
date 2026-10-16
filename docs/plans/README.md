@@ -115,14 +115,17 @@ without containerd) justifies it.
 
 ## Small items
 
-- **Sandbox file IO.** `GitSandbox.ReadFile`/`WriteFile` still return
-  `ErrUnsupported`. Implement against the worktree with **symlink-safe** path
-  containment (resolve symlinks, refuse escapes — the lexical `ResolvePath`
-  caveat). Orthogonal to containment; standalone.
-- **Kernel decision note.** Record the Path B decision against the kernel's
-  `GAP-REPORT.md` (Plan 1 §14).
-- **Foundation/`confinement` normalization** — done: `golang.org/x/text/unicode/norm`
-  (Plan 1 §16.2 #5).
+- **Sandbox file IO** — ✅ done: `GitSandbox.ReadFile`/`WriteFile` with
+  symlink-safe path containment (resolve the parent and the target, refuse `..`
+  and escaping-symlink paths); `FileIO` capability now reported.
+- **Kernel decision note** — ✅ done: the Path B fence decision for the Linux
+  Landlock member is recorded in the kernel's
+  [`gap-report.md`](../../../shepherd-kernel-go/docs/history/gap-report.md) and
+  the `DEVELOPMENT.md` backlog item is marked resolved.
+- **Foundation/`confinement` normalization** — ✅ done:
+  `golang.org/x/text/unicode/norm` (Plan 1 §16.2 #5).
+- **Release mechanics** — open: drop the nested module's dev `replace` and tag
+  `sandbox/landlock/v0.1.0` once the root runtime is published.
 
 ## Gap inventory → plan
 
