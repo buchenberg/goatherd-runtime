@@ -279,18 +279,31 @@ it); the work was moved onto a branch and landed via PR #338.
 
 ### Phase 3 — Confinement on the unified retained path
 
-1. Move the confiner from the Phase-1 special case onto the **one** retained
-   launch; writable root = the bound world, so the kernel boundary and the
-   settlement boundary are the same boundary.
-2. Config `agents.subagent.placement: auto | jail | advisory` (→ `PlacementAuto`
-   / `PlacementPaddock` / `PlacementAdvisory`), and `agents.subagent.network:
-   allow_all | deny_all | broker` (default `allow_all`). `jail` **fails closed**.
-3. **Record the resolved placement** on the sub-agent's trace (requested ·
-   resolved · enforcement), so advisory is never read as jailed.
-4. `internal/doctor` gains a containment check (`landlock.New().Available()`),
-   reporting `native-syscall-deny (ABI N)` or "advisory".
+> **Status.** The **mechanism** landed (yaah PR #339): the confiner already
+> rides the retained workdir lane, the **env redirect + scrub** is in, and
+> `yaah doctor` reports the capability. Still open: **recording the resolved
+> placement** on the trace (#3), and **flipping the default to `auto`** — gated
+> on an acceptance run, not landed. The config key stayed **`containment`**
+> (shipped in Phase 1), not the `placement` spelling below.
 
-#### The writable-root problem — and how Python solves it
+1. ✅ The confiner rides the one retained launch — a retained dispatch sets the
+   worktree as the sub-agent's `Workdir`, and the confiner is attached on that
+   lane, so the kernel boundary and the settlement boundary are the same
+   boundary. Config: `agents.subagent.containment: off | advisory | auto |
+   paddock` (alias `jail`); `network` defaults to `allow_all`. `paddock` fails
+   closed.
+2. ⏳ Config `agents.subagent.network: allow_all | deny_all | broker` — only the
+   default is wired.
+3. ⏳ **Record the resolved placement** on the sub-agent's trace (requested ·
+   resolved · enforcement), so advisory is never read as jailed.
+4. ✅ `internal/doctor` reports the capability (`CheckContainment`: backend /
+   mode / placement; a fail-closed `paddock` with no usable backend is a `FAIL`).
+
+**Default flip (open):** the plan's intent is `auto`; it stays `off` until an
+acceptance run (yaah's `docs/shepherd-benchmark.md`) exercises a **confined
+sub-agent on a real build** — the same gate Phase 2 used.
+
+#### The writable-root problem — solved by redirecting ✅ (yaah PR #339)
 
 A strict jail admits **exactly one writable root** (the worktree). A sub-agent
 that builds writes a **cache outside it** (`$GOCACHE`, `~/.npm`, `$TMPDIR`), so

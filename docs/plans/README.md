@@ -166,13 +166,11 @@ confiner to the one retained launch.
   tool settles it (`select`/`apply`/`release`/`discard`); `agents.subagent.mode:
   retained|shared` (default `retained`). Design:
   [`07-phase2-retention-spine.md`](07-phase2-retention-spine.md).
-- **Phase 3:** confinement on the unified retained path;
-  `agents.subagent.placement: auto|jail|advisory` (`jail` fails closed),
-  `agents.subagent.network` (default `allow_all` — write-jail); record the
-  resolved placement. Builds are handled Python's way — **redirect, don't widen**
+- **Phase 3:** confinement on the unified retained path — the **env redirect**
   (`HOME`/`TMPDIR`/`GOCACHE` → a scratch inside the worktree, scrubbed before
-  `Seal`; warm dependencies via the bootstrap). The `/dev` allowance the Linux
-  tier needs (Seatbelt already had it) is ✅ fixed — runtime PR #4.
+  `Seal`) is ✅ in (PR #339), as is doctor's capability check and the runtime
+  `/dev` allowance (PR #4). Open: recording the resolved placement, and flipping
+  `containment` to `auto` (gated on an acceptance run).
 - **Mandatory:** `landlock.MaybeRunTrampoline(os.Args)` in `yaah/main.go`.
 - See [`07-yaah-integration.md`](07-yaah-integration.md), incl. §11 (Python
   parity).
