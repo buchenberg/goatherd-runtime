@@ -3,10 +3,7 @@ module github.com/buchenberg/shepherd-runtime-go
 go 1.21
 
 // The runtime composes the kernel (trace store, canonical model, effect bus).
-// Local development pins to the sibling checkout; a published release replaces
-// this with a tagged requirement (the `replace` and the require version move
-// together when the kernel is tagged with `testkit`).
-require github.com/buchenberg/shepherd-kernel-go v0.16.0
+require github.com/buchenberg/shepherd-kernel-go v0.17.0
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
@@ -24,5 +21,3 @@ require (
 	modernc.org/strutil v1.2.0 // indirect
 	modernc.org/token v1.1.0 // indirect
 )
-
-replace github.com/buchenberg/shepherd-kernel-go => ../shepherd-kernel-go

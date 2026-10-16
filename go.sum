@@ -1,3 +1,5 @@
+github.com/buchenberg/shepherd-kernel-go v0.17.0 h1:0+nF6XKu28pfPEZZHfrYZln/KFJza6N7A89Du6HlNUk=
+github.com/buchenberg/shepherd-kernel-go v0.17.0/go.mod h1:N5a+B07Lm4xmc4ubCc83Rw4hDWuvbgKUJDSd6N7nrs4=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/google/pprof v0.0.0-20240409012703-83162a5b38cd h1:gbpYu9NMq8jhDVbvlGkMFWCjLFlqqEZjEmObmhUy6Vo=

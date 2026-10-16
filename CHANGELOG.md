@@ -25,3 +25,6 @@ kernel behind as the trace store, canonical model, effect bus, and projections.
 - Imports of `github.com/buchenberg/shepherd-kernel-go/trace` become
   `github.com/buchenberg/shepherd-kernel-go` — the kernel's trace package is now
   the module root (package `trace`).
+- Pins `github.com/buchenberg/shepherd-kernel-go` to the tagged `v0.17.0` and
+  drops the local-development `replace`; the module now resolves from the
+  module proxy like any other dependency.

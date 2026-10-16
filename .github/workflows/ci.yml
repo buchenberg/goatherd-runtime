@@ -28,19 +28,6 @@ jobs:
           go-version: stable
           cache: true
 
-      # The runtime module `replace`s the kernel with the sibling checkout
-      # (`../shepherd-kernel-go`). CI has only this repository, so it checks out
-      # the kernel alongside it and repoints the replace at that checkout.
-      - name: checkout the kernel dependency
-        uses: actions/checkout@v4
-        with:
-          repository: buchenberg/shepherd-kernel-go
-          path: _kernel
-
-      - name: point the replace at the kernel checkout
-        shell: bash
-        run: go mod edit -replace github.com/buchenberg/shepherd-kernel-go=./_kernel
-
       - name: gofmt (must be empty)
         shell: bash
         run: |
