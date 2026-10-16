@@ -1,0 +1,547 @@
+package run
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	trace "github.com/buchenberg/shepherd-kernel-go"
+	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
+	"github.com/buchenberg/shepherd-runtime-go/internal/rttest"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+)
+
+func newManager(t *testing.T) *shepherd.ScopeManager {
+	t.Helper()
+	return shepherd.NewScopeManager(rttest.NewMemStore(t))
+}
+
+func newParent(t *testing.T, mgr *shepherd.ScopeManager, owner string) (*shepherd.Scope, string) {
+	t.Helper()
+	repo := gittest.NewTestRepo(t)
+	parent, err := mgr.Create(owner, git.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	return parent, repo
+}
+
+// worktreeFactory returns an Options.NewSandbox that allocates a fresh worktree
+// per run.
+func worktreeFactory(t *testing.T, repo string) func(string) (sandbox.Sandbox, error) {
+	return func(string) (sandbox.Sandbox, error) {
+		return git.NewWorktreeSandbox(repo, filepath.Join(t.TempDir(), "wt")), nil
+	}
+}
+
+func writeIn(rc *RunContext, name, content string) error {
+	return os.WriteFile(filepath.Join(rc.Capability.WorkingRoot, name), []byte(content), 0o644)
+}
+
+func TestReversible_MergeDefault(t *testing.T) {
+	mgr := newManager(t)
+	parent, repo := newParent(t, mgr, "run:merge-main")
+
+	var sawIsolation string
+	out, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:    "run:merge-1",
+		NewSandbox: worktreeFactory(t, repo),
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		sawIsolation = rc.Capability.Isolation
+		return Result{}, writeIn(rc, "hello.txt", "hi")
+	})
+	if err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+	if sawIsolation != "isolated" {
+		t.Fatalf("capability isolation = %q, want isolated", sawIsolation)
+	}
+	if out.Isolation != "isolated" {
+		t.Fatalf("outcome isolation = %q", out.Isolation)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "hello.txt")); err != nil {
+		t.Fatalf("merged file missing from the parent workspace: %v", err)
+	}
+}
+
+func TestReversible_DiscardOnFailure(t *testing.T) {
+	mgr := newManager(t)
+	parent, repo := newParent(t, mgr, "run:fail-main")
+
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:    "run:fail-1",
+		NewSandbox: worktreeFactory(t, repo),
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		if err := writeIn(rc, "should-not-land.txt", "x"); err != nil {
+			return Result{}, err
+		}
+		return Result{}, errors.New("boom")
+	})
+	if err == nil {
+		t.Fatal("expected the handler error")
+	}
+	if _, err := os.Stat(filepath.Join(repo, "should-not-land.txt")); !os.IsNotExist(err) {
+		t.Fatal("a discarded run must not reach the parent workspace")
+	}
+}
+
+func TestReversible_NonReversibleOptOut(t *testing.T) {
+	mgr := newManager(t)
+	parent, repo := newParent(t, mgr, "run:ground-main")
+
+	out, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:       "run:ground-1",
+		NonReversible: true,
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		if rc.Capability.Isolation != "ground" {
+			return Result{}, errors.New("non-reversible run must be ground")
+		}
+		return Result{}, writeIn(rc, "ground.txt", "x")
+	})
+	if err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+	if out.Isolation != "ground" {
+		t.Fatalf("outcome isolation = %q, want ground", out.Isolation)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "ground.txt")); err != nil {
+		t.Fatalf("a ground run writes directly to the parent: %v", err)
+	}
+}
+
+func TestReversible_SealDisposition(t *testing.T) {
+	mgr := newManager(t)
+	parent, repo := newParent(t, mgr, "run:seal-main")
+
+	out, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:     "run:seal-1",
+		Disposition: DispositionSeal,
+		NewSandbox:  worktreeFactory(t, repo),
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		return Result{}, writeIn(rc, "sealed.txt", "x")
+	})
+	if err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+	if out.Output == nil {
+		t.Fatal("seal disposition must return a RetainedOutput")
+	}
+	if _, err := os.Stat(filepath.Join(repo, "sealed.txt")); !os.IsNotExist(err) {
+		t.Fatal("sealing must not touch the parent workspace")
+	}
+	if err := mgr.Settle(context.Background(), out.Output.ID(), shepherd.SettleSelect); err != nil {
+		t.Fatalf("caller settle: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "sealed.txt")); err != nil {
+		t.Fatalf("settle should integrate the sealed output: %v", err)
+	}
+}
+
+func TestReversible_RefusesWithoutBackend(t *testing.T) {
+	mgr := newManager(t)
+	parent, repo := newParent(t, mgr, "run:paddock-main")
+
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:    "run:paddock-1",
+		Placement:  confinement.PlacementPaddock,
+		NewSandbox: worktreeFactory(t, repo),
+	}, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, nil
+	})
+	if !errors.Is(err, containment.ErrPaddockNotEstablished) {
+		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
+	}
+	if len(parent.Children()) != 0 {
+		t.Fatal("a refused paddock must not allocate a run scope")
+	}
+}
+
+func TestReversible_UnknownDisposition(t *testing.T) {
+	mgr := newManager(t)
+	parent, _ := newParent(t, mgr, "run:unk-main")
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:     "run:unk-1",
+		Disposition: Disposition("bogus"),
+	}, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, nil
+	})
+	if err == nil {
+		t.Fatal("an unknown disposition must be refused")
+	}
+}
+
+func TestReversible_AuthorityMerge(t *testing.T) {
+	mgr := newManager(t)
+	parent, repo := newParent(t, mgr, "run:am-main")
+
+	var sawChange bool
+	out, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:     "run:am-1",
+		Disposition: DispositionAuthorityMerge,
+		NewSandbox:  worktreeFactory(t, repo),
+		Decision: func(_ context.Context, p shepherd.MergeProposal) error {
+			sawChange = len(p.Changes) == 1
+			return nil
+		},
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		return Result{}, writeIn(rc, "am.txt", "x")
+	})
+	if err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+	if !sawChange {
+		t.Fatal("the decision provider must see the run's proposed change")
+	}
+	if out.Disposition != DispositionAuthorityMerge {
+		t.Fatalf("disposition = %q", out.Disposition)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "am.txt")); err != nil {
+		t.Fatalf("an approved authority merge must land its changes: %v", err)
+	}
+}
+
+func TestReversible_AuthorityMergeDenied(t *testing.T) {
+	mgr := newManager(t)
+	parent, repo := newParent(t, mgr, "run:amd-main")
+
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:     "run:amd-1",
+		Disposition: DispositionAuthorityMerge,
+		NewSandbox:  worktreeFactory(t, repo),
+		Decision: func(_ context.Context, _ shepherd.MergeProposal) error {
+			return errors.New("denied by authority")
+		},
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		return Result{}, writeIn(rc, "am.txt", "x")
+	})
+	var denied *shepherd.SupervisorDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("want *SupervisorDeniedError, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "am.txt")); !os.IsNotExist(err) {
+		t.Fatal("a denied authority merge must not reach the parent workspace")
+	}
+}
+
+func TestReversible_AuthorityMergeRequiresDecision(t *testing.T) {
+	mgr := newManager(t)
+	parent, _ := newParent(t, mgr, "run:amr-main")
+
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:     "run:amr-1",
+		Disposition: DispositionAuthorityMerge,
+	}, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, nil
+	})
+	if err == nil {
+		t.Fatal("authority_merge without Options.Decision must be refused")
+	}
+}
+
+func TestReversible_NonReversibleWithSealRefused(t *testing.T) {
+	mgr := newManager(t)
+	parent, _ := newParent(t, mgr, "run:bad-main")
+
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:       "run:bad-1",
+		NonReversible: true,
+		Disposition:   DispositionSeal,
+	}, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, nil
+	})
+	if err == nil {
+		t.Fatal("non-reversible + seal must be refused")
+	}
+}
+
+func TestReversible_MergeDeniedByReviewer(t *testing.T) {
+	mgr := newManager(t)
+	parent, repo := newParent(t, mgr, "run:review-main")
+
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:    "run:review-1",
+		NewSandbox: worktreeFactory(t, repo),
+		Reviewer: func(shepherd.MergeProposal) error {
+			return errors.New("denied by policy")
+		},
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		return Result{}, writeIn(rc, "denied.txt", "x")
+	})
+	var denied *shepherd.SupervisorDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("want *SupervisorDeniedError, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "denied.txt")); !os.IsNotExist(err) {
+		t.Fatal("a denied run must not reach the parent workspace")
+	}
+}
+
+// fakeBackend is a containment.Backend double for the confined-run test.
+type fakeBackend struct{ available bool }
+
+func (f *fakeBackend) Name() string                                          { return "fake" }
+func (f *fakeBackend) EnforcementTier() string                               { return "test" }
+func (f *fakeBackend) ProfileFor([]string, containment.NetworkPolicy) string { return "{}" }
+func (f *fakeBackend) SupportsNetwork(containment.NetMode) bool              { return true }
+func (f *fakeBackend) Probe(string, string, []string) error                  { return nil }
+func (f *fakeBackend) Launch(string, containment.LaunchRequest) (containment.LaunchResult, error) {
+	return containment.LaunchResult{ExitCode: 0}, nil
+}
+func (f *fakeBackend) Available() (bool, string) {
+	if f.available {
+		return true, "ok"
+	}
+	return false, "unavailable"
+}
+
+func TestReversible_HandlerRunsConfined(t *testing.T) {
+	mgr := newManager(t)
+	parent, repo := newParent(t, mgr, "run:conf-main")
+	fake := &fakeBackend{available: true}
+
+	out, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:   "run:conf-1",
+		Placement: confinement.PlacementPaddock,
+		Backend:   fake,
+		NewSandbox: func(string) (sandbox.Sandbox, error) {
+			return git.NewWorktreeSandbox(repo, filepath.Join(t.TempDir(), "wt"),
+				git.WithExec(fake, confinement.PlacementPaddock)), nil
+		},
+	}, func(ctx context.Context, rc *RunContext) (Result, error) {
+		res, err := rc.Scope.Sandbox().Exec(ctx, sandbox.ExecRequest{Command: "true", AuthorityMatch: "m1"})
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Evidence: res.AuthorityEvidence}, nil
+	})
+	if err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+	if out.Result.Evidence == "" {
+		t.Fatal("a confined run must produce authority evidence")
+	}
+}
+
+func TestReversible_RecordsRunOperation(t *testing.T) {
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
+	repo := gittest.NewTestRepo(t)
+	parent, err := mgr.Create("run:rec-main", git.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:    "run:rec-1",
+		NewSandbox: worktreeFactory(t, repo),
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		return Result{ExitCode: 0}, writeIn(rc, "x.txt", "x")
+	}); err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+
+	recs, err := trace.ScanRecordsBySchema(context.Background(), store, SchemaRunExecuted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("run records = %d, want 1", len(recs))
+	}
+	if recs[0].Payload["isolation"] != "isolated" || recs[0].Payload["disposition"] != "merge" {
+		t.Fatalf("run record payload = %+v", recs[0].Payload)
+	}
+}
+
+func TestReversible_RecordsEvidence(t *testing.T) {
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
+	repo := gittest.NewTestRepo(t)
+	parent, err := mgr.Create("run:ev-main", git.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeBackend{available: true}
+
+	if _, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:   "run:ev-1",
+		Placement: confinement.PlacementPaddock,
+		Backend:   fake,
+		NewSandbox: func(string) (sandbox.Sandbox, error) {
+			return git.NewWorktreeSandbox(repo, filepath.Join(t.TempDir(), "wt"),
+				git.WithExec(fake, confinement.PlacementPaddock)), nil
+		},
+	}, func(ctx context.Context, rc *RunContext) (Result, error) {
+		res, err := rc.Scope.Sandbox().Exec(ctx, sandbox.ExecRequest{Command: "true", AuthorityMatch: "m1"})
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Evidence: res.AuthorityEvidence, ExitCode: res.ExitCode, Denied: res.Denied}, nil
+	}); err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+
+	recs, err := trace.ScanRecordsBySchema(context.Background(), store, SchemaRunExecuted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Payload["authority_evidence"] == "" {
+		t.Fatalf("run record must carry the authority-evidence digest: %+v", recs)
+	}
+}
+
+func TestRunContext_ExecRefusesWithoutBackend(t *testing.T) {
+	rc := &RunContext{Capability: containment.Capability{}, Confinement: containment.ReadOnlySpec()}
+	if _, err := rc.Exec(containment.LaunchRequest{Command: []string{"true"}}); !errors.Is(err, containment.ErrPaddockNotEstablished) {
+		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
+	}
+}
+
+func TestRunContext_ExecConfined(t *testing.T) {
+	fake := &fakeBackend{available: true}
+	rc := &RunContext{
+		Capability:  containment.Capability{Backend: fake, WorkingRoot: t.TempDir()},
+		Confinement: containment.ReadOnlySpec(),
+	}
+	res, err := rc.Exec(containment.LaunchRequest{Command: []string{"true"}})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit = %d, want 0", res.ExitCode)
+	}
+}
+
+func TestVerifyHandler_RefusesWithoutCapability(t *testing.T) {
+	mgr := newManager(t)
+	parent, _ := newParent(t, mgr, "run:vh-main")
+	probe := &RunContext{Scope: parent, Capability: containment.Capability{}}
+
+	// A handler that refuses through the guard passes.
+	if err := VerifyHandler(context.Background(), probe, func(_ context.Context, rc *RunContext) (Result, error) {
+		return Result{}, rc.Capability.RequireAuthority()
+	}); err != nil {
+		t.Fatalf("execution-bound handler should pass conformance: %v", err)
+	}
+
+	// A handler that runs without authority fails.
+	if err := VerifyHandler(context.Background(), probe, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, nil
+	}); err == nil {
+		t.Fatal("a handler that ran without authority must fail conformance")
+	}
+
+	// A handler that refuses with the wrong error fails.
+	if err := VerifyHandler(context.Background(), probe, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, errors.New("unrelated failure")
+	}); err == nil {
+		t.Fatal("a handler refusing with the wrong error must fail conformance")
+	}
+}
+
+func TestReversible_PlanDrivesConfinement(t *testing.T) {
+	mgr := newManager(t)
+	parent, repo := newParent(t, mgr, "run:plan-main")
+	plan, err := confinement.Install(confinement.MayDeclaration("ReadOnly", "match-1"), repo)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	var got containment.ConfinementSpec
+	if _, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:    "run:plan-1",
+		Plan:       &plan,
+		NewSandbox: worktreeFactory(t, repo),
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		got = rc.Confinement
+		return Result{}, nil
+	}); err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+	if len(got.WritableRoots) != 0 || got.Network.Mode != containment.NetDenyAll {
+		t.Fatalf("the plan must drive the run's confinement; got %+v", got)
+	}
+}
+
+func TestReversible_RecordsPlanDigest(t *testing.T) {
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
+	repo := gittest.NewTestRepo(t)
+	parent, err := mgr.Create("run:pd-main", git.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := confinement.Install(confinement.MayDeclaration("Permissive", "match-1"), repo)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	if _, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:    "run:pd-1",
+		Plan:       &plan,
+		NewSandbox: worktreeFactory(t, repo),
+	}, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, nil
+	}); err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+
+	recs, err := trace.ScanRecordsBySchema(context.Background(), store, SchemaRunExecuted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("run records = %d, want 1", len(recs))
+	}
+	if recs[0].Payload["permission_plan_digest"] != plan.Digest() {
+		t.Fatalf("permission_plan_digest = %v, want %s", recs[0].Payload["permission_plan_digest"], plan.Digest())
+	}
+	if recs[0].Payload["permission_plan_descriptor"] == nil {
+		t.Fatal("run record must carry the plan descriptor")
+	}
+}
+
+func TestReversible_CarrierOnlyPlanRefuses(t *testing.T) {
+	mgr := newManager(t)
+	parent, _ := newParent(t, mgr, "run:co-main")
+	plan := confinement.InstallCarrierCheck(confinement.CarrierCheckAuthority{EffectiveMatchDigest: "e1"})
+
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID: "run:co-1",
+		Plan:    &plan,
+		NewSandbox: func(string) (sandbox.Sandbox, error) {
+			return nil, errors.New("NewSandbox must not be called for a plan with no jail clause")
+		},
+	}, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, nil
+	})
+	if !errors.Is(err, confinement.ErrPlanEvidence) {
+		t.Fatalf("carrier-only plan: want ErrPlanEvidence, got %v", err)
+	}
+	if len(parent.Children()) != 0 {
+		t.Fatal("a plan with no jail clause must not allocate a scope")
+	}
+}
+
+func TestReversible_PlanMutuallyExclusive(t *testing.T) {
+	mgr := newManager(t)
+	parent, _ := newParent(t, mgr, "run:mx-main")
+	plan := confinement.InstallCarrierCheck(confinement.CarrierCheckAuthority{})
+	spec := containment.ReadOnlySpec()
+
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:     "run:mx-1",
+		Plan:        &plan,
+		Confinement: &spec,
+	}, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, nil
+	})
+	if err == nil {
+		t.Fatal("Options.Plan with Options.Confinement must be refused")
+	}
+}

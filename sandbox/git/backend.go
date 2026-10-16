@@ -16,11 +16,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	trace "github.com/buchenberg/shepherd-kernel-go"
 	sbx "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 )
 
 // gitTimeout bounds each git subprocess. A hung git process (e.g. waiting on a
@@ -221,6 +224,27 @@ type GitSandbox struct {
 	// to an absolute path at construction: the worktree path for an
 	// isolated worktree, the repository path otherwise.
 	address string
+
+	// confiner is the containment backend enabling Exec (nil = Exec is
+	// unsupported). placement is the default placement when a request names
+	// none. Both are set by WithExec.
+	confiner  containment.Backend
+	placement confinement.Placement
+}
+
+// Option configures a GitSandbox at construction.
+type Option func(*GitSandbox)
+
+// WithExec enables Exec on the sandbox, using b as the containment backend and p
+// as the default placement. Without it, Exec returns sbx.ErrUnsupported and
+// Capabilities reports Exec=false. The caller supplies the backend (e.g. the
+// landlock nested module) so this package depends on the contract, not on any
+// particular isolation technology.
+func WithExec(b containment.Backend, p confinement.Placement) Option {
+	return func(g *GitSandbox) {
+		g.confiner = b
+		g.placement = p
+	}
 }
 
 var _ sbx.Sandbox = (*GitSandbox)(nil)
@@ -247,8 +271,12 @@ func absAddress(p string) string {
 }
 
 // NewLocalGitSandbox returns an in-place sandbox over repoPath.
-func NewLocalGitSandbox(repoPath string) *GitSandbox {
-	return &GitSandbox{repoPath: repoPath, address: absAddress(repoPath)}
+func NewLocalGitSandbox(repoPath string, opts ...Option) *GitSandbox {
+	g := &GitSandbox{repoPath: repoPath, address: absAddress(repoPath)}
+	for _, opt := range opts {
+		opt(g)
+	}
+	return g
 }
 
 // NewWorktreeSandbox returns an isolated sandbox that checks out repoPath at a
@@ -259,12 +287,16 @@ func NewLocalGitSandbox(repoPath string) *GitSandbox {
 // its working directory — never against the process working directory, so
 // the recorded address matches where the worktree actually lands. The
 // recorded address is normalized to an absolute path.
-func NewWorktreeSandbox(repoPath, worktreePath string) *GitSandbox {
+func NewWorktreeSandbox(repoPath, worktreePath string, opts ...Option) *GitSandbox {
 	wt := worktreePath
 	if !filepath.IsAbs(wt) {
 		wt = filepath.Join(absAddress(repoPath), wt)
 	}
-	return &GitSandbox{repoPath: repoPath, worktreePath: worktreePath, address: absAddress(wt)}
+	g := &GitSandbox{repoPath: repoPath, worktreePath: worktreePath, address: absAddress(wt)}
+	for _, opt := range opts {
+		opt(g)
+	}
+	return g
 }
 
 // Address implements sbx.Addressed: the durable workspace address, a
@@ -295,24 +327,32 @@ func (g *GitSandbox) repo() *gitRunner { return &gitRunner{dir: g.repoPath} }
 func (g *GitSandbox) work() *gitRunner { return &gitRunner{dir: g.workDir()} }
 
 // Capabilities reports the git backend's support matrix.
+//
+// Exec is reported only when a containment backend was supplied via WithExec,
+// and Containment is honest about the resolved enforcement: ContainContained only
+// when a backend is actually available and the placement is not advisory,
+// ContainBuffered for an isolated worktree, ContainUncontained otherwise. A
+// backend must not claim containment it cannot provide (see the package doc on
+// reporting capabilities honestly).
 func (g *GitSandbox) Capabilities() sbx.SandboxCapabilities {
-	if g.isWorktree() {
-		return sbx.SandboxCapabilities{
-			Lifecycle:   true,
-			Exec:        false,
-			FileIO:      false,
-			Diff:        true,
-			Isolated:    true,
-			Containment: trace.ContainBuffered,
+	isolated := g.isWorktree()
+	containmentLevel := trace.ContainUncontained
+	if isolated {
+		containmentLevel = trace.ContainBuffered
+	}
+	execEnabled := g.confiner != nil
+	if execEnabled {
+		if ok, _ := g.confiner.Available(); ok && g.placement != confinement.PlacementAdvisory {
+			containmentLevel = trace.ContainContained
 		}
 	}
 	return sbx.SandboxCapabilities{
-		Lifecycle:   false,
-		Exec:        false,
-		FileIO:      false,
+		Lifecycle:   isolated,
+		Exec:        execEnabled,
+		FileIO:      true,
 		Diff:        true,
-		Isolated:    false,
-		Containment: trace.ContainUncontained,
+		Isolated:    isolated,
+		Containment: containmentLevel,
 	}
 }
 
@@ -580,9 +620,158 @@ func (g *GitSandbox) Diff(ctx context.Context, ws trace.WorkspaceState, maxLines
 	return full, files, nil
 }
 
-// Exec is not implemented: the git backend owns git state, not processes.
-func (g *GitSandbox) Exec(context.Context, sbx.ExecRequest) (sbx.ExecResult, error) {
-	return sbx.ExecResult{}, sbx.ErrUnsupported
+// Exec runs a command in the sandbox when a containment backend was supplied via
+// WithExec; otherwise it returns sbx.ErrUnsupported (the git backend owns git
+// state, not processes).
+//
+// The request's Confinement (or a Permissive default over the workspace) is
+// resolved against the placement: a confined placement probes the paddock fail-closed
+// and refuses when it cannot be established; an advisory placement runs
+// unconfined. Authority root selection is the caller's job (package confinement);
+// Exec never invents roots.
+func (g *GitSandbox) Exec(ctx context.Context, req sbx.ExecRequest) (sbx.ExecResult, error) {
+	if g.confiner == nil {
+		return sbx.ExecResult{}, sbx.ErrUnsupported
+	}
+	if req.Command == "" {
+		return sbx.ExecResult{}, fmt.Errorf("git sandbox: Exec requires a command")
+	}
+
+	start := time.Now()
+	workDir := g.workDir()
+	cwd := workDir
+	if req.Cwd != "" {
+		cwd = req.Cwd
+		if !filepath.IsAbs(cwd) {
+			cwd = filepath.Join(workDir, cwd)
+		}
+	}
+
+	placement := req.Placement
+	if placement == "" {
+		placement = g.placement
+	}
+	if placement == "" {
+		placement = confinement.PlacementAuto
+	}
+	available := false
+	if ok, _ := g.confiner.Available(); ok {
+		available = true
+	}
+	paddock, err := confinement.ResolvePlacement(placement, available)
+	if err != nil {
+		return sbx.ExecResult{}, err
+	}
+
+	spec := containment.PermissiveFor(workDir)
+	if req.Confinement != nil {
+		spec = *req.Confinement
+	}
+	launchReq := containment.LaunchRequest{
+		Command:     append([]string{req.Command}, req.Args...),
+		WorkingRoot: workDir,
+		Cwd:         cwd,
+		Env:         envSlice(req.Env),
+		Stdin:       req.Stdin,
+		Timeout:     req.Timeout,
+	}
+
+	if paddock {
+		lr, err := containment.LaunchConfined(g.confiner, spec, launchReq)
+		if err != nil {
+			return sbx.ExecResult{}, err
+		}
+		// §9.4: a confined run whose failure reads as a syscall denial is a
+		// discarded, Failed run; flag it on the result (the write never reached
+		// disk) and always cite the authority evidence.
+		return sbx.ExecResult{
+			ExitCode:          lr.ExitCode,
+			Stdout:            lr.Stdout,
+			Stderr:            lr.Stderr,
+			Duration:          time.Since(start),
+			Denied:            containment.DeniedExit(lr),
+			AuthorityEvidence: confinement.PlanForSpec(spec, req.AuthorityMatch).Digest(),
+		}, nil
+	}
+	return g.advisoryExec(ctx, launchReq, start)
+}
+
+// ExecMay is the authority→exec wiring seam: it lowers a may= declaration to a
+// confinement spec (the fail-closed lowerer) and runs the command through Exec.
+// matchDigest is the authority-surface digest recorded in the run's evidence.
+func (g *GitSandbox) ExecMay(ctx context.Context, req sbx.ExecRequest, may, matchDigest string) (sbx.ExecResult, error) {
+	spec, err := confinement.LowerMay(may, g.workDir())
+	if err != nil {
+		return sbx.ExecResult{}, err
+	}
+	req.Confinement = &spec
+	req.AuthorityMatch = matchDigest
+	return g.Exec(ctx, req)
+}
+
+// ExecGrants is the per-binding-grant counterpart of ExecMay: it lowers grants to
+// a deny-closed multi-root spec and runs the command through Exec.
+func (g *GitSandbox) ExecGrants(ctx context.Context, req sbx.ExecRequest, grants []confinement.BindingRootGrant, matchDigest string) (sbx.ExecResult, error) {
+	spec, err := confinement.LowerGrants(grants)
+	if err != nil {
+		return sbx.ExecResult{}, err
+	}
+	req.Confinement = &spec
+	req.AuthorityMatch = matchDigest
+	return g.Exec(ctx, req)
+}
+
+// advisoryExec runs launchReq with no confinement — the advisory tier: no paddock on
+// this host, and the placement permits proceeding unconfined.
+func (g *GitSandbox) advisoryExec(ctx context.Context, req containment.LaunchRequest, start time.Time) (sbx.ExecResult, error) {
+	cmdCtx := ctx
+	if req.Timeout > 0 {
+		var cancel context.CancelFunc
+		cmdCtx, cancel = context.WithTimeout(ctx, req.Timeout)
+		defer cancel()
+	}
+	cmd := exec.CommandContext(cmdCtx, req.Command[0], req.Command[1:]...)
+	cmd.Dir = req.Cwd
+	if req.Env != nil {
+		cmd.Env = req.Env
+	}
+	if req.Stdin != nil {
+		cmd.Stdin = bytes.NewReader(req.Stdin)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+	code := 0
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			code = exitErr.ExitCode()
+		} else {
+			return sbx.ExecResult{}, fmt.Errorf("git sandbox: exec %s: %w", req.Command[0], runErr)
+		}
+	}
+	return sbx.ExecResult{
+		ExitCode: code,
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		Duration: time.Since(start),
+	}, nil
+}
+
+// envSlice converts an environment map to a sorted KEY=VALUE slice. A nil map
+// returns nil, which makes the child inherit the parent environment.
+func envSlice(env map[string]string) []string {
+	if env == nil {
+		return nil
+	}
+	out := make([]string, 0, len(env))
+	for k, v := range env {
+		out = append(out, k+"="+v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ApplyDelta merges a captured state's changes onto the current workspace
@@ -692,14 +881,119 @@ func (g *GitSandbox) mergeTree(ctx context.Context, baseSHA, treeSHA string) err
 	return nil
 }
 
-// ReadFile is not implemented.
-func (g *GitSandbox) ReadFile(context.Context, string) ([]byte, error) {
-	return nil, sbx.ErrUnsupported
+// ReadFile reads a file inside the sandbox workspace. The path is resolved
+// against the workspace root (a relative path joins it) and refused if it — or a
+// symlink on the way — escapes the workspace.
+func (g *GitSandbox) ReadFile(_ context.Context, path string) ([]byte, error) {
+	target, err := g.resolveWithin(path, false)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		return nil, fmt.Errorf("git sandbox: read %q: %w", path, err)
+	}
+	return data, nil
 }
 
-// WriteFile is not implemented.
-func (g *GitSandbox) WriteFile(context.Context, string, []byte, fs.FileMode) error {
-	return sbx.ErrUnsupported
+// WriteFile writes a file inside the sandbox workspace, creating parent
+// directories as needed. Path containment is symlink-safe: a target whose parent
+// (or the target itself) resolves outside the workspace is refused.
+func (g *GitSandbox) WriteFile(_ context.Context, path string, data []byte, perm fs.FileMode) error {
+	target, err := g.resolveWithin(path, true)
+	if err != nil {
+		return err
+	}
+	if perm == 0 {
+		perm = 0o644
+	}
+	if err := os.WriteFile(target, data, perm); err != nil {
+		return fmt.Errorf("git sandbox: write %q: %w", path, err)
+	}
+	return nil
+}
+
+// resolveWithin resolves path inside the workspace, refusing any path that
+// escapes it — including via a symlink. It resolves the workspace root and the
+// deepest *existing* ancestor of the target and requires it to be inside the
+// workspace **before creating anything**, so a symlinked intermediate cannot be
+// used to mkdir outside the workspace. It then creates the remaining parent
+// directories, re-resolves, and (for an existing symlink target) refuses one
+// that resolves outside.
+//
+// Residual: the resolve→read/write pair is not atomic, so a symlink swapped in
+// between is a TOCTOU window; closing it fully needs openat/O_NOFOLLOW, a
+// recorded follow-up.
+func (g *GitSandbox) resolveWithin(path string, createParents bool) (string, error) {
+	root := absAddress(g.workDir())
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	abs := path
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(root, path)
+	}
+	abs = filepath.Clean(abs)
+
+	// The deepest existing ancestor, resolved, must be inside the workspace —
+	// checked BEFORE any mkdir so a symlinked intermediate cannot escape.
+	existing := abs
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			break
+		}
+		existing = parent
+	}
+	resolvedExisting, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", fmt.Errorf("git sandbox: resolve %q: %w", path, err)
+	}
+	if !withinOrEqual(resolvedExisting, root) {
+		return "", fmt.Errorf("git sandbox: path %q escapes the workspace %s", path, root)
+	}
+
+	if createParents {
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			return "", fmt.Errorf("git sandbox: create parent of %q: %w", path, err)
+		}
+	}
+
+	parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		return "", fmt.Errorf("git sandbox: resolve %q: %w", path, err)
+	}
+	if !withinOrEqual(parent, root) {
+		return "", fmt.Errorf("git sandbox: path %q escapes the workspace %s", path, root)
+	}
+
+	target := filepath.Join(parent, filepath.Base(abs))
+	if fi, err := os.Lstat(target); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		resolved, err := filepath.EvalSymlinks(target)
+		if err != nil {
+			return "", fmt.Errorf("git sandbox: resolve symlink %q: %w", path, err)
+		}
+		if !withinOrEqual(resolved, root) {
+			return "", fmt.Errorf("git sandbox: path %q escapes the workspace via a symlink", path)
+		}
+		return resolved, nil
+	}
+	return target, nil
+}
+
+// withinOrEqual reports whether child is parent or lies beneath it.
+func withinOrEqual(child, parent string) bool {
+	if parent == "" {
+		return false
+	}
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // AnnotateDeltaBase implements sbx.DeltaBaseAnnotator: it resolves the fork

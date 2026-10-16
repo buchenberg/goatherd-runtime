@@ -96,8 +96,11 @@ func TestGitSandbox_Capabilities(t *testing.T) {
 	if inPlace.Containment != trace.ContainUncontained {
 		t.Errorf("in-place containment = %q, want %q", inPlace.Containment, trace.ContainUncontained)
 	}
-	if inPlace.Exec || inPlace.FileIO {
-		t.Error("git backend must not claim Exec or FileIO")
+	if inPlace.Exec {
+		t.Error("in-place mode must not claim Exec without WithExec")
+	}
+	if !inPlace.FileIO {
+		t.Error("git backend should support FileIO")
 	}
 
 	worktree := NewWorktreeSandbox(repo, t.TempDir()).Capabilities()
@@ -119,12 +122,6 @@ func TestGitSandbox_UnsupportedMethods(t *testing.T) {
 
 	if _, err := sb.Exec(ctx, sbx.ExecRequest{Command: "true"}); err != sbx.ErrUnsupported {
 		t.Errorf("Exec err = %v, want sbx.ErrUnsupported", err)
-	}
-	if _, err := sb.ReadFile(ctx, "README.md"); err != sbx.ErrUnsupported {
-		t.Errorf("ReadFile err = %v, want sbx.ErrUnsupported", err)
-	}
-	if err := sb.WriteFile(ctx, "x", nil, 0o644); err != sbx.ErrUnsupported {
-		t.Errorf("WriteFile err = %v, want sbx.ErrUnsupported", err)
 	}
 }
 
