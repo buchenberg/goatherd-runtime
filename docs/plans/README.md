@@ -16,7 +16,7 @@ documents when started.
 |---|---|---|---|---|
 | **1** | Linux Landlock containment | jail, contract, probe, may=/grants lowering, placement, evidence, denial classification | [`01-landlock-containment.md`](01-landlock-containment.md) | ✅ implemented |
 | **2** | Reversible execution runs | fork-isolated-by-default, capability-after-fork, discard-on-failure, merge/seal, recorded run operation | [`02-reversible-runs.md`](02-reversible-runs.md) | 🚧 Phases 1–3 done; 4 planned |
-| **3** | Authority declarations & permission-plan compiler | `May[…]`/grant authoring, jail **+ carrier** monitor compiler, `authority_merge`, evidence persistence | — | 📝 scoped |
+| **3** | Authority declarations & permission-plan compiler | `May[…]`/grant authoring, jail **+ carrier** monitor compiler, `authority_merge`, evidence persistence | [`03-authority-and-plan-compiler.md`](03-authority-and-plan-compiler.md) | 📝 scoped |
 | **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | — | 📝 scoped |
 | **5** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
 
