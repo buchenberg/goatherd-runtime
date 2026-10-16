@@ -215,6 +215,10 @@ with the smallest blast radius and **no behavior flip**.
 
 ### Phase 2 — The retention spine (the parity move)
 
+> **Concrete design:** [`07-phase2-retention-spine.md`](07-phase2-retention-spine.md)
+> — the kernel primitive, the `spawn_subagent` → proposal fold, and the new
+> `proposal` settlement tool.
+
 Make the retained run the default for **all** sub-agents; `spawn_subagent`
 returns a **proposal** instead of mutating the host.
 

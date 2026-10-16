@@ -158,8 +158,11 @@ confiner to the one retained launch.
   verify yaah builds against kernel v0.17.0 (up from v0.16.0).
 - **Phase 1:** a thin **confinement seam spike** on the existing retained lane —
   no behavior flip.
-- **Phase 2 (the spine):** every sub-agent dispatch returns a **proposal**;
-  `agents.subagent.mode: retained|shared` (default `retained`).
+- **Phase 2 (the spine):** every sub-agent dispatch returns a **proposal**
+  (kernel `ForkIsolated` + `Seal` + `Settle*`, generalized from the review
+  session); a new `proposal` tool settles it; `agents.subagent.mode:
+  retained|shared` (default `retained`). Concrete design:
+  [`07-phase2-retention-spine.md`](07-phase2-retention-spine.md).
 - **Phase 3:** confinement on the unified retained path;
   `agents.subagent.placement: auto|jail|advisory` (`jail` fails closed),
   `agents.subagent.network` (default `allow_all` — write-jail); record the
