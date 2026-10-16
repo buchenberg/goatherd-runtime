@@ -133,15 +133,123 @@ func TestPlacement_AutoResolves(t *testing.T) {
 	}
 }
 
+func TestDeclaration_MayAndGrants(t *testing.T) {
+	if d := MayDeclaration("ReadOnly", "m1"); d.May != "ReadOnly" || d.Match != "m1" || len(d.Grants) != 0 {
+		t.Fatalf("MayDeclaration = %+v", d)
+	}
+	g := BindingRootGrant{Root: "/x", Writable: true}
+	if d := GrantsDeclaration("m2", g); d.May != "" || d.Match != "m2" || len(d.Grants) != 1 {
+		t.Fatalf("GrantsDeclaration = %+v", d)
+	}
+}
+
+func TestInstall_MayAndGrants(t *testing.T) {
+	root := t.TempDir()
+
+	plan, err := Install(MayDeclaration("ReadOnly", "m1"), root)
+	if err != nil {
+		t.Fatalf("Install(may): %v", err)
+	}
+	if _, ok := plan.Monitor(JailMonitor); !ok {
+		t.Fatal("plan must assign the jail monitor")
+	}
+	if _, ok := plan.Monitor(CarrierMonitor); !ok {
+		t.Fatal("plan must assign the carrier monitor")
+	}
+	spec, err := plan.Confinement()
+	if err != nil {
+		t.Fatalf("Confinement(): %v", err)
+	}
+	if len(spec.WritableRoots) != 0 {
+		t.Fatalf("ReadOnly jail spec = %+v, want no writable roots", spec)
+	}
+
+	rw := filepath.Join(root, "backend")
+	if err := os.MkdirAll(rw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan2, err := Install(GrantsDeclaration("m2", BindingRootGrant{Binding: "backend", Root: rw, Writable: true}), root)
+	if err != nil {
+		t.Fatalf("Install(grants): %v", err)
+	}
+	spec2, err := plan2.Confinement()
+	if err != nil {
+		t.Fatalf("Confinement(): %v", err)
+	}
+	if len(spec2.WritableRoots) != 1 || spec2.WritableRoots[0] != containment.Canonical(rw) {
+		t.Fatalf("grant jail spec = %+v", spec2)
+	}
+}
+
+func TestInstall_CarrierOnly(t *testing.T) {
+	plan := InstallCarrierCheck(CarrierCheckAuthority{EffectiveMatchDigest: "e1", Route: "carrier_diff"})
+	if _, ok := plan.Monitor(JailMonitor); ok {
+		t.Fatal("a carrier-only plan must not assign the jail monitor")
+	}
+	if _, err := plan.Confinement(); !errors.Is(err, ErrPlanEvidence) {
+		t.Fatalf("Confinement() on a carrier-only plan = %v, want ErrPlanEvidence", err)
+	}
+}
+
+func TestInstall_RefusesUnsupported(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Install(MayDeclaration("Standard", "m"), root); !errors.Is(err, ErrUnsupportedMayProfile) {
+		t.Fatalf("want ErrUnsupportedMayProfile, got %v", err)
+	}
+	rw := filepath.Join(root, "rw")
+	_ = os.MkdirAll(rw, 0o755)
+	_, err := Install(Declaration{May: "ReadOnly", Grants: []BindingRootGrant{{Root: rw, Writable: true}}}, root)
+	if err == nil {
+		t.Fatal("a declaration setting both May and Grants must be refused")
+	}
+}
+
 func TestPermissionPlan_DigestStable(t *testing.T) {
-	p := JailPlan("match-1", "spec-1")
+	p := PlanForSpec(containment.ReadOnlySpec(), "match-1")
 	if p.Digest() != p.Digest() {
 		t.Fatal("digest must be stable")
 	}
-	if p.Assignments[0].Monitor != JailMonitor || p.Assignments[0].Fallback != "refuse" {
-		t.Fatalf("assignment = %+v", p.Assignments[0])
+	if p.Fallback != "enforce" {
+		t.Fatalf("fallback = %q, want enforce", p.Fallback)
 	}
-	if JailPlan("match-2", "spec-1").Digest() == p.Digest() {
-		t.Fatal("digest must change with input")
+	if PlanForSpec(containment.ReadOnlySpec(), "match-2").Digest() == p.Digest() {
+		t.Fatal("digest must change with the match digest")
+	}
+}
+
+func TestPermissionPlan_ConfinementIsTheJailSpec(t *testing.T) {
+	want := containment.PermissiveFor(t.TempDir())
+	plan := PlanForSpec(want, "")
+	got, err := plan.Confinement()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.WritableRoots) != len(want.WritableRoots) || got.Network.Mode != want.Network.Mode {
+		t.Fatalf("Confinement() = %+v, want the jail spec %+v", got, want)
+	}
+}
+
+func TestMonitorAssignment_Present(t *testing.T) {
+	plan := PlanForSpec(containment.ReadOnlySpec(), "")
+	jail, ok := plan.Monitor(JailMonitor)
+	if !ok || jail.Timing != TimingPreAction || jail.Confinement == nil {
+		t.Fatalf("jail assignment = %+v", jail)
+	}
+	carrier, ok := plan.Monitor(CarrierMonitor)
+	if !ok || carrier.Timing != TimingCommit || carrier.Confinement != nil {
+		t.Fatalf("carrier assignment = %+v", carrier)
+	}
+}
+
+func TestValidatePlanEvidence(t *testing.T) {
+	p := PlanForSpec(containment.ReadOnlySpec(), "match-1")
+	if err := ValidatePlanEvidence(p.Digest(), p, "", "match-1", ""); err != nil {
+		t.Fatalf("matching evidence should validate: %v", err)
+	}
+	if err := ValidatePlanEvidence("bogus", p, "", "", ""); !errors.Is(err, ErrPlanEvidence) {
+		t.Fatalf("wrong digest: want ErrPlanEvidence, got %v", err)
+	}
+	if err := ValidatePlanEvidence(p.Digest(), p, "", "wrong-match", ""); !errors.Is(err, ErrPlanEvidence) {
+		t.Fatalf("wrong match digest: want ErrPlanEvidence, got %v", err)
 	}
 }

@@ -690,7 +690,7 @@ func (g *GitSandbox) Exec(ctx context.Context, req sbx.ExecRequest) (sbx.ExecRes
 			Stderr:            lr.Stderr,
 			Duration:          time.Since(start),
 			Denied:            containment.DeniedExit(lr),
-			AuthorityEvidence: confinement.Evidence(req.AuthorityMatch, spec).PlanDigest,
+			AuthorityEvidence: confinement.PlanForSpec(spec, req.AuthorityMatch).Digest(),
 		}, nil
 	}
 	return g.advisoryExec(ctx, launchReq, start)

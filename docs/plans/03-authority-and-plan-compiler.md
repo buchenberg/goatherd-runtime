@@ -14,6 +14,13 @@
 > Plan 3 builds the Go authority-declaration surface, the compiler, the evidence
 > chain, and the `authority_merge` disposition — which then unblocks Plan 2
 > Phase 4.
+>
+> **Status:** Phases 1 (declarations) and 2 (the compiler) are implemented in
+> [`sandbox/confinement`](../../sandbox/confinement) — [`declaration.go`](../../sandbox/confinement/declaration.go)
+> and [`plan.go`](../../sandbox/confinement/plan.go). This **supersedes** Plan 1's
+> minimal `PermissionPlan`/`JailPlan` (the git backend now cites
+> `PlanForSpec(...).Digest()`). Phases 3 (consume in `run` + evidence chain) and 4
+> (`authority_merge`) remain.
 
 ## 1. Objective & Context
 
@@ -70,22 +77,22 @@ Go-shaped `authority_merge` disposition.
 
 ## 4. Parity Map (completion checklist)
 
-| # | Python symbol | Go target | Test |
-|---|---|---|---|
-| 1 | task-signature `May[…]` → grants | `confinement.Declaration` (Go authoring surface) | `TestDeclaration_MayAndGrants` |
-| 2 | rebased per-binding grants | `confinement.BindingRootGrant` producer | `TestDeclaration_GrantsRebased` |
-| 3 | `MonitorAssignment` | `confinement.MonitorAssignment` (full fields) | `TestMonitorAssignment_Descriptor` |
-| 4 | `PermissionPlan` (jail-only today) | `confinement.PermissionPlan` (two-monitor) | `TestPermissionPlan_TwoMonitors` |
-| 5 | `PermissionPlan.confinement` | `(*PermissionPlan).Confinement()` | `TestPermissionPlan_ConfinementIsJailSpec` |
-| 6 | `PermissionPlan.digest` / `to_descriptor` | `(*PermissionPlan).Digest()` / `Descriptor()` | `TestPermissionPlan_DigestStable` |
-| 7 | `install(authority, working_path)` | `confinement.Install(decl, workingPath)` | `TestInstall_MayAndGrants` |
-| 8 | `CarrierCheckAuthority` | `confinement.CarrierCheckAuthority` | `TestInstall_CarrierOnly` |
-| 9 | `install` refuses un-enforceable clause | `Install` fail-closed (propagates lowerer errors) | `TestInstall_RefusesUnsupported` |
-| 10 | evidence validation (`validate_permission_plan_evidence`) | `confinement.ValidatePlanEvidence` | `TestValidatePlanEvidence` |
-| 11 | `permission_plan` drives the run's confinement | `run.Options.Plan` → `RunContext.Confinement = plan.Confinement()` | `TestReversible_PlanDrivesConfinement` |
-| 12 | `permission_plan_digest` in the run | the run record carries the **plan** digest (not just the spec digest) | `TestReversible_RecordsPlanDigest` |
-| 13 | `success_disposition == "authority_merge"` | `run` authority-merge disposition + `DecisionProvider` | `TestReversible_AuthorityMerge` |
-| 14 | `merge_with_authority` (cohort lane) | Go simplified analogue (decision gate) | (row 13); richer lane → follow-up |
+| # | Python symbol | Go target | Test | Done |
+|---|---|---|---|---|
+| 1 | task-signature `May[…]` → grants | `confinement.Declaration` (Go authoring surface) | `TestDeclaration_MayAndGrants` | ✅ |
+| 2 | rebased per-binding grants | `confinement.BindingRootGrant` producer | `TestInstall_MayAndGrants` | ✅ |
+| 3 | `MonitorAssignment` | `confinement.MonitorAssignment` (full fields) | `TestMonitorAssignment_Present` | ✅ |
+| 4 | `PermissionPlan` (jail-only today) | `confinement.PermissionPlan` (two-monitor) | `TestInstall_MayAndGrants`, `TestMonitorAssignment_Present` | ✅ |
+| 5 | `PermissionPlan.confinement` | `(*PermissionPlan).Confinement()` | `TestPermissionPlan_ConfinementIsTheJailSpec` | ✅ |
+| 6 | `PermissionPlan.digest` / `to_descriptor` | `(*PermissionPlan).Digest()` / `Descriptor()` | `TestPermissionPlan_DigestStable` | ✅ |
+| 7 | `install(authority, working_path)` | `confinement.Install(decl, workingPath)` | `TestInstall_MayAndGrants` | ✅ |
+| 8 | `CarrierCheckAuthority` | `confinement.CarrierCheckAuthority` | `TestInstall_CarrierOnly` | ✅ |
+| 9 | `install` refuses un-enforceable clause | `Install` fail-closed (propagates lowerer errors) | `TestInstall_RefusesUnsupported` | ✅ |
+| 10 | evidence validation (`validate_permission_plan_evidence`) | `confinement.ValidatePlanEvidence` | `TestValidatePlanEvidence` | ✅ |
+| 11 | `permission_plan` drives the run's confinement | `run.Options.Plan` → `RunContext.Confinement = plan.Confinement()` | `TestReversible_PlanDrivesConfinement` | 🚧 Phase 3 |
+| 12 | `permission_plan_digest` in the run | the run record carries the **plan** digest (not just the spec digest) | `TestReversible_RecordsPlanDigest` | 🚧 Phase 3 |
+| 13 | `success_disposition == "authority_merge"` | `run` authority-merge disposition + `DecisionProvider` | `TestReversible_AuthorityMerge` | 🚧 Phase 4 |
+| 14 | `merge_with_authority` (cohort lane) | Go simplified analogue (decision gate) | (row 13); richer lane → follow-up | 🚧 Phase 4 |
 
 ## 5. Architecture
 
@@ -223,20 +230,20 @@ over the sealed output is the simplified analogue and is recorded as such.
 
 ## 10. Test & conformance matrix
 
-| Test | Action | Expected |
-|---|---|---|
-| `TestDeclaration_MayAndGrants` | build both declaration forms | correct fields; mutually exclusive |
-| `TestInstall_MayAndGrants` | `Install` over `may=` and grants | two-monitor plan; jail spec matches the direct lowerer |
-| `TestInstall_CarrierOnly` | `InstallCarrierCheck` | carrier-only plan; no jail assignment |
-| `TestInstall_RefusesUnsupported` | unsupported `may=` / overlapping roots | propagates `ErrUnsupportedMayProfile` / `ErrOverlappingBoundRoots` |
-| `TestPermissionPlan_ConfinementIsJailSpec` | `plan.Confinement()` | equals the Plan-1 lowerer's spec (behaviour-preserving) |
-| `TestPermissionPlan_DigestStable` | digest twice, then change a field | stable; changes with input |
-| `TestMonitorAssignment_Descriptor` | jail + carrier descriptors | match the schema shape |
-| `TestValidatePlanEvidence` | matching / mismatched evidence | nil / `ErrPlanEvidence` |
-| `TestReversible_PlanDrivesConfinement` | run with `Options.Plan` | `RunContext.Confinement` is the plan's jail spec |
-| `TestReversible_RecordsPlanDigest` | run with a plan | the run record carries `permission_plan_digest` |
-| `TestReversible_AuthorityMerge` | approving / denying `DecisionProvider` | approves→settle; denies→discard + denial |
-| `TestReversible_AuthorityMergeRequiresDecision` | `DispositionAuthorityMerge`, nil `Decision` | validation error |
+| Done | Test | Action | Expected |
+|---|---|---|---|
+| ✅ | `TestDeclaration_MayAndGrants` | build both declaration forms | correct fields; mutually exclusive |
+| ✅ | `TestInstall_MayAndGrants` | `Install` over `may=` and grants | two-monitor plan; jail spec matches the direct lowerer |
+| ✅ | `TestInstall_CarrierOnly` | `InstallCarrierCheck` | carrier-only plan; no jail assignment |
+| ✅ | `TestInstall_RefusesUnsupported` | unsupported `may=` / both May+Grants | propagates `ErrUnsupportedMayProfile` / refuses the mixed declaration |
+| ✅ | `TestPermissionPlan_ConfinementIsTheJailSpec` | `plan.Confinement()` | equals the Plan-1 lowerer's spec (behaviour-preserving) |
+| ✅ | `TestPermissionPlan_DigestStable` | digest twice, then change the match | stable; changes with input |
+| ✅ | `TestMonitorAssignment_Present` | jail + carrier assignments | correct timing; jail carries the spec, carrier does not |
+| ✅ | `TestValidatePlanEvidence` | matching / mismatched evidence | nil / `ErrPlanEvidence` |
+| 🚧 | `TestReversible_PlanDrivesConfinement` | run with `Options.Plan` | `RunContext.Confinement` is the plan's jail spec (Phase 3) |
+| 🚧 | `TestReversible_RecordsPlanDigest` | run with a plan | the run record carries `permission_plan_digest` (Phase 3) |
+| 🚧 | `TestReversible_AuthorityMerge` | approving / denying `DecisionProvider` | approves→settle; denies→discard + denial (Phase 4) |
+| 🚧 | `TestReversible_AuthorityMergeRequiresDecision` | `DispositionAuthorityMerge`, nil `Decision` | validation error (Phase 4) |
 
 ## 11. Parity Comparison: Authority Policy
 
