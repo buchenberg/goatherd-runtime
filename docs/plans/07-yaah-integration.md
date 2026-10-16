@@ -248,8 +248,13 @@ branches. Green on ubuntu/macos/windows.
 **Carried to Phase 3:** the writable root is the worktree **only** (matching the
 runtime's `PermissiveFor`). A confined sub-agent building with a cache outside
 its worktree (`$GOCACHE`, `npm`) would be denied — which is why this lands off by
-default, and why the writable-root set is a Phase-3 decision when the default
-flips to `auto`.
+default, and why the writable-root set is a Phase-3 decision. Phase 3 answered
+the cache half by **redirecting** the environment into the root (PR #339) and the
+`/dev` half by granting that subtree (the runtime's `devWriteRoot`, shipped as
+`sandbox/landlock v0.1.1`) — but the acceptance then found the half the redirect
+cannot answer: a retained worktree's own git metadata lives in the *original*
+repository, so index/object writes are refused. The default therefore stays
+`off`; see Phase 3 below.
 
 ### Phase 2 — The retention spine ✅ done (the parity move)
 
@@ -279,13 +284,13 @@ it); the work was moved onto a branch and landed via PR #338.
 
 ### Phase 3 — Confinement on the unified retained path
 
-> **Status.** **Complete** (yaah PRs #339, #343, #344). The confiner rides the
-> retained workdir lane, the **env redirect + scrub** is in, the **resolved
-> placement is recorded** on the trace (`yaah.subagent.confinement.v1`), and
-> `yaah doctor` reports the capability. The **default is now `auto`**, on the
-> strength of a real acceptance run — which found two showstoppers first (below).
-> The config key stayed **`containment`** (shipped in Phase 1), not the
-> `placement` spelling below.
+> **Status.** **Mechanism complete** (yaah PRs #339, #343, #344). The confiner
+> rides the retained workdir lane, the **env redirect + scrub** is in, the
+> **resolved placement is recorded** on the trace (`yaah.subagent.confinement.v1`),
+> and `yaah doctor` reports the capability. The **default flip to `auto` is
+> BLOCKED** — the acceptance ran, and found a real blocker in the lane the flip
+> would confine (below). Confinement stays opt-in. The config key stayed
+> **`containment`** (shipped in Phase 1), not the `placement` spelling below.
 
 1. ✅ The confiner rides the one retained launch — a retained dispatch sets the
    worktree as the sub-agent's `Workdir`, and the confiner is attached on that
@@ -304,20 +309,19 @@ it); the work was moved onto a branch and landed via PR #338.
    mode / placement; a fail-closed `paddock` with no usable backend is a `FAIL`,
    and an unset setting now reports the real default `auto`).
 
-**Default flip (landed, yaah PR #344):** an unset `agents.subagent.containment`
-means `auto` — jail where the host can, degrade visibly to advisory where it
-cannot. The opt-out is explicit (`off`/`none`/`advisory`), so the unconfined
-host path is a choice rather than an omission. Gated on the acceptance below,
-which is now a test (`TestConfinedBuild_Acceptance`), not a runbook.
+**Default flip (BLOCKED, yaah PR #344):** the intent remains `auto`, but it stays
+`off` (opt-in). The acceptance below — now a test, `TestConfinedBuild_Acceptance`,
+not a runbook — ran and found a blocker in the very lane the flip would confine.
+Flipping is gated on settling that, not on more evidence.
 
-#### The acceptance, and what it found ✅ (yaah PR #344)
+#### The acceptance, and what it found — and why the flip is blocked (yaah PR #344)
 
 The gate Phase 2 used too: a **real** workload under paddock, not a unit test of
-the seam. `TestConfinedBuild_Acceptance` runs a genuine `go build` **and** a
-genuine `git commit` inside a real Landlock jail, then asserts the build cache
-landed in the worktree scratch (so the redirect was in force, not coincidentally
-unnecessary) and that an out-of-root write is still refused. It found two
-showstoppers on its first run — both invisible to the seam tests:
+the seam. `TestConfinedBuild_Acceptance` runs a genuine `go build`, a genuine
+`git config`/`git status`, and a genuine `git add` inside a real Landlock jail,
+in the layout the default lane really uses (a **linked worktree**, not a plain
+checkout — the first version of the test used `git init` and that mistake hid
+everything below). It found three showstoppers, all invisible to the seam tests:
 
 1. **The pinned backend predated the fix.** yaah pinned `sandbox/landlock
    v0.1.0`, which **predates the `/dev` write grant** (below) — so nothing could
@@ -328,18 +332,34 @@ showstoppers on its first run — both invisible to the seam tests:
    merged fix with no tag is not a shipped fix.*
 2. **The redirect hid a read git needs.** Moving `HOME` moves the global git
    config with it, so a confined `git commit` refused with `Author identity
-   unknown`. The redirect now **carries** the global git config into the scratch
-   at git's own precedence (`~/.config/git/config` then `~/.gitconfig`), `0o600`.
-   It deliberately does **not** carry credential stores (`~/.ssh`,
-   `~/.git-credentials`, `~/.npmrc`, `~/.netrc`): copying secrets into a
-   proposal-bearing worktree is a worse trade than requiring the **unconfined
-   worktree bootstrap** — which runs before the body — to prepare authenticated
-   inputs. That keeps the "redirect, don't widen" rule intact: the redirect
-   exists to make *writes* land inside the root, and must not be extended to
-   smuggling credentials in.
+   unknown`. Fixed by a **shim**: `GIT_CONFIG_GLOBAL` points at a scratch file
+   that `include`s the user's real global configs, in git's own order. Not a
+   direct pointer (`GIT_CONFIG_GLOBAL` replaces *both* defaults and takes one
+   path — and a colon-separated list is not honored, verified on git 2.55) and
+   not a copy (a config can carry `http.<url>.extraheader` tokens). The shim
+   carries paths, so nothing enters the worktree, and includes still resolve
+   against the real files. Credential *stores* (`~/.ssh`,
+   `~/.git-credentials`, `~/.npmrc`, `~/.netrc`) are deliberately still not
+   reachable: the **unconfined worktree bootstrap** is where authenticated
+   inputs get prepared.
+3. **The retained lane cannot write git metadata under the jail — the blocker.**
+   A retained dispatch works in a **linked** worktree, whose index and object
+   store live in the original repository's `.git/worktrees/<name>` and
+   `.git/objects`, outside the sole writable root. So inside the jail
+   `git status`/`config`/`diff` work and `git add` dies with
+   `index.lock: Permission denied`. The fix cannot be "also grant `<repo>/.git`":
+   that hands a confined sub-agent write access to the host repository's refs and
+   objects, exactly what retention exists to prevent. **So the flip is blocked**,
+   and the acceptance pins the gap (the leg fails if it ever starts passing, so
+   it cannot go stale). Settling it means deciding the lane's git-write story —
+   the orchestrator settles, so a sub-agent need not commit — not widening the
+   jail.
 
-Both are pinned: disabling the carry, or re-pinning v0.1.0, fails the
-acceptance.
+All three are pinned by the acceptance: disabling the redirect's shim, or
+re-pinning v0.1.0, fails it.
+
+**Still open before the flip:** the git-write story for the retained lane (#3
+above), and the `network` config beyond its default.
 
 #### The writable-root problem — solved by redirecting ✅ (yaah PR #339)
 
@@ -430,8 +450,9 @@ meet.
 | 3 | `TestSubAgent_RecordsResolvedPlacement` | advisory vs jailed dispatch | the trace records which resolved |
 | 3 | `TestConfig_Placement` | `auto`/`jail`/`advisory` | selects the placement; `jail` fails closed |
 | 3 | `TestDoctor_Containment` | `yaah doctor` | reports the ABI / advisory; an unset setting reports the real default (`auto`) |
-| 3 | `TestConfinedBuild_Acceptance` | a real `go build` + `git commit` under paddock | both succeed; the build cache lands in the worktree scratch; an out-of-root write is still refused |
-| 3 | `TestConfinementScratchEnv_CarriesGitIdentity` | a global `~/.gitconfig` and the redirect | the config is carried into the scratch, `0o600`, at git's own precedence |
+| 3 | `TestConfinedBuild_Acceptance` | a real `go build`, `git config`, `git status` and `git add` under paddock, in a LINKED worktree | the build succeeds and its cache lands in the worktree scratch; both halves of a split global identity resolve; read-only git works; **`git add` is refused by the kernel (the pinned blocker — the flip stays gated)**; an out-of-root write is still refused |
+| 3 | `TestConfinementScratchEnv_PointsGitAtGlobalConfig` | global configs (both, one, none, pre-set pointer) and the redirect | a shim includes whichever real files exist, in git's order, carrying paths not values |
+| 3 | `TestConfinementScratchEnv_RefusesSymlinkedScratch` | `.yaah-scratch` (or its `home`) planted as a symlink | refused before anything is created; the target is untouched |
 
 ## 9. Risks & Mitigations
 
@@ -449,6 +470,13 @@ meet.
   with no tag is not a shipped fix. Mitigated by tagging on merge for any
   boundary-relevant fix, and by the acceptance below, which fails loudly against
   a stale pin rather than degrading silently.
+- **Confinement vs. a linked worktree's git metadata.** A retained worktree's
+  index and object store live in the *original* repository's `.git`, outside the
+  jail's writable root, so a confined sub-agent cannot `git add`/`commit` there.
+  *Mitigation:* the default stays `off`, and the acceptance pins the gap so it
+  cannot be missed or go stale. Widening the jail to include `<repo>/.git` is
+  explicitly rejected — it would give a confined sub-agent write access to the
+  host repository, which retention exists to prevent.
 - **macOS / Windows** (no jail). *Mitigation:* `auto` → advisory ⇒ today's behavior.
 - **The trampoline hook is load-bearing** (rc 3 → `ErrPaddockNotEstablished`).
   *Mitigation:* install it and assert (#5).

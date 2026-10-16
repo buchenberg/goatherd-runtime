@@ -168,9 +168,14 @@ confiner to the one retained launch.
   [`07-phase2-retention-spine.md`](07-phase2-retention-spine.md).
 - **Phase 3:** confinement on the unified retained path — the **env redirect**
   (`HOME`/`TMPDIR`/`GOCACHE` → a scratch inside the worktree, scrubbed before
-  `Seal`) is ✅ in (PR #339), as is doctor's capability check and the runtime
-  `/dev` allowance (PR #4). Open: recording the resolved placement, and flipping
-  `containment` to `auto` (gated on an acceptance run).
+  `Seal`) is ✅ in (PR #339), as is doctor's capability check, the runtime `/dev`
+  allowance (PR #4, shipped as `sandbox/landlock v0.1.1`) and recording the
+  resolved placement (PRs #343/#344). **The flip to `auto` is BLOCKED, not
+  pending:** the acceptance (PR #344) found that a retained dispatch works in a
+  **linked** worktree whose git metadata lives outside the jail's writable root,
+  so a confined `git add`/`commit` is refused — and the fix cannot be granting
+  `<repo>/.git`. Confinement stays opt-in until that lane's git-write story is
+  settled.
 - **Mandatory:** `landlock.MaybeRunTrampoline(os.Args)` in `yaah/main.go`.
 - See [`07-yaah-integration.md`](07-yaah-integration.md), incl. §11 (Python
   parity).
