@@ -219,18 +219,37 @@ so nested modules are uncovered — the exact hole that let the Landlock `replac
 linger; the runtime `CHANGELOG` still reads `[Unreleased]` (the kernel convention
 renames it after tagging); and Plan 7's own branch is unmerged.
 
-### Phase 1 — Confinement seam spike (thin, on the existing retained lane)
+### Phase 1 — Confinement seam spike ✅ done
 
-The runtime primitives are done; the **yaah** wiring is unproven. This phase
-de-risks only the seam, on the lane that already exists (`supervised_task`),
-with the smallest blast radius and **no behavior flip**.
+The runtime primitives were done; the **yaah** wiring was unproven. This phase
+de-risked only the seam, on the lane that already exists (the sub-agent workdir
+dispatch), with the smallest blast radius and **no behavior flip** (PR #337).
 
-1. Add the confiner fields + `newConfinedLocalWorkspace` (§6.2).
-2. Attach it in the sub-agent registry's workdir block (§6.3), writable root =
-   the worktree.
-3. Install the trampoline hook (§6.4); validate stream capture
-   (`SeparateStreams`) and the rc-3 fail-closed path.
-4. **Leave the orchestrator untouched** — assert it (#1).
+1. ✅ `localWorkspace` gained an optional confiner; `NewConfinedLocalWorkspace`
+   runs `Exec` under the syscall jail with the workspace as the sole writable
+   root. Placement resolves it: `paddock` fails closed, `auto` degrades to
+   advisory, `advisory` never jails.
+2. ✅ Attached in the sub-agent registry's workdir block (`runner.go`), **guarded
+   on `workdir != ""`** — only the retained lane has a bound world to jail
+   against. Gated on the new `agents.subagent.containment`
+   (`off|advisory|auto|paddock`, **default `off`** → no behavior flip); an
+   unknown value is rejected at config validation.
+3. ✅ Trampoline hook installed in `main.go` (`TestMain` mirrors it for the
+   `tools` tests). The rc-3 fail-closed path is covered (`paddock` + no backend
+   refuses); a failed jail launch now returns its error, not a silent success.
+4. ✅ The orchestrator stays untouched — `TestOrchestrator_ExecUnconfined` pins
+   that a host write *outside* the workspace still succeeds.
+
+Tests: `TestConfinedWorkspace_WriteOutsideDenied` proves **real** Landlock
+(in-root write lands, outside is refused); `..._AdvisoryWhenNoBackend`,
+`..._PaddockFailsClosed`, `..._BoundBackendUnavailable*` cover the placement
+branches. Green on ubuntu/macos/windows.
+
+**Carried to Phase 3:** the writable root is the worktree **only** (matching the
+runtime's `PermissiveFor`). A confined sub-agent building with a cache outside
+its worktree (`$GOCACHE`, `npm`) would be denied — which is why this lands off by
+default, and why the writable-root set is a Phase-3 decision when the default
+flips to `auto`.
 
 ### Phase 2 — The retention spine (the parity move)
 

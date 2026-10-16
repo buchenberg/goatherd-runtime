@@ -158,8 +158,9 @@ confiner to the one retained launch.
   `sandbox/landlock/v0.1.0` published (the nested module's dev `replace`
   dropped); yaah ported onto the split modules (kernel v0.17.0 + runtime
   v0.17.0) — a pure import rewrite across 44 files.
-- **Phase 1:** a thin **confinement seam spike** on the existing retained lane —
-  no behavior flip.
+- **Phase 1:** ✅ done — the confinement seam (PR #337): the trampoline hook,
+  a confiner on `localWorkspace`, and the sub-agent workdir lane attaching it
+  under the new `agents.subagent.containment` (default off — no behavior flip).
 - **Phase 2 (the spine):** every sub-agent dispatch returns a **proposal**
   (kernel `ForkIsolated` + `Seal` + `Settle*`, generalized from the review
   session); a new `proposal` tool settles it; `agents.subagent.mode:
