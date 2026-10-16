@@ -161,7 +161,7 @@ func normalizeHost(h string) string {
 // error (the caller fails closed).
 func (p EgressPolicy) Decide(host string, port int) (EgressDecision, error) {
 	host = normalizeHost(host)
-	allow, escalate := false, false
+	allow, deny, escalate := false, false, false
 	for _, g := range p.grants {
 		ok, err := g.Admits(host)
 		if err != nil {
@@ -170,13 +170,18 @@ func (p EgressPolicy) Decide(host string, port int) (EgressDecision, error) {
 		if !ok {
 			continue
 		}
-		if g.Verdict == VerdictEscalate {
+		switch g.Verdict {
+		case VerdictDeny:
+			deny = true
+		case VerdictEscalate:
 			escalate = true
-		} else {
+		default: // "" or VerdictAllow
 			allow = true
 		}
 	}
 	switch {
+	case deny:
+		return EgressDecision{Host: host, Port: port, Verdict: VerdictDeny, Kind: "broker:connect-denied"}, nil
 	case allow:
 		return EgressDecision{Host: host, Port: port, Verdict: VerdictAllow, Kind: "broker:connect-allowed"}, nil
 	case escalate:

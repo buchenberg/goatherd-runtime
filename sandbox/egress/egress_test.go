@@ -76,6 +76,14 @@ func TestEgressPolicy_DenyWins(t *testing.T) {
 	}
 }
 
+func TestEgressPolicy_DenyVerdict(t *testing.T) {
+	g := HostGrant{Positive: []HostAtom{{Op: "exact", Value: "x.com"}}, Verdict: VerdictDeny}
+	p := PolicyFromGrants(g)
+	if d, _ := p.Decide("x.com", 443); d.Verdict != VerdictDeny {
+		t.Fatalf("a VerdictDeny grant must deny (deny wins), got %+v", d)
+	}
+}
+
 func TestBroker_AllowsAndDenies(t *testing.T) {
 	echo, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

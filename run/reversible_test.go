@@ -162,6 +162,20 @@ func TestReversible_RefusesWithoutBackend(t *testing.T) {
 	}
 }
 
+func TestReversible_UnknownDisposition(t *testing.T) {
+	mgr := newManager(t)
+	parent, _ := newParent(t, mgr, "run:unk-main")
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:     "run:unk-1",
+		Disposition: Disposition("bogus"),
+	}, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, nil
+	})
+	if err == nil {
+		t.Fatal("an unknown disposition must be refused")
+	}
+}
+
 func TestReversible_AuthorityMerge(t *testing.T) {
 	mgr := newManager(t)
 	parent, repo := newParent(t, mgr, "run:am-main")

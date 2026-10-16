@@ -925,9 +925,9 @@ func (g *GitSandbox) WriteFile(_ context.Context, path string, data []byte, perm
 // between is a TOCTOU window; closing it fully needs openat/O_NOFOLLOW, a
 // recorded follow-up.
 func (g *GitSandbox) resolveWithin(path string, createParents bool) (string, error) {
-	root, err := filepath.EvalSymlinks(g.workDir())
-	if err != nil {
-		root = absAddress(g.workDir())
+	root := absAddress(g.workDir())
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
 	}
 	abs := path
 	if !filepath.IsAbs(abs) {

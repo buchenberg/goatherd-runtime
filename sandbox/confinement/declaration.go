@@ -27,8 +27,14 @@ func MayDeclaration(may, match string) Declaration {
 	return Declaration{May: may, Match: match}
 }
 
-// GrantsDeclaration declares per-binding grants.
+// GrantsDeclaration declares per-binding grants. An empty grant list is a valid
+// declaration — it lowers to ReadOnly (no writable root), not to the Permissive
+// default; the distinction from "no declaration" (a zero Declaration) is the
+// non-nil Grants slice.
 func GrantsDeclaration(match string, grants ...BindingRootGrant) Declaration {
+	if grants == nil {
+		grants = []BindingRootGrant{}
+	}
 	return Declaration{Grants: grants, Match: match}
 }
 
@@ -40,20 +46,22 @@ func GrantsDeclaration(match string, grants ...BindingRootGrant) Declaration {
 // Mirrors dialect/permission_plan.py:install — the seam where the paddock lane and
 // the carrier lane meet in one plan instead of running side by side.
 func Install(decl Declaration, workingPath string) (PermissionPlan, error) {
-	switch {
-	case decl.May != "" && len(decl.Grants) > 0:
+	if decl.May != "" && decl.Grants != nil {
 		return PermissionPlan{}, errors.New("confinement: a declaration cannot set both May and Grants")
-	case len(decl.Grants) > 0:
+	}
+	if decl.Grants != nil {
+		// Per-binding grants — roots already absolute. An empty set is ReadOnly
+		// (no writable root), matching lower_grants_to_confinement([]); it does
+		// not fall through to the Permissive default.
 		spec, err := LowerGrants(decl.Grants)
 		if err != nil {
 			return PermissionPlan{}, err
 		}
 		return PlanForSpec(spec, decl.Match), nil
-	default:
-		spec, err := LowerMay(decl.May, workingPath)
-		if err != nil {
-			return PermissionPlan{}, err
-		}
-		return PlanForSpec(spec, decl.Match), nil
 	}
+	spec, err := LowerMay(decl.May, workingPath)
+	if err != nil {
+		return PermissionPlan{}, err
+	}
+	return PlanForSpec(spec, decl.Match), nil
 }

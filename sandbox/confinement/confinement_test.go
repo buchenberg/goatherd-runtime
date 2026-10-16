@@ -181,6 +181,20 @@ func TestInstall_MayAndGrants(t *testing.T) {
 	}
 }
 
+func TestInstall_EmptyGrantsIsReadOnly(t *testing.T) {
+	plan, err := Install(GrantsDeclaration("m"), t.TempDir())
+	if err != nil {
+		t.Fatalf("Install(empty grants): %v", err)
+	}
+	spec, err := plan.Confinement()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.WritableRoots) != 0 || spec.Network.Mode != containment.NetDenyAll {
+		t.Fatalf("empty grants must lower to ReadOnly, got %+v", spec)
+	}
+}
+
 func TestInstall_CarrierOnly(t *testing.T) {
 	plan := InstallCarrierCheck(CarrierCheckAuthority{EffectiveMatchDigest: "e1", Route: "carrier_diff"})
 	if _, ok := plan.Monitor(PaddockMonitor); ok {

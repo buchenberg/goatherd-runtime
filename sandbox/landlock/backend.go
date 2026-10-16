@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
@@ -103,9 +104,12 @@ func (b *Backend) ProfileFor(roots []string, network containment.NetworkPolicy) 
 func (b *Backend) Probe(profile, workingRoot string, roots []string) error {
 	wd := containment.Canonical(workingRoot)
 	canonicalRoots := canonicalAll(roots)
+	// A per-probe unique tag so the probe never collides with — or deletes — a
+	// real workspace file that happens to share a fixed probe name.
+	tag := probeTag()
 
 	// (1) liveness: an out-of-WORKDIR write must be denied.
-	denied, err := b.probeDenied(profile, wd, filepath.Join(filepath.Dir(wd), ".paddock-probe"))
+	denied, err := b.probeDenied(profile, wd, filepath.Join(filepath.Dir(wd), tag+"-liveness"))
 	if err != nil {
 		return err
 	}
@@ -115,7 +119,7 @@ func (b *Backend) Probe(profile, workingRoot string, roots []string) error {
 
 	// (2) per-root: each declared writable root must accept writes.
 	for _, root := range canonicalRoots {
-		denied, err := b.probeDenied(profile, wd, filepath.Join(root, ".paddock-probe-canary"))
+		denied, err := b.probeDenied(profile, wd, filepath.Join(root, tag+"-canary"))
 		if err != nil {
 			return err
 		}
@@ -128,7 +132,7 @@ func (b *Backend) Probe(profile, workingRoot string, roots []string) error {
 	// (3) deny-closed: an in-WORKDIR path outside every writable root must be
 	// denied, catching a ReadOnly run mis-lowered to a writable WORKDIR.
 	if !withinAnyRoot(wd, canonicalRoots) {
-		denied, err := b.probeDenied(profile, wd, filepath.Join(wd, ".paddock-probe-denied"))
+		denied, err := b.probeDenied(profile, wd, filepath.Join(wd, tag+"-denied"))
 		if err != nil {
 			return err
 		}
@@ -256,6 +260,15 @@ func (b *Backend) invoke(sentinel, profile, dir string, extra, env []string, std
 		return -1, stdout.String(), stderr.String(), fmt.Errorf("landlock: run trampoline: %w", runErr)
 	}
 	return 0, stdout.String(), stderr.String(), nil
+}
+
+// probeSeq is a process-wide counter for unique probe canary names, so a probe
+// never collides with (or deletes) a real workspace file.
+var probeSeq atomic.Uint64
+
+// probeTag returns a per-probe unique name.
+func probeTag() string {
+	return fmt.Sprintf(".paddock-probe-%d-%d", os.Getpid(), probeSeq.Add(1))
 }
 
 // withinAnyRoot reports whether p is one of roots or lies beneath one.

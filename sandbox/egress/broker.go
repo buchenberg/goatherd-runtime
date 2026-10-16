@@ -35,7 +35,11 @@ type Broker struct {
 func NewBroker(policy EgressPolicy) *Broker { return &Broker{policy: policy} }
 
 // SetOnDecision installs a sink called for every decision (the evidence seam).
-func (b *Broker) SetOnDecision(f func(EgressDecision)) { b.onDecision = f }
+func (b *Broker) SetOnDecision(f func(EgressDecision)) {
+	b.mu.Lock()
+	b.onDecision = f
+	b.mu.Unlock()
+}
 
 // Start binds a loopback listener and serves in the background, returning the
 // bound port.

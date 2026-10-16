@@ -182,6 +182,11 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 	if opts.NonReversible && disposition != DispositionMerge {
 		return Outcome{}, fmt.Errorf("run: a non-reversible run cannot use disposition %q (mirrors non_reversible_run validation)", disposition)
 	}
+	switch disposition {
+	case DispositionMerge, DispositionSeal, DispositionAuthorityMerge:
+	default:
+		return Outcome{}, fmt.Errorf("run: unknown disposition %q", disposition)
+	}
 	if opts.Plan != nil && opts.Confinement != nil {
 		return Outcome{}, errors.New("run: Options.Plan is mutually exclusive with Confinement")
 	}
