@@ -30,7 +30,7 @@ test matrix. Plans 1–5 and 7 are written (1–3 implemented; 4, 5, 7 scoped/pa
 | **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | [`04-egress-and-seatbelt.md`](04-egress-and-seatbelt.md) | 🚧 Phases 2–3 (Linux) done; 1 (Seatbelt) planned |
 | **5** | Container-tier parity | overlay changes → typed effects, the `copy` carrier, the `clonefile` carrier | [`05-container-tier.md`](05-container-tier.md) | 📝 scoped |
 | **6** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
-| **7** | yaah integration (Level A) | Landlock write-jail on yaah's local exec path; config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | 📝 scoped |
+| **7** | yaah integration | Landlock confinement on yaah's **sub-agent** worktree path (orchestrator stays host-normal); config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | 📝 scoped |
 
 ## Plan 1 — Linux Landlock containment (done)
 
@@ -137,24 +137,28 @@ object-based paddock. Go can install cBPF via `SECCOMP_SET_MODE_FILTER`, but the
 filter is arch-specific and fiddly; defer until a concrete need (untrusted code
 without containerd) justifies it.
 
-## Plan 7 — yaah integration (Level A)
+## Plan 7 — yaah integration (shepherd mechanics for sub-agents)
 
-**Wire the write-jail into the host.** `yaah` runs local commands directly
-(`localWorkspace.Exec` → `exec.CommandContext`, `internal/tools/workspace.go:179`)
-and does **not** depend on the runtime. This plan swaps that one method for
-`containment.LaunchConfined(landlock.Detect(), spec, req)` — a Landlock write-jail
-over the workspace (`WritableRoots = [WorkDir()]`), with no change to the agent
-loop. Everything else (the container `croft` backend) is untouched; a jail-less
-host falls back to today's behavior.
+**The orchestrating agent runs as normal on the HOST; the shepherd mechanics —
+scope isolation, Landlock confinement, checkpoint/rollback — apply to
+SUB-AGENTS only.** That is the Terminal-Bench-proven model, and the plan does not
+confine the orchestrator.
+
+yaah already has the shepherd *sub-agent* path: a **workdir dispatch** roots the
+sub-agent's validator at its worktree (`runner.go:984`) and forks an **isolated**
+worktree scope (`ForkIsolated`, `runner.go:877-883`) — the path `supervised_task`
+uses. What it lacks is the **kernel boundary**: the sub-agent's shell still runs
+`exec.CommandContext` on the host, bounded by the worktree only *lexically*. This
+plan attaches a Landlock confiner there (writable root = that worktree), in one
+place, and leaves the orchestrator's `localWorkspace` untouched.
 
 - **Prerequisite (Phase 0):** tag the runtime + `sandbox/landlock` (drop the dev
   `replace`); verify yaah builds against kernel v0.17.0 (up from v0.16.0).
-- **Config:** `workspace.containment: auto|jail|off` (→ `Placement` `auto`/
-  `paddock`/`advisory`), `workspace.network: allow_all|deny_all|broker`
-  (default `allow_all` — a *write*-jail; egress opt-in).
+- **Config:** `agents.subagent.containment: auto|jail|off`, `agents.subagent.network:
+  allow_all|deny_all|broker` (default `allow_all` — write-jail; egress opt-in).
 - **Mandatory:** `landlock.MaybeRunTrampoline(os.Args)` in `yaah/main.go`.
-- **Level B** (reversible runs) is a later phase. See
-  [`07-yaah-integration.md`](07-yaah-integration.md).
+- **Level B** (reversibility for every sub-agent, not just `supervised_task`) is a
+  later phase. See [`07-yaah-integration.md`](07-yaah-integration.md).
 
 ## Small items
 
