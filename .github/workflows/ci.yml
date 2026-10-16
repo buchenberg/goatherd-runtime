@@ -3,7 +3,9 @@ name: ci
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    # Every tag triggers CI: a nested module tags as `<subdir>/vX.Y.Z`
+    # (e.g. sandbox/landlock/v0.1.0), which a `v*` filter would silently skip.
+    tags: ['**']
   pull_request:
     branches: [main]
 
@@ -48,10 +50,26 @@ jobs:
       - name: build
         run: go build -trimpath ./...
 
+      # `go test ./...` from the root does NOT cross a nested module boundary,
+      # so the nested modules (e.g. sandbox/landlock) were previously tested by
+      # nothing. Build, vet, and test each one explicitly. Linux-only tests are
+      # excluded on other OSes by their build tags.
+      - name: nested modules (build, vet, test)
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r mod; do
+            dir="$(dirname "$mod")"
+            if [ "$dir" = "." ]; then continue; fi
+            echo "::group::nested module ${dir}"
+            ( cd "$dir" && go build ./... && go vet ./... && go test -count=1 ./... )
+            echo "::endgroup::"
+          done < <(find . -name go.mod -not -path './.git/*' -not -path '*/testdata/*' -not -path './vendor/*' | sort)
+
   release-verify:
     name: release verify (tagged module)
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: checkout the tag
         uses: actions/checkout@v4
@@ -64,22 +82,48 @@ jobs:
 
       # A tagged module must be consumable from the module proxy's point of
       # view: no replace directives (a relative ../.. replace makes the
-      # published module unbuildable). Remove the local-dev replace before
-      # tagging, pinning `require ... vX.Y.Z` to a tagged kernel instead.
-      - name: no replace directives in tagged modules
+      # published module unbuildable). Scan EVERY go.mod in the tagged tree,
+      # not just the root -- a nested module's replace shipped unnoticed once
+      # because this loop only looked at ./go.mod.
+      - name: no replace directives in any tagged module
         run: |
           fail=0
-          for mod in go.mod; do
-            if grep -nE '^\s*replace\s' "$mod"; then
-              echo "::error::$mod in tag ${GITHUB_REF_NAME} contains a replace directive -- the published module would be unbuildable; pin a tagged kernel instead"
+          while IFS= read -r mod; do
+            if grep -nE '^[[:space:]]*replace[[:space:]]' "$mod"; then
+              echo "::error::$mod in tag ${GITHUB_REF_NAME} contains a replace directive -- the published module would be unbuildable; pin a tagged dependency instead"
               fail=1
             fi
-          done
+          done < <(find . -name go.mod -not -path './.git/*' -not -path '*/testdata/*' -not -path './vendor/*' | sort)
           exit $fail
 
-      - name: module resolves and builds from a clean consumer
+      # Map the tag to the module it releases and prove it resolves from a
+      # clean consumer. A root tag is `vX.Y.Z`; a nested module tags its
+      # subdirectory (`<subdir>/vX.Y.Z`), whose module path is
+      # `<repo-module>/<subdir>`.
+      - name: module resolves from a clean consumer
         run: |
+          set -euo pipefail
+          REPO_MODULE="github.com/buchenberg/shepherd-runtime-go"
           tag="${GITHUB_REF_NAME}"
+          # A root tag is `vX.Y.Z`; a nested module tags its subdirectory
+          # (`<subdir>/vX.Y.Z`, module path `<repo-module>/<subdir>`). Split on
+          # the slash, not on a leading `v`: a subdir can start with `v`
+          # (e.g. `vendor/.../v1.2.3`), which a `v*` test would misread as root.
+          if [[ "$tag" == */* ]]; then
+            subdir="${tag%/*}"
+            ver="${tag##*/}"
+            mod="$REPO_MODULE/$subdir"
+          else
+            mod="$REPO_MODULE"
+            ver="$tag"
+          fi
+          # `tags: ['**']` fires this job for every tag; only version tags name
+          # a module release, so skip the rest rather than fabricate one.
+          if [[ ! "$ver" =~ ^v[0-9] ]]; then
+            echo "tag ${tag} is not a module version tag (last segment ${ver}); nothing to verify"
+            exit 0
+          fi
+          echo "tag ${tag} -> ${mod}@${ver}"
           ( cd "$(mktemp -d)" && go mod init verify >/dev/null && \
-            go get "github.com/buchenberg/shepherd-runtime-go@${tag}" )
-          echo "tag ${GITHUB_REF_NAME} resolves end-to-end from a clean module context"
+            go get "${mod}@${ver}" )
+          echo "tag ${tag} resolves end-to-end from a clean module context"
