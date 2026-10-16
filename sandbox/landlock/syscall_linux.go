@@ -112,13 +112,21 @@ func supportsNetwork() bool {
 
 // devWriteRoot is the one non-workspace path every profile grants writes to:
 // /dev, for /dev/null, /dev/zero, /dev/tty, and friends. It mirrors Seatbelt's
-// _DEV (_seatbelt_containment.py:25), which every Python profile allows.
+// _DEV (_seatbelt_containment.py:25), which appends
+// `(allow file-write* (subpath "/dev"))` to every Python profile.
 //
-// Landlock governs writes by the paths a ruleset covers, so without this a
-// confined body cannot even run `cmd > /dev/null` — which shells, `go test`,
-// and build tools do constantly. It is granted as an always-present rule (not
-// a "writable root"): it is not part of the spec, never probed, and does not
-// appear in the profile a caller compiles.
+// WHY THE WHOLE SUBTREE, not just the device nodes: landlock_add_rule with
+// LANDLOCK_RULE_PATH_BENEATH requires a DIRECTORY — a rule on a device file
+// (/dev/null) is rejected with EINVAL — and Landlock has no deny rules, so a
+// subpath cannot be carved back out. The only way to allow /dev/null (which
+// shells, `go test`, and build tools write constantly) is to grant /dev. The
+// cost is that the world-writable tmpfs mounts /dev/shm and /dev/mqueue come
+// with it — the same trade-off Seatbelt makes; the alternative is denying
+// /dev/null outright.
+//
+// It is granted as an always-present rule (not a "writable root"): it is not
+// part of the spec, never probed, and does not appear in the profile a caller
+// compiles.
 const devWriteRoot = "/dev"
 
 // confine restricts the calling thread — and, through it, its children — so that
@@ -164,18 +172,19 @@ func confine(roots []string, net netPolicy) error {
 		}
 	}
 
-	// /dev is granted in every profile, like Seatbelt's _DEV: a confined body
-	// opens /dev/null and friends routinely, and Landlock denies any path no
-	// rule covers. The open is best-effort (a missing /dev is not a confine
-	// failure), but a failed add_rule fails closed.
-	if dirfd, err := unix.Open(devWriteRoot, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0); err == nil {
-		rule := pathBeneathAttr{AllowedAccess: WriteAccessMask, ParentFD: int32(dirfd)}
-		_, _, addErr := unix.Syscall6(sysAddRule, fd, rulePathBeneath,
-			uintptr(unsafe.Pointer(&rule)), 0, 0, 0)
-		_ = unix.Close(dirfd)
-		if addErr != 0 {
-			return fmt.Errorf("landlock_add_rule %q: %w", devWriteRoot, addErr)
-		}
+	// /dev is granted in every profile, like Seatbelt's _DEV. See devWriteRoot
+	// for why the whole subtree (landlock_add_rule needs a directory, so a
+	// single device file cannot be granted). A failed add is fail-closed.
+	devfd, err := unix.Open(devWriteRoot, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open %q: %w", devWriteRoot, err)
+	}
+	devRule := pathBeneathAttr{AllowedAccess: WriteAccessMask, ParentFD: int32(devfd)}
+	_, _, devErr := unix.Syscall6(sysAddRule, fd, rulePathBeneath,
+		uintptr(unsafe.Pointer(&devRule)), 0, 0, 0)
+	_ = unix.Close(devfd)
+	if devErr != 0 {
+		return fmt.Errorf("landlock_add_rule %q: %w", devWriteRoot, devErr)
 	}
 
 	if net.Mode == "broker" {
