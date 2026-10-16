@@ -375,3 +375,105 @@ func TestVerifyHandler_RefusesWithoutCapability(t *testing.T) {
 		t.Fatal("a handler refusing with the wrong error must fail conformance")
 	}
 }
+
+func TestReversible_PlanDrivesConfinement(t *testing.T) {
+	mgr := newManager(t)
+	parent, repo := newParent(t, mgr, "run:plan-main")
+	plan, err := confinement.Install(confinement.MayDeclaration("ReadOnly", "match-1"), repo)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	var got containment.ConfinementSpec
+	if _, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:    "run:plan-1",
+		Plan:       &plan,
+		NewSandbox: worktreeFactory(t, repo),
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		got = rc.Confinement
+		return Result{}, nil
+	}); err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+	if len(got.WritableRoots) != 0 || got.Network.Mode != containment.NetDenyAll {
+		t.Fatalf("the plan must drive the run's confinement; got %+v", got)
+	}
+}
+
+func TestReversible_RecordsPlanDigest(t *testing.T) {
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
+	repo := gittest.NewTestRepo(t)
+	parent, err := mgr.Create("run:pd-main", git.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := confinement.Install(confinement.MayDeclaration("Permissive", "match-1"), repo)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	if _, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:    "run:pd-1",
+		Plan:       &plan,
+		NewSandbox: worktreeFactory(t, repo),
+	}, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, nil
+	}); err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+
+	recs, err := trace.ScanRecordsBySchema(context.Background(), store, SchemaRunExecuted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("run records = %d, want 1", len(recs))
+	}
+	if recs[0].Payload["permission_plan_digest"] != plan.Digest() {
+		t.Fatalf("permission_plan_digest = %v, want %s", recs[0].Payload["permission_plan_digest"], plan.Digest())
+	}
+	if recs[0].Payload["permission_plan_descriptor"] == nil {
+		t.Fatal("run record must carry the plan descriptor")
+	}
+}
+
+func TestReversible_CarrierOnlyPlanRefuses(t *testing.T) {
+	mgr := newManager(t)
+	parent, _ := newParent(t, mgr, "run:co-main")
+	plan := confinement.InstallCarrierCheck(confinement.CarrierCheckAuthority{EffectiveMatchDigest: "e1"})
+
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID: "run:co-1",
+		Plan:    &plan,
+		NewSandbox: func(string) (sandbox.Sandbox, error) {
+			return nil, errors.New("NewSandbox must not be called for a plan with no jail clause")
+		},
+	}, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, nil
+	})
+	if !errors.Is(err, confinement.ErrPlanEvidence) {
+		t.Fatalf("carrier-only plan: want ErrPlanEvidence, got %v", err)
+	}
+	if len(parent.Children()) != 0 {
+		t.Fatal("a plan with no jail clause must not allocate a scope")
+	}
+}
+
+func TestReversible_PlanMutuallyExclusive(t *testing.T) {
+	mgr := newManager(t)
+	parent, _ := newParent(t, mgr, "run:mx-main")
+	plan := confinement.InstallCarrierCheck(confinement.CarrierCheckAuthority{})
+	spec := containment.ReadOnlySpec()
+
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:     "run:mx-1",
+		Plan:        &plan,
+		Confinement: &spec,
+	}, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, nil
+	})
+	if err == nil {
+		t.Fatal("Options.Plan with Options.Confinement must be refused")
+	}
+}

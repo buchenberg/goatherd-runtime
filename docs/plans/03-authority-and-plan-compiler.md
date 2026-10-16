@@ -15,12 +15,12 @@
 > chain, and the `authority_merge` disposition — which then unblocks Plan 2
 > Phase 4.
 >
-> **Status:** Phases 1 (declarations) and 2 (the compiler) are implemented in
-> [`sandbox/confinement`](../../sandbox/confinement) — [`declaration.go`](../../sandbox/confinement/declaration.go)
-> and [`plan.go`](../../sandbox/confinement/plan.go). This **supersedes** Plan 1's
+> **Status:** Phases 1 (declarations), 2 (the compiler), and 3 (consume in `run`
+> + the evidence chain) are implemented in
+> [`sandbox/confinement`](../../sandbox/confinement) and
+> [`run/reversible.go`](../../run/reversible.go). This **supersedes** Plan 1's
 > minimal `PermissionPlan`/`JailPlan` (the git backend now cites
-> `PlanForSpec(...).Digest()`). Phases 3 (consume in `run` + evidence chain) and 4
-> (`authority_merge`) remain.
+> `PlanForSpec(...).Digest()`). Phase 4 (`authority_merge`) remains.
 
 ## 1. Objective & Context
 
@@ -89,8 +89,8 @@ Go-shaped `authority_merge` disposition.
 | 8 | `CarrierCheckAuthority` | `confinement.CarrierCheckAuthority` | `TestInstall_CarrierOnly` | ✅ |
 | 9 | `install` refuses un-enforceable clause | `Install` fail-closed (propagates lowerer errors) | `TestInstall_RefusesUnsupported` | ✅ |
 | 10 | evidence validation (`validate_permission_plan_evidence`) | `confinement.ValidatePlanEvidence` | `TestValidatePlanEvidence` | ✅ |
-| 11 | `permission_plan` drives the run's confinement | `run.Options.Plan` → `RunContext.Confinement = plan.Confinement()` | `TestReversible_PlanDrivesConfinement` | 🚧 Phase 3 |
-| 12 | `permission_plan_digest` in the run | the run record carries the **plan** digest (not just the spec digest) | `TestReversible_RecordsPlanDigest` | 🚧 Phase 3 |
+| 11 | `permission_plan` drives the run's confinement | `run.Options.Plan` → `RunContext.Confinement = plan.Confinement()` | `TestReversible_PlanDrivesConfinement` | ✅ |
+| 12 | `permission_plan_digest` in the run | the run record carries the **plan** digest + descriptor | `TestReversible_RecordsPlanDigest` | ✅ |
 | 13 | `success_disposition == "authority_merge"` | `run` authority-merge disposition + `DecisionProvider` | `TestReversible_AuthorityMerge` | 🚧 Phase 4 |
 | 14 | `merge_with_authority` (cohort lane) | Go simplified analogue (decision gate) | (row 13); richer lane → follow-up | 🚧 Phase 4 |
 
@@ -197,16 +197,19 @@ func ValidatePlanEvidence(digest string, descriptor map[string]any, route, match
 lowerers already fail closed, so `Install` never returns an un-enforceable paddock
 clause.
 
-## 8. Phase 3 — Consume the plan in `run` (evidence chain)
+## 8. Phase 3 — Consume the plan in `run` (evidence chain) (implemented)
 
 - `run.Options` gains `Plan *confinement.PermissionPlan` (mutually exclusive with
-  the raw `Confinement`/`MatchDigest`). When set, `RunContext.Confinement =
-  plan.Confinement()`.
-- The run record gains `permission_plan_digest` and `permission_plan_descriptor`
-  (the plan digest, not just the spec digest), so a run's authority is citable as
-  a whole.
-- Chain: declaration → plan digest → run record; a settlement can re-validate the
-  chain with `ValidatePlanEvidence`.
+  `Confinement`/`MatchDigest`). When set, the run resolves the jail spec via
+  `plan.Confinement()` **before forking** (a carrier-only plan refuses with no
+  orphan scope) and sets `RunContext.Confinement` to it.
+- The run record gains `permission_plan_digest` and `permission_plan_descriptor`,
+  so a run's authority is citable as a whole (not just the spec digest).
+- Chain: declaration → plan digest → run record; a settlement re-validates with
+  `ValidatePlanEvidence`.
+- Verified by `TestReversible_PlanDrivesConfinement`,
+  `TestReversible_RecordsPlanDigest`, `TestReversible_CarrierOnlyPlanRefuses`,
+  `TestReversible_PlanMutuallyExclusive`.
 
 ## 9. Phase 4 — `authority_merge` (unblocks Plan 2 Phase 4)
 
@@ -241,8 +244,8 @@ over the sealed output is the simplified analogue and is recorded as such.
 | ✅ | `TestPermissionPlan_DigestStable` | digest twice, then change the match | stable; changes with input |
 | ✅ | `TestMonitorAssignment_Present` | paddock + carrier assignments | correct timing; paddock carries the spec, carrier does not |
 | ✅ | `TestValidatePlanEvidence` | matching / mismatched evidence | nil / `ErrPlanEvidence` |
-| 🚧 | `TestReversible_PlanDrivesConfinement` | run with `Options.Plan` | `RunContext.Confinement` is the plan's paddock spec (Phase 3) |
-| 🚧 | `TestReversible_RecordsPlanDigest` | run with a plan | the run record carries `permission_plan_digest` (Phase 3) |
+| ✅ | `TestReversible_PlanDrivesConfinement` | run with `Options.Plan` | `RunContext.Confinement` is the plan's paddock spec |
+| ✅ | `TestReversible_RecordsPlanDigest` | run with a plan | the run record carries `permission_plan_digest` + descriptor |
 | 🚧 | `TestReversible_AuthorityMerge` | approving / denying `DecisionProvider` | approves→settle; denies→discard + denial (Phase 4) |
 | 🚧 | `TestReversible_AuthorityMergeRequiresDecision` | `DispositionAuthorityMerge`, nil `Decision` | validation error (Phase 4) |
 

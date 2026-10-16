@@ -63,8 +63,14 @@ type Options struct {
 	// Placement defaults to PlacementAuto.
 	Placement confinement.Placement
 	// Confinement is the caller's authority lowering; nil asks the backend for
-	// its default. Plan 1's confinement lowerers produce it.
+	// its default. Plan 1's confinement lowerers produce it. Mutually exclusive
+	// with Plan.
 	Confinement *containment.ConfinementSpec
+	// Plan is the compiled permission plan (confinement.Install) driving this
+	// run: it supplies the confinement spec (the jail monitor's) and the plan
+	// digest / descriptor recorded as authority evidence. Mutually exclusive
+	// with Confinement and MatchDigest.
+	Plan *confinement.PermissionPlan
 	// MatchDigest is the authority-surface digest folded into evidence.
 	MatchDigest string
 	// Reviewer, when set, gates a merge disposition: a denial discards the run
@@ -174,6 +180,20 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 	if opts.NonReversible && disposition != DispositionMerge {
 		return Outcome{}, fmt.Errorf("run: a non-reversible run cannot use disposition %q (mirrors non_reversible_run validation)", disposition)
 	}
+	if opts.Plan != nil && (opts.Confinement != nil || opts.MatchDigest != "") {
+		return Outcome{}, errors.New("run: Options.Plan is mutually exclusive with Confinement and MatchDigest")
+	}
+
+	// Resolve a plan's jail spec before allocating anything: a plan with no jail
+	// clause (carrier-only) refuses without leaving an orphan scope.
+	var planSpec *containment.ConfinementSpec
+	if opts.Plan != nil {
+		s, err := opts.Plan.Confinement()
+		if err != nil {
+			return Outcome{}, fmt.Errorf("run: Options.Plan: %w", err)
+		}
+		planSpec = &s
+	}
 
 	placement := opts.Placement
 	if placement == "" {
@@ -229,8 +249,12 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 		}
 	}
 
-	result, runErr := handler(ctx, &RunContext{Scope: runScope, Capability: capability, Confinement: defaultSpec(opts, capability.WorkingRoot)})
-	recordErr := recordRun(ctx, runScope, parent, isolation, disposition, result)
+	spec := defaultSpec(opts, capability.WorkingRoot)
+	if planSpec != nil {
+		spec = *planSpec
+	}
+	result, runErr := handler(ctx, &RunContext{Scope: runScope, Capability: capability, Confinement: spec})
+	recordErr := recordRun(ctx, runScope, parent, isolation, disposition, result, opts.Plan)
 	if runErr != nil {
 		if !opts.NonReversible {
 			_ = mgr.Discard(runScope.ID())
@@ -342,7 +366,7 @@ func workDirOf(s *shepherd.Scope) string {
 // isolation, disposition, the authority-evidence digest, and the outcome. It is
 // the durable half of the authority trail — Plan 1 surfaced the digest on the
 // ExecResult; this writes it into the trace.
-func recordRun(ctx context.Context, runScope, parent *shepherd.Scope, isolation string, disposition Disposition, result Result) error {
+func recordRun(ctx context.Context, runScope, parent *shepherd.Scope, isolation string, disposition Disposition, result Result, plan *confinement.PermissionPlan) error {
 	payload := map[string]any{
 		"owner":              runScope.OwnerID(),
 		"parent_scope":       parent.ID(),
@@ -351,6 +375,10 @@ func recordRun(ctx context.Context, runScope, parent *shepherd.Scope, isolation 
 		"authority_evidence": result.Evidence,
 		"exit_code":          result.ExitCode,
 		"denied":             result.Denied,
+	}
+	if plan != nil {
+		payload["permission_plan_digest"] = plan.Digest()
+		payload["permission_plan_descriptor"] = plan.Descriptor()
 	}
 	if _, err := runScope.AppendFact(ctx, SchemaRunExecuted, "run:executed", payload); err != nil {
 		return fmt.Errorf("run: record execution: %w", err)
