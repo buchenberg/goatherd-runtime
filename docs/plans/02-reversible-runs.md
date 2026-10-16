@@ -11,6 +11,12 @@
 > reversibility substrate** (`ScopeManager.ForkIsolated`, `Capture/Apply`,
 > `Seal`, `Settle`, merge gate, recovery). This plan is a *composition* layer that
 > joins those primitives to the Plan-1 confined `Exec` — not new substrate.
+>
+> **Status:** Phase 1 (the reversible-run wrap) is implemented in
+> [`run/reversible.go`](../../run/reversible.go), with 9 passing tests. Phases 2
+> (handler seam), 3 (recorded operation + evidence persistence), and 4
+> (`authority_merge`) remain. Merge propagates physically via `Seal` +
+> `SettleSelect`/`SettleApply` — `CommitMerge` refuses isolated children (§9).
 
 ## 1. Objective & Context
 
@@ -86,7 +92,7 @@ recorded-operation boundary + evidence persistence, the dispositions
 | 4 | `require real-execution authority` | `containment.RequireExecutionAuthority` | `TestReversible_RefusesWithoutBackend` |
 | 5 | `prepare_bound` dispatch | `Handler func(ctx, *RunContext) (Result, error)` | `TestReversible_HandlerRunsConfined` |
 | 6 | discard on failure | `mgr.Discard(runScope.ID())` on handler error | `TestReversible_DiscardOnFailure` |
-| 7 | `owner.merge(run_scope, scope)` (default disposition) | `mgr.CommitMerge` / `mgr.Merge` | `TestReversible_MergeDefault` |
+| 7 | `owner.merge(run_scope, scope)` (default disposition) | isolated: `mgr.Seal` + `SettleSelect` (fallback `SettleApply`) | `TestReversible_MergeDefault` |
 | 8 | `success_disposition == "seal"` | `Options.Disposition = DispositionSeal` → `mgr.Seal` | `TestReversible_SealDisposition` |
 | 9 | `runtime_operation_boundary` | `run` records a run operation (append) | `TestReversible_RecordsRunOperation` |
 | 10 | authority digest recorded | evidence (`confinement.Evidence`) persisted in the run record | `TestReversible_RecordsEvidence` |
@@ -123,7 +129,7 @@ run.Reversible(ctx, mgr, parent, opts, handler)
   7. on error:  if !NonReversible { mgr.Discard(runScope.ID()) }; return err
      on ok:     if NonReversible { return }
                 switch opts.Disposition:
-                  Merge (default): mgr.CommitMerge(ctx, runScope.ID(), opts.Reviewer)
+                  Merge (default): mgr.Seal + SettleSelect (fallback SettleApply)
                   Seal:            out := mgr.Seal(ctx, runScope.ID())
                   AuthorityMerge:  refuse — Plan 3
 ```
@@ -231,9 +237,13 @@ adds:
 
 ## 9. Phase 4 — Dispositions + the non-reversible opt-out
 
-- **Merge (default):** `mgr.CommitMerge(ctx, runScope.ID(), opts.Reviewer)` for
-  review-gated integration; `mgr.Merge` when no reviewer. A denial
-  (`*SupervisorDeniedError`) leaves the parent untouched and the wrap returns it.
+- **Merge (default):** for an isolated run this is **physical propagation via
+  settlement** — `mgr.Seal(ctx, runScope.ID())` then
+  `mgr.Settle(ctx, out.ID(), SettleSelect)`, falling back to `SettleApply` when
+  the parent moved. `CommitMerge` is *not* used: it refuses isolated children
+  (their physical propagation belongs to settlement). The review gate runs via
+  `ProposeMerge` before sealing; a denial discards the run and returns
+  `*SupervisorDeniedError`.
 - **Seal:** `out := mgr.Seal(ctx, runScope.ID())`; the caller settles later
   (`SettleSelect`/`Apply`), enabling fork-and-choose (`Outcome.Output`).
 - **`authority_merge`:** Python's `merge_with_authority` (binding roots +
@@ -277,7 +287,7 @@ a jail is exercised). Build the harness on a git worktree sandbox.
 | **Isolated fork as the default** | `ForkHints(isolated=True)`, no knob | **Parity**: `ForkIsolated`, no knob |
 | **Capability minted after fork (proof)** | `ExecutionCapability` post-fork | **Parity**: `RunContext.Capability` post-fork |
 | **Discard on failure** | `owner.discard(run_scope)` | **Parity**: `mgr.Discard` |
-| **Merge on success** | `owner.merge` / `prepare_merge` diff | **Parity/stronger**: `CommitMerge` + review gate; explicit `CaptureWorkspace`/`DeltaApplier` |
+| **Merge on success** | `owner.merge` / `prepare_merge` diff | **Parity**: isolated propagation via `Seal` + `SettleSelect`/`SettleApply` (physical, digest-stable); review gate via `ProposeMerge` |
 | **Seal disposition** | `success_disposition="seal"` | **Parity**: `DispositionSeal` + `Settle*` |
 | **authority_merge disposition** | `merge_with_authority` | **Deferred** to Plan 3 (compiler); refuses now |
 | **Loud non-reversible opt-out** | `non_reversible_run` | **Parity** (to build): `Options.NonReversible` + recorded |
