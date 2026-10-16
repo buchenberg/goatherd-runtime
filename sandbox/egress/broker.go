@@ -1,7 +1,8 @@
 package egress
 
 import (
-	"bufio"
+	"bytes"
+	"errors"
 	"io"
 	"net"
 	"regexp"
@@ -17,7 +18,7 @@ var connectRe = regexp.MustCompile(`(?i)^CONNECT\s+([^:\s]+):(\d+)\s+HTTP`)
 //
 // Forwards allowed connections (200 + bidirectional splice); refuses denied and
 // escalate-unbuilt ones (403); records every verdict. Start it, read Port(),
-// point the jail's network pin at it, Stop it on scope close.
+// point the paddock's network pin at it, Stop it on scope close.
 type Broker struct {
 	policy     EgressPolicy
 	onDecision func(EgressDecision)
@@ -84,12 +85,25 @@ func (b *Broker) record(d EgressDecision) {
 	}
 }
 
+func (b *Broker) isStopping() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.stopping
+}
+
 func (b *Broker) serve() {
 	defer b.wg.Done()
 	for {
 		conn, err := b.ln.Accept()
 		if err != nil {
-			return
+			// Only a closed listener ends the loop; a transient Accept error
+			// (EMFILE/ECONNABORTED) must not silently stop the broker while
+			// Port() still reports it up.
+			if errors.Is(err, net.ErrClosed) || b.isStopping() {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
 		}
 		b.wg.Add(1)
 		go func() {
@@ -133,14 +147,30 @@ func (b *Broker) handle(conn net.Conn) {
 	splice(conn, upstream)
 }
 
-// readConnect reads the request head and parses the CONNECT target.
+// readConnect reads the CONNECT request head — through the terminating blank line
+// (`\r\n\r\n`) — one byte at a time, so bytes the client pipelines after the head
+// stay in the socket for the spliced tunnel (a bufio.Reader would swallow them
+// into its buffer). It parses only the request line.
 func readConnect(conn net.Conn) (host string, port int, ok bool) {
-	br := bufio.NewReader(io.LimitReader(conn, 8192))
-	line, err := br.ReadString('\n')
-	if err != nil {
-		return "", 0, false
+	buf := make([]byte, 0, 256)
+	one := make([]byte, 1)
+	for len(buf) < 8192 {
+		n, err := conn.Read(one)
+		if n > 0 {
+			buf = append(buf, one[0])
+			if bytes.HasSuffix(buf, []byte("\r\n\r\n")) {
+				break
+			}
+		}
+		if err != nil {
+			break
+		}
 	}
-	m := connectRe.FindStringSubmatch(line)
+	line := buf
+	if i := bytes.IndexByte(buf, '\n'); i >= 0 {
+		line = buf[:i]
+	}
+	m := connectRe.FindStringSubmatch(string(line))
 	if m == nil {
 		return "", 0, false
 	}

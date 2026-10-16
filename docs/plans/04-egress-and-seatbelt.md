@@ -113,7 +113,7 @@ func New() *Backend
 func (b *Backend) Name() string            { return "seatbelt" }
 func (b *Backend) EnforcementTier() string { return "native-syscall-deny" }
 func (b *Backend) Available() (bool, string)          // /usr/bin/sandbox-exec present
-func (b *Backend) ProfileFor(roots []string, allowNetwork bool) string // SBPL
+func (b *Backend) ProfileFor(roots []string, network containment.NetworkPolicy) string // SBPL
 func (b *Backend) Probe(profile, workingRoot string, roots []string) error
 func (b *Backend) Launch(profile string, req containment.LaunchRequest) (containment.LaunchResult, error)
 ```
@@ -146,8 +146,9 @@ New package `sandbox/egress` (root module; stdlib only). A faithful port of
   denies every TCP connect, a `Broker` mode pins egress to the broker's port.
   `SupportsNetwork` gates it (ABI ≥ 4), and the probe validates the pin
   fail-closed (`TestLandlock_Network*`). Unprivileged. **Port-scoped, not
-  address-scoped** — a documented limitation; the reference's Linux jail does no
-  networking at all, so this is *ahead* of parity.
+  address-scoped**, and **TCP connect only** — UDP egress is not governed by
+  Landlock net rules (close that with seccomp/Plan 5 or a netns); the reference's
+  Linux jail does no networking at all, so this is *ahead* of parity.
 - **macOS — Seatbelt**: `(deny network-outbound)` with the broker's loopback port
   allowed (Phase 1, on a Mac).
 - **Strong (address-scoped) — network namespace** (`CLONE_NEWUSER|CLONE_NEWNET`)

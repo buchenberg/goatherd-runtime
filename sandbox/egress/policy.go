@@ -32,6 +32,12 @@ const (
 )
 
 // HostAtom is one value-level host predicate.
+//
+// Hosts are normalized (lower-cased, one trailing root dot stripped) before
+// evaluation, so case and a trailing dot cannot bypass a rule. Beware "contains"
+// for allow rules: it is a raw substring match (faithful to the reference), so
+// "example.com" also matches "example.com.attacker.tld"; prefer "exact" or
+// "matches" (which anchor the whole host).
 type HostAtom struct {
 	// Op is "exact", "in", "contains", or "matches" (full-match regex).
 	Op string
@@ -143,9 +149,18 @@ func PolicyFromNetwork(np containment.NetworkPolicy) (EgressPolicy, error) {
 	return AllowHosts(np.AllowedHosts...), nil
 }
 
+// normalizeHost lower-cases and strips one trailing root dot. DNS names are
+// case- and trailing-dot-insensitive, so without this a client sending
+// `BLOCKED.example.com` or `blocked.example.com.` could skip a Negative rule and
+// be forwarded.
+func normalizeHost(h string) string {
+	return strings.TrimSuffix(strings.ToLower(h), ".")
+}
+
 // Decide applies the evaluation-order contract. An unknown host-atom op is an
 // error (the caller fails closed).
 func (p EgressPolicy) Decide(host string, port int) (EgressDecision, error) {
+	host = normalizeHost(host)
 	allow, escalate := false, false
 	for _, g := range p.grants {
 		ok, err := g.Admits(host)

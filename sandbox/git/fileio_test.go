@@ -60,3 +60,22 @@ func TestGitSandbox_FileIO_SymlinkEscapeRefused(t *testing.T) {
 		t.Fatal("reading through a symlink that escapes the workspace must be refused")
 	}
 }
+
+func TestGitSandbox_FileIO_SymlinkMkdirEscapeRefused(t *testing.T) {
+	repo := newTestRepo(t)
+	sb := NewLocalGitSandbox(repo)
+	ctx := context.Background()
+
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(repo, "link")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	// A write whose parent would be created *through* an escaping symlink must be
+	// refused, and must not create the directory outside the workspace.
+	if err := sb.WriteFile(ctx, "link/new/x.txt", []byte("x"), 0o644); err == nil {
+		t.Fatal("a write through an escaping symlinked intermediate must be refused")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "new")); !os.IsNotExist(err) {
+		t.Fatalf("mkdir escaped the workspace: %s/new exists", outside)
+	}
+}

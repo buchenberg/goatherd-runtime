@@ -7,8 +7,8 @@ filter (Plan 5).
 
 Each plan follows the same discipline: a parity checklist mapping Python symbols
 to Go targets with a covering test, an explicit scope/non-goals section, and a
-test matrix. Plans 1–3 are written and implemented; 4–5 are scoped here and get
-their own documents when started.
+test matrix. Plans 1–4 are written (1–3 implemented; 4 partly); 5 is scoped here
+and gets its own document when started.
 
 > **Vocabulary — "paddock".** The Go code renames Python Shepherd's `jail` to
 > **`paddock`** (an enclosed livestock area — it fits the shepherd/croft theme;
@@ -142,7 +142,7 @@ without containerd) justifies it.
 | Reversible-by-default execution | ✅ | Plan 2 |
 | Capability proof-carrying / after-fork | ✅ | Plan 2 |
 | ExecutionBoundDriver / negotiation | ✅ | Plan 2 (adapted) |
-| Sandbox file IO | 🟡 | small item |
+| Sandbox file IO | ✅ | implemented (symlink-safe) |
 | Seatbelt (macOS) | ❌ | Plan 4a |
 | Egress broker | ✅ | Plan 4b (`sandbox/egress`) |
 | Egress pinning (Linux) | ✅ (ahead of ref) | Plan 4c |

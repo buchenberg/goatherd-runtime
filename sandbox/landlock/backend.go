@@ -79,7 +79,8 @@ func (b *Backend) SupportsNetwork(mode containment.NetMode) bool {
 func (b *Backend) ProfileFor(roots []string, network containment.NetworkPolicy) string {
 	mode := string(network.Mode)
 	if mode == "" {
-		mode = string(containment.NetAllowAll)
+		// Fail closed: an omitted mode denies egress.
+		mode = string(containment.NetDenyAll)
 	}
 	doc := profileDoc{
 		Roots: canonicalAll(roots),
@@ -87,7 +88,7 @@ func (b *Backend) ProfileFor(roots []string, network containment.NetworkPolicy) 
 	}
 	payload, err := json.Marshal(doc)
 	if err != nil {
-		return `{"roots":[],"net":{"mode":"allow_all"}}`
+		return `{"roots":[],"net":{"mode":"deny_all"}}`
 	}
 	return string(payload)
 }

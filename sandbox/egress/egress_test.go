@@ -67,6 +67,13 @@ func TestEgressPolicy_DenyWins(t *testing.T) {
 	if d, _ := p.Decide("blocked.example.com", 443); d.Verdict != VerdictDeny {
 		t.Fatalf("negative must exclude: %+v", d)
 	}
+	// Case- and trailing-dot-insensitive: a client must not bypass the negative
+	// rule by varying the host's case or appending a root dot.
+	for _, host := range []string{"BLOCKED.example.com", "blocked.example.com.", "Blocked.Example.COM."} {
+		if d, _ := p.Decide(host, 443); d.Verdict != VerdictDeny {
+			t.Fatalf("host %q must be denied (normalized), got %+v", host, d)
+		}
+	}
 }
 
 func TestBroker_AllowsAndDenies(t *testing.T) {

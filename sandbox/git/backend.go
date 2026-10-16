@@ -915,8 +915,15 @@ func (g *GitSandbox) WriteFile(_ context.Context, path string, data []byte, perm
 
 // resolveWithin resolves path inside the workspace, refusing any path that
 // escapes it — including via a symlink. It resolves the workspace root and the
-// path's parent, and, when the target exists, the target itself, so a symlink
-// pointing outside the workspace is refused rather than followed.
+// deepest *existing* ancestor of the target and requires it to be inside the
+// workspace **before creating anything**, so a symlinked intermediate cannot be
+// used to mkdir outside the workspace. It then creates the remaining parent
+// directories, re-resolves, and (for an existing symlink target) refuses one
+// that resolves outside.
+//
+// Residual: the resolve→read/write pair is not atomic, so a symlink swapped in
+// between is a TOCTOU window; closing it fully needs openat/O_NOFOLLOW, a
+// recorded follow-up.
 func (g *GitSandbox) resolveWithin(path string, createParents bool) (string, error) {
 	root, err := filepath.EvalSymlinks(g.workDir())
 	if err != nil {
@@ -928,18 +935,36 @@ func (g *GitSandbox) resolveWithin(path string, createParents bool) (string, err
 	}
 	abs = filepath.Clean(abs)
 
-	parentDir := filepath.Dir(abs)
-	parent, err := filepath.EvalSymlinks(parentDir)
+	// The deepest existing ancestor, resolved, must be inside the workspace —
+	// checked BEFORE any mkdir so a symlinked intermediate cannot escape.
+	existing := abs
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			break
+		}
+		existing = parent
+	}
+	resolvedExisting, err := filepath.EvalSymlinks(existing)
 	if err != nil {
-		if !createParents {
-			return "", fmt.Errorf("git sandbox: resolve %q: %w", path, err)
+		return "", fmt.Errorf("git sandbox: resolve %q: %w", path, err)
+	}
+	if !withinOrEqual(resolvedExisting, root) {
+		return "", fmt.Errorf("git sandbox: path %q escapes the workspace %s", path, root)
+	}
+
+	if createParents {
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			return "", fmt.Errorf("git sandbox: create parent of %q: %w", path, err)
 		}
-		if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
-			return "", fmt.Errorf("git sandbox: create parent of %q: %w", path, mkErr)
-		}
-		if parent, err = filepath.EvalSymlinks(parentDir); err != nil {
-			return "", fmt.Errorf("git sandbox: resolve %q: %w", path, err)
-		}
+	}
+
+	parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		return "", fmt.Errorf("git sandbox: resolve %q: %w", path, err)
 	}
 	if !withinOrEqual(parent, root) {
 		return "", fmt.Errorf("git sandbox: path %q escapes the workspace %s", path, root)

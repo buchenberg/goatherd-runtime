@@ -37,18 +37,18 @@ func canonicalAll(paths []string) []string {
 	return out
 }
 
-// parseProfile decodes a backend-private profile. A malformed profile yields an
-// empty, allow-all profile (never a trusted guess).
+// parseProfile decodes a backend-private profile. A malformed profile — or an
+// omitted mode — defaults to deny_all, never a trusted allow-all guess.
 func parseProfile(profile string) profileDoc {
 	var doc profileDoc
 	if err := json.Unmarshal([]byte(profile), &doc); err != nil {
-		return profileDoc{Roots: []string{}, Net: netDoc{Mode: "allow_all"}}
+		return profileDoc{Roots: []string{}, Net: netDoc{Mode: "deny_all"}}
 	}
 	if doc.Roots == nil {
 		doc.Roots = []string{}
 	}
 	if doc.Net.Mode == "" {
-		doc.Net.Mode = "allow_all"
+		doc.Net.Mode = "deny_all"
 	}
 	return doc
 }

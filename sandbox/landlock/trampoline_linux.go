@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"runtime"
 	"syscall"
 	"time"
@@ -39,6 +40,12 @@ func runExecTrampoline(args []string) int {
 	command := args[3:]
 	if len(command) == 0 {
 		return 0
+	}
+	// unix.Exec is execve(2), which does not search PATH; resolve a bare command
+	// name first so the confined tier behaves like the advisory tier (which uses
+	// exec.Command, which does search PATH).
+	if resolved, err := exec.LookPath(command[0]); err == nil {
+		command = append([]string{resolved}, command[1:]...)
 	}
 	if err := unix.Exec(command[0], command, os.Environ()); err != nil {
 		return 127

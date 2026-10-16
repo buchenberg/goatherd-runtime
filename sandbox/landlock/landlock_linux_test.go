@@ -28,12 +28,16 @@ func TestMain(m *testing.M) {
 	if code, handled := MaybeRunTrampoline(os.Args); handled {
 		os.Exit(code)
 	}
-	if len(os.Args) >= 3 {
+	if len(os.Args) >= 2 {
 		switch os.Args[1] {
 		case e2eConnectSentinel:
-			os.Exit(e2eConnect(os.Args[2], os.Args[3]))
+			if len(os.Args) >= 4 {
+				os.Exit(e2eConnect(os.Args[2], os.Args[3]))
+			}
 		case e2eDirectSentinel:
-			os.Exit(e2eDirect(os.Args[2]))
+			if len(os.Args) >= 3 {
+				os.Exit(e2eDirect(os.Args[2]))
+			}
 		}
 	}
 	os.Exit(m.Run())

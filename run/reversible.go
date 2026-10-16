@@ -70,10 +70,8 @@ type Options struct {
 	// Plan is the compiled permission plan (confinement.Install) driving this
 	// run: it supplies the confinement spec (the jail monitor's) and the plan
 	// digest / descriptor recorded as authority evidence. Mutually exclusive
-	// with Confinement and MatchDigest.
+	// with Confinement.
 	Plan *confinement.PermissionPlan
-	// MatchDigest is the authority-surface digest folded into evidence.
-	MatchDigest string
 	// Reviewer, when set, gates a merge disposition: a denial discards the run
 	// and returns *shepherd.SupervisorDeniedError.
 	Reviewer shepherd.MergeReviewer
@@ -184,8 +182,8 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 	if opts.NonReversible && disposition != DispositionMerge {
 		return Outcome{}, fmt.Errorf("run: a non-reversible run cannot use disposition %q (mirrors non_reversible_run validation)", disposition)
 	}
-	if opts.Plan != nil && (opts.Confinement != nil || opts.MatchDigest != "") {
-		return Outcome{}, errors.New("run: Options.Plan is mutually exclusive with Confinement and MatchDigest")
+	if opts.Plan != nil && opts.Confinement != nil {
+		return Outcome{}, errors.New("run: Options.Plan is mutually exclusive with Confinement")
 	}
 
 	// Resolve a plan's jail spec before allocating anything: a plan with no jail
@@ -228,6 +226,7 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 			return Outcome{}, fmt.Errorf("run: new sandbox: %w", err)
 		}
 		if err := sb.Create(ctx, sandbox.SandboxSpec{}); err != nil {
+			_ = sb.Destroy(ctx)
 			return Outcome{}, fmt.Errorf("run: create sandbox: %w", err)
 		}
 		child, err := mgr.ForkIsolated(parent.ID(), opts.OwnerID, opts.Snapshot, sb)
@@ -270,6 +269,14 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 			_ = mgr.Discard(runScope.ID())
 		}
 		return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition}, recordErr
+	}
+
+	// A syscall denial is a discarded, Failed run — never integrate a partial or
+	// refused result (Plan 2 §9.4).
+	if !opts.NonReversible && result.Denied {
+		_ = mgr.Discard(runScope.ID())
+		return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition},
+			fmt.Errorf("%w: the run was refused at the syscall", containment.ErrSandboxDenied)
 	}
 
 	if opts.NonReversible {

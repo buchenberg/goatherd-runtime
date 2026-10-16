@@ -114,7 +114,7 @@ conformance test that proves it. This is the objective definition of "done."
 | 9 | `probe` (exit-code aware) | `(*landlock.Backend).Probe` | `TestLandlock_ProbePassesForConformant`, `TestLandlock_ProbeCatchesMisloweredWritable`, `TestLandlock_PerBindingDenyClosed` | ✅ |
 | 10 | `launch` | `(*landlock.Backend).Launch` | `TestLandlock_ConfineDeniesOutside`, `TestLaunchConfined_ProbesFirst` | ✅ |
 | 11 | `ConfinementSpec` | `containment.ConfinementSpec` | `TestReadOnlyAndPermissiveSpecs` | ✅ |
-| 12 | `NetworkPolicy` / `NetMode` | `containment.NetworkPolicy` / `NetMode` | `TestResolveSpec_BrokerRefuses` | ✅ |
+| 12 | `NetworkPolicy` / `NetMode` | `containment.NetworkPolicy` / `NetMode` | `TestResolveSpec_Broker` | ✅ |
 | 13 | `_resolve_spec` | `containment.ResolveSpec` | `TestResolveSpec_CanonicalizesRoots` | ✅ |
 | 14 | `launch_confined` | `containment.LaunchConfined` | `TestLaunchConfined_ProbesFirst` | ✅ |
 | 15 | `detect_containment_backend` | `landlock.Detect` (relocated, §16.2 #3) | `TestDetect_MatchesAvailability` | ✅ |
@@ -586,7 +586,7 @@ against the development host (Landlock ABI 11).
 | ✅ | `TestLaunchConfined_ProbesFirst` | privileged | `LaunchConfined` on a live paddock | probes then launches; write lands |
 | ✅ | `TestLandlock_DeniedClassified` | privileged | confined write outside the root | `DeniedExit` true from stderr |
 | ✅ | `TestIntegration_GitSandboxPaddockExec` | privileged | GitSandbox → LaunchConfined → kernel | in-repo write lands; out-of-repo denied + classified |
-| ✅ | `TestResolveSpec_BrokerRefuses` | any | `ResolveSpec(NetBroker)` | `ErrUnsupportedConfinementSpec` |
+| ✅ | `TestResolveSpec_Broker` | any | `ResolveSpec(NetBroker)` | `ErrUnsupportedConfinementSpec` |
 | ✅ | `TestResolveSpec_CanonicalizesRoots` | any | roots with `..`/symlinks | canonicalized |
 | ✅ | `TestResolveMay_DefaultPermissive` | any | `ResolveMay("")` | resolved Permissive, source `defaulted` |
 | ✅ | `TestLowerMay_ReadOnlyPermissive` / `_RefusesUnknown` | any | lowering | correct spec / `ErrUnsupportedMayProfile` |
@@ -595,7 +595,7 @@ against the development host (Landlock ABI 11).
 | ✅ | `TestPermissionPlan_DigestStable` | any | plan digest | stable + paddock monitor named |
 | ✅ | `TestPlacement_AutoResolves` | any | `auto` with/without backend | paddock / advisory |
 | ✅ | `TestGitSandbox_CapabilitiesHonest` | any | opt-in constructors | `ContainContained` iff paddock-capable |
-| ✅ | `TestGitSandbox_ExecMayLowersAndPaddocks` | any | `ExecMay` over a fake backend | lowers + paddocks; unknown profile refuses |
+| ✅ | `TestGitSandbox_ExecMayLowersAndConfines` | any | `ExecMay` over a fake backend | lowers + paddocks; unknown profile refuses |
 | ✅ | `TestGitSandbox_ExecRecordsAuthorityEvidence` | any | paddocked vs advisory run | evidence on paddocked; empty on advisory |
 | ✅ | `TestNegotiation_RefusesWithoutCapability` | any | exec without capability | `ErrExecutionAuthorityRequired` before body |
 
@@ -659,7 +659,7 @@ Steps 1–6 are entirely within the component (§15). Host (`yaah`) and containe
 **Risks / mitigations**
 
 - *Silent loss of confinement from thread migration* → `LockOSThread` (§5.2) +
-  `TestLandlock_TrampolineRoundTrip`.
+  `TestLandlock_TrampolineDispatch`.
 - *Broken Landlock passing as a paddock* → exit-code-aware probe (§8).
 - *Kernel-version mask rejection* → pinned v1 mask (§7.2) +
   `TestLandlock_MaskIsV1Compatible`.
@@ -903,7 +903,7 @@ The first cut left `ErrSandboxDenied`, `ErrExecutionAuthorityRequired`, the
    `ExecRequest.Confinement` (the lowerers are now called by a real path), and
    `GitSandbox.Exec` records `ExecResult.AuthorityEvidence` — the paddock monitor's
    `confinement.Evidence(...)` plan digest, citable at settlement. Verified by
-   `TestGitSandbox_ExecMayLowersAndPaddocks` and
+   `TestGitSandbox_ExecMayLowersAndConfines` and
    `TestGitSandbox_ExecRecordsAuthorityEvidence`.
 4. **`landlock.Detect`** is exercised by `TestDetect_MatchesAvailability`.
 

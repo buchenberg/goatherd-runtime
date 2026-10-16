@@ -58,7 +58,8 @@ func PermissiveFor(workingPath string) ConfinementSpec {
 func ResolveSpec(spec ConfinementSpec) (roots []string, network NetworkPolicy, err error) {
 	network = spec.Network
 	if network.Mode == "" {
-		network.Mode = NetAllowAll
+		// Fail closed: a zero-value spec denies egress rather than allowing it.
+		network.Mode = NetDenyAll
 	}
 	switch network.Mode {
 	case NetAllowAll, NetDenyAll:
