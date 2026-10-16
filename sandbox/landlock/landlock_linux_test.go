@@ -21,12 +21,20 @@ func denyAll() containment.NetworkPolicy {
 	return containment.NetworkPolicy{Mode: containment.NetDenyAll}
 }
 
-// TestMain installs the trampoline hook. Every confine-then-exec and confined
-// write-probe re-execs this very test binary, so the hook must run before the
-// test runner.
+// TestMain installs the trampoline hook. Every confine-then-exec, confined
+// write-probe, and confined net-probe re-execs this very test binary, so the hook
+// must run before the test runner. It also dispatches the e2e connect helpers.
 func TestMain(m *testing.M) {
 	if code, handled := MaybeRunTrampoline(os.Args); handled {
 		os.Exit(code)
+	}
+	if len(os.Args) >= 3 {
+		switch os.Args[1] {
+		case e2eConnectSentinel:
+			os.Exit(e2eConnect(os.Args[2], os.Args[3]))
+		case e2eDirectSentinel:
+			os.Exit(e2eDirect(os.Args[2]))
+		}
 	}
 	os.Exit(m.Run())
 }

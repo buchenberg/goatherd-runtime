@@ -171,6 +171,7 @@ New package `sandbox/egress` (root module; stdlib only). A faithful port of
 | 3 ✅ | `TestLandlock_NetworkDenyAll` | ABI ≥ 4; deny_all | a connect is denied at the syscall |
 | 3 ✅ | `TestLandlock_NetworkPinned` | ABI ≥ 4; pin a port | the pinned port admits; others denied |
 | 3 ✅ | `TestLandlock_ProbeNetwork` | deny_all / broker profiles | the probe validates the pin fail-closed |
+| 2+3 ✅ | `TestE2E_ReversibleBrokerEgress` | reversible run + worktree + broker + pin | a through-broker CONNECT is admitted (200) and the broker records an allow; a direct connect bypassing the broker is refused by the pin |
 | 1 | `TestSeatbelt_*` | macOS | deny/allow as the reference asserts (on a Mac) |
 
 ## 10. Parity Comparison: Network & macOS
