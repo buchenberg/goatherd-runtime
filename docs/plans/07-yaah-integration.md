@@ -279,29 +279,67 @@ it); the work was moved onto a branch and landed via PR #338.
 
 ### Phase 3 — Confinement on the unified retained path
 
-> **Status.** The **mechanism** landed (yaah PR #339): the confiner already
-> rides the retained workdir lane, the **env redirect + scrub** is in, and
-> `yaah doctor` reports the capability. Still open: **recording the resolved
-> placement** on the trace (#3), and **flipping the default to `auto`** — gated
-> on an acceptance run, not landed. The config key stayed **`containment`**
-> (shipped in Phase 1), not the `placement` spelling below.
+> **Status.** **Complete** (yaah PRs #339, #343, #344). The confiner rides the
+> retained workdir lane, the **env redirect + scrub** is in, the **resolved
+> placement is recorded** on the trace (`yaah.subagent.confinement.v1`), and
+> `yaah doctor` reports the capability. The **default is now `auto`**, on the
+> strength of a real acceptance run — which found two showstoppers first (below).
+> The config key stayed **`containment`** (shipped in Phase 1), not the
+> `placement` spelling below.
 
 1. ✅ The confiner rides the one retained launch — a retained dispatch sets the
    worktree as the sub-agent's `Workdir`, and the confiner is attached on that
    lane, so the kernel boundary and the settlement boundary are the same
-   boundary. Config: `agents.subagent.containment: off | advisory | auto |
+   boundary. Config: `agents.subagent.containment: auto | off | advisory |
    paddock` (alias `jail`); `network` defaults to `allow_all`. `paddock` fails
    closed.
 2. ⏳ Config `agents.subagent.network: allow_all | deny_all | broker` — only the
    default is wired.
-3. ⏳ **Record the resolved placement** on the sub-agent's trace (requested ·
-   resolved · enforcement), so advisory is never read as jailed.
+3. ✅ **The resolved placement is recorded** on the sub-agent's trace
+   (`yaah.subagent.confinement.v1`: requested · resolved · backend · tier ·
+   writable root), so advisory is never read as jailed. The advisory resolution
+   is recorded too — it is a record with no workspace, and claims no writable
+   root (yaah PRs #343, #344).
 4. ✅ `internal/doctor` reports the capability (`CheckContainment`: backend /
-   mode / placement; a fail-closed `paddock` with no usable backend is a `FAIL`).
+   mode / placement; a fail-closed `paddock` with no usable backend is a `FAIL`,
+   and an unset setting now reports the real default `auto`).
 
-**Default flip (open):** the plan's intent is `auto`; it stays `off` until an
-acceptance run (yaah's `docs/shepherd-benchmark.md`) exercises a **confined
-sub-agent on a real build** — the same gate Phase 2 used.
+**Default flip (landed, yaah PR #344):** an unset `agents.subagent.containment`
+means `auto` — jail where the host can, degrade visibly to advisory where it
+cannot. The opt-out is explicit (`off`/`none`/`advisory`), so the unconfined
+host path is a choice rather than an omission. Gated on the acceptance below,
+which is now a test (`TestConfinedBuild_Acceptance`), not a runbook.
+
+#### The acceptance, and what it found ✅ (yaah PR #344)
+
+The gate Phase 2 used too: a **real** workload under paddock, not a unit test of
+the seam. `TestConfinedBuild_Acceptance` runs a genuine `go build` **and** a
+genuine `git commit` inside a real Landlock jail, then asserts the build cache
+landed in the worktree scratch (so the redirect was in force, not coincidentally
+unnecessary) and that an out-of-root write is still refused. It found two
+showstoppers on its first run — both invisible to the seam tests:
+
+1. **The pinned backend predated the fix.** yaah pinned `sandbox/landlock
+   v0.1.0`, which **predates the `/dev` write grant** (below) — so nothing could
+   open `/dev/null` for reading and writing, and `git init` died with
+   `could not open '/dev/null': Permission denied`. The fix was already on
+   runtime `main`; it had simply **never been tagged**. Published
+   `sandbox/landlock/v0.1.1` (release-verify green) and bumped yaah. *Lesson: a
+   merged fix with no tag is not a shipped fix.*
+2. **The redirect hid a read git needs.** Moving `HOME` moves the global git
+   config with it, so a confined `git commit` refused with `Author identity
+   unknown`. The redirect now **carries** the global git config into the scratch
+   at git's own precedence (`~/.config/git/config` then `~/.gitconfig`), `0o600`.
+   It deliberately does **not** carry credential stores (`~/.ssh`,
+   `~/.git-credentials`, `~/.npmrc`, `~/.netrc`): copying secrets into a
+   proposal-bearing worktree is a worse trade than requiring the **unconfined
+   worktree bootstrap** — which runs before the body — to prepare authenticated
+   inputs. That keeps the "redirect, don't widen" rule intact: the redirect
+   exists to make *writes* land inside the root, and must not be extended to
+   smuggling credentials in.
+
+Both are pinned: disabling the carry, or re-pinning v0.1.0, fails the
+acceptance.
 
 #### The writable-root problem — solved by redirecting ✅ (yaah PR #339)
 
@@ -359,6 +397,12 @@ carved out. That is the same trade-off Seatbelt makes; the alternative is denyin
 `/dev/null` outright, which breaks shells and build tools. The consequence is
 documented and pinned by a test.
 
+**Shipped as `sandbox/landlock/v0.1.1`.** The fix merged but was never a release
+— `v0.1.0` predates it — so yaah stayed pinned to a jail that could not open
+`/dev/null`, and the acceptance caught it (see Phase 3 above). A merged fix with
+no tag is not a shipped fix; the release-verify workflow proves the tag resolves
+from a clean consumer.
+
 ### Phase 4 (north star) — `oversee(implement)`
 
 Shepherd's deferred target: one sub-agent (or the orchestrator) supervises
@@ -385,7 +429,9 @@ meet.
 | 3 | `TestRetained_ConfinerOnUnifiedPath` | inspect the one retained launch | confiner present, no special case |
 | 3 | `TestSubAgent_RecordsResolvedPlacement` | advisory vs jailed dispatch | the trace records which resolved |
 | 3 | `TestConfig_Placement` | `auto`/`jail`/`advisory` | selects the placement; `jail` fails closed |
-| 3 | `TestDoctor_Containment` | `yaah doctor` | reports the ABI / advisory |
+| 3 | `TestDoctor_Containment` | `yaah doctor` | reports the ABI / advisory; an unset setting reports the real default (`auto`) |
+| 3 | `TestConfinedBuild_Acceptance` | a real `go build` + `git commit` under paddock | both succeed; the build cache lands in the worktree scratch; an out-of-root write is still refused |
+| 3 | `TestConfinementScratchEnv_CarriesGitIdentity` | a global `~/.gitconfig` and the redirect | the config is carried into the scratch, `0o600`, at git's own precedence |
 
 ## 9. Risks & Mitigations
 
@@ -397,7 +443,12 @@ meet.
 - **Per-sub-agent worktree cost** (a fork + a seal per dispatch). *Mitigation:*
   measure against the harness; `shared` remains available for exploratory work.
 - **Version skew (kernel v0.16.0 → v0.17.0).** *Mitigation:* Phase 0's build gate.
-- **Release tagging dependency.** *Mitigation:* Phase 0, or an interim local replace.
+- **Release tagging dependency.** *Mitigation:* Phase 0, or an interim local
+  replace. **This bit twice:** the `/dev` fix merged but was never tagged, so
+  yaah stayed pinned to a backend that could not open `/dev/null` — a merged fix
+  with no tag is not a shipped fix. Mitigated by tagging on merge for any
+  boundary-relevant fix, and by the acceptance below, which fails loudly against
+  a stale pin rather than degrading silently.
 - **macOS / Windows** (no jail). *Mitigation:* `auto` → advisory ⇒ today's behavior.
 - **The trampoline hook is load-bearing** (rc 3 → `ErrPaddockNotEstablished`).
   *Mitigation:* install it and assert (#5).
