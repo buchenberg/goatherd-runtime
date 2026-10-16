@@ -7,8 +7,8 @@ filter (Plan 5).
 
 Each plan follows the same discipline: a parity checklist mapping Python symbols
 to Go targets with a covering test, an explicit scope/non-goals section, and a
-test matrix. Plans 1 and 2 are written; 3–5 are scoped here and get their own
-documents when started.
+test matrix. Plans 1–3 are written and implemented; 4–5 are scoped here and get
+their own documents when started.
 
 > **Vocabulary — "paddock".** The Go code renames Python Shepherd's `jail` to
 > **`paddock`** (an enclosed livestock area — it fits the shepherd/croft theme;
@@ -26,8 +26,8 @@ documents when started.
 | Plan | Goal | Covers | Doc | Status |
 |---|---|---|---|---|
 | **1** | Linux Landlock containment | paddock, contract, probe, may=/grants lowering, placement, evidence, denial classification | [`01-landlock-containment.md`](01-landlock-containment.md) | ✅ implemented |
-| **2** | Reversible execution runs | fork-isolated-by-default, capability-after-fork, discard-on-failure, merge/seal, recorded run operation | [`02-reversible-runs.md`](02-reversible-runs.md) | 🚧 Phases 1–3 done; 4 planned |
-| **3** | Authority declarations & permission-plan compiler | `May[…]`/grant authoring, paddock **+ carrier** monitor compiler, `authority_merge`, evidence persistence | [`03-authority-and-plan-compiler.md`](03-authority-and-plan-compiler.md) | 🚧 Phases 1–3 done; 4 planned |
+| **2** | Reversible execution runs | fork-isolated-by-default, capability-after-fork, discard-on-failure, merge/seal, recorded run operation, authority merge | [`02-reversible-runs.md`](02-reversible-runs.md) | ✅ implemented |
+| **3** | Authority declarations & permission-plan compiler | `May[…]`/grant authoring, paddock **+ carrier** monitor compiler, `authority_merge`, evidence persistence | [`03-authority-and-plan-compiler.md`](03-authority-and-plan-compiler.md) | ✅ implemented |
 | **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | — | 📝 scoped |
 | **5** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
 
@@ -69,9 +69,10 @@ the *monitor-assignment* half (which monitor enforces what).
   (paddock + carrier assignments, `SpecDigest`, descriptor, `Digest`) and its
   consumption by the Plan-2 `run` package, mapping the carrier monitor to the
   existing `DeltaApplier`/settlement check-at-commit.
-- **3c — `authority_merge` disposition.** Plan 2 defines the signature and
-  refuses; Plan 3 supplies the plan digests (`effective_match_digest`,
-  `permission_plan_digest`, descriptor) that make it real.
+- **3c — `authority_merge` disposition.** The `DecisionProvider` gate over the
+  run's proposed changes; the plan digests (`permission_plan_digest`,
+  descriptor) ride in the run record. (Reference's carrier-candidate cohort lane
+  is a follow-up.)
 - **3d — Evidence persistence.** Plan 2 Phase 3 records the run operation; the
   chain of authority-evidence digests (spec → plan → run) becomes citable at
   settlement.
@@ -131,13 +132,13 @@ without containerd) justifies it.
 | `may=` / per-binding grants lowering | ✅ | Plan 1 |
 | Disjointness / alias guard (incl. NFC) | ✅ | Plan 1 (x/text) |
 | Placement, detection, denial classification, evidence digest | ✅ | Plan 1 |
-| Grant *source* (signature annotations) | 🟡 | Plan 3a |
-| Permission-plan compiler (+ carrier monitor) | 🟡 | Plan 3b |
-| `authority_merge` disposition | 🟡 | Plan 3c |
-| Evidence persistence into the trace | 🟡 | Plan 2 §8 / Plan 3d |
-| Reversible-by-default execution | ❌ | Plan 2 |
-| Capability proof-carrying / after-fork | 🟡 | Plan 2 |
-| ExecutionBoundDriver / negotiation | 🟡 | Plan 2 (adapted) |
+| Grant *source* (signature annotations) | ✅ | Plan 3a (`confinement.Declaration`) |
+| Permission-plan compiler (+ carrier monitor) | ✅ | Plan 3b (`confinement.Install`) |
+| `authority_merge` disposition | ✅ | Plan 3c (`DecisionProvider` gate) |
+| Evidence persistence into the trace | ✅ | Plan 2 §8 / Plan 3d |
+| Reversible-by-default execution | ✅ | Plan 2 |
+| Capability proof-carrying / after-fork | ✅ | Plan 2 |
+| ExecutionBoundDriver / negotiation | ✅ | Plan 2 (adapted) |
 | Sandbox file IO | 🟡 | small item |
 | Seatbelt (macOS) | ❌ | Plan 4a |
 | Egress broker (enforcement) | ❌ | Plan 4b |

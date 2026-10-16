@@ -15,12 +15,12 @@
 > chain, and the `authority_merge` disposition — which then unblocks Plan 2
 > Phase 4.
 >
-> **Status:** Phases 1 (declarations), 2 (the compiler), and 3 (consume in `run`
-> + the evidence chain) are implemented in
-> [`sandbox/confinement`](../../sandbox/confinement) and
-> [`run/reversible.go`](../../run/reversible.go). This **supersedes** Plan 1's
-> minimal `PermissionPlan`/`JailPlan` (the git backend now cites
-> `PlanForSpec(...).Digest()`). Phase 4 (`authority_merge`) remains.
+> **Status:** all four phases are implemented — declarations + compiler in
+> [`sandbox/confinement`](../../sandbox/confinement), plan consumption +
+> `authority_merge` in [`run/reversible.go`](../../run/reversible.go). The
+> authority spine is complete. This **supersedes** Plan 1's minimal
+> `PermissionPlan`/`JailPlan` (the git backend now cites
+> `PlanForSpec(...).Digest()`).
 
 ## 1. Objective & Context
 
@@ -91,8 +91,8 @@ Go-shaped `authority_merge` disposition.
 | 10 | evidence validation (`validate_permission_plan_evidence`) | `confinement.ValidatePlanEvidence` | `TestValidatePlanEvidence` | ✅ |
 | 11 | `permission_plan` drives the run's confinement | `run.Options.Plan` → `RunContext.Confinement = plan.Confinement()` | `TestReversible_PlanDrivesConfinement` | ✅ |
 | 12 | `permission_plan_digest` in the run | the run record carries the **plan** digest + descriptor | `TestReversible_RecordsPlanDigest` | ✅ |
-| 13 | `success_disposition == "authority_merge"` | `run` authority-merge disposition + `DecisionProvider` | `TestReversible_AuthorityMerge` | 🚧 Phase 4 |
-| 14 | `merge_with_authority` (cohort lane) | Go simplified analogue (decision gate) | (row 13); richer lane → follow-up | 🚧 Phase 4 |
+| 13 | `success_disposition == "authority_merge"` | `run` authority-merge disposition + `DecisionProvider` | `TestReversible_AuthorityMerge`, `TestReversible_AuthorityMergeDenied` | ✅ |
+| 14 | `merge_with_authority` (cohort lane) | Go simplified analogue (decision gate); cohort lane → follow-up | (row 13) | ✅ (simplified) |
 
 ## 5. Architecture
 
@@ -211,7 +211,7 @@ clause.
   `TestReversible_RecordsPlanDigest`, `TestReversible_CarrierOnlyPlanRefuses`,
   `TestReversible_PlanMutuallyExclusive`.
 
-## 9. Phase 4 — `authority_merge` (unblocks Plan 2 Phase 4)
+## 9. Phase 4 — `authority_merge` (implemented; closes Plan 2 Phase 4)
 
 A Go-shaped analogue of `merge_with_authority`:
 
@@ -223,10 +223,15 @@ type DecisionProvider func(ctx context.Context, proposal shepherd.MergeProposal)
 Decision DecisionProvider // required for DispositionAuthorityMerge
 ```
 
-Flow: `Reversible` (isolated) runs the handler, `Seal`s the output, builds the
-proposal via `ProposeMerge`, calls `Decision`; on approval `SettleSelect`/
-`SettleApply`; on denial `SettleDiscard` (authority-safe cleanup) and returns the
-denial. The plan digests ride in the run record.
+As built: `Reversible` (isolated) runs the handler, records the run, then for
+`DispositionAuthorityMerge` builds the proposal via `ProposeMerge`, calls
+`Decision`; on approval it seals and settles (`SettleSelect`/`SettleApply`); on
+denial it **discards** the run (`mgr.Discard`, the authority-safe cleanup — the
+denied changes are never snapshotted) and returns `*SupervisorDeniedError`. A
+missing `Decision` is a validation error. The plan digests ride in the run
+record. Verified by `TestReversible_AuthorityMerge`,
+`TestReversible_AuthorityMergeDenied`,
+`TestReversible_AuthorityMergeRequiresDecision`.
 
 **Deferred to a follow-up:** the reference's per-substrate carrier-candidate
 cohort lane (`ContainmentSubstrate`, `EffectRecord`, cohort adoption). Go's gate
@@ -246,8 +251,8 @@ over the sealed output is the simplified analogue and is recorded as such.
 | ✅ | `TestValidatePlanEvidence` | matching / mismatched evidence | nil / `ErrPlanEvidence` |
 | ✅ | `TestReversible_PlanDrivesConfinement` | run with `Options.Plan` | `RunContext.Confinement` is the plan's paddock spec |
 | ✅ | `TestReversible_RecordsPlanDigest` | run with a plan | the run record carries `permission_plan_digest` + descriptor |
-| 🚧 | `TestReversible_AuthorityMerge` | approving / denying `DecisionProvider` | approves→settle; denies→discard + denial (Phase 4) |
-| 🚧 | `TestReversible_AuthorityMergeRequiresDecision` | `DispositionAuthorityMerge`, nil `Decision` | validation error (Phase 4) |
+| ✅ | `TestReversible_AuthorityMerge` | approving / denying `DecisionProvider` | approves→settle; denies→discard + denial |
+| ✅ | `TestReversible_AuthorityMergeRequiresDecision` | `DispositionAuthorityMerge`, nil `Decision` | validation error |
 
 ## 11. Parity Comparison: Authority Policy
 

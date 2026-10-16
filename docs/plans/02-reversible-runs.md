@@ -12,13 +12,12 @@
 > `Seal`, `Settle`, merge gate, recovery). This plan is a *composition* layer that
 > joins those primitives to the Plan-1 confined `Exec` — not new substrate.
 >
-> **Status:** Phases 1 (the reversible-run wrap), 2 (the handler/negotiation
-> seam), and 3 (the recorded run operation + evidence persistence) are
-> implemented in [`run/reversible.go`](../../run/reversible.go) and
-> [`fact.go`](../../fact.go) — 14 passing tests. Phase 4 (`authority_merge`)
-> remains, pending the permission-plan compiler (Plan 3). Merge propagates
+> **Status:** all four phases are implemented in
+> [`run/reversible.go`](../../run/reversible.go) and
+> [`fact.go`](../../fact.go) — 20 passing tests. Merge propagates
 > physically via `Seal` + `SettleSelect`/`SettleApply` — `CommitMerge` refuses
-> isolated children (§9).
+> isolated children (§9). `authority_merge` (Phase 4) is the `DecisionProvider`
+> gate (Plan 3 Phase 4).
 
 ## 1. Objective & Context
 
@@ -77,9 +76,8 @@ recorded-operation boundary + evidence persistence, the dispositions
 (merge default, seal, non-reversible opt-out), and the test matrix.
 
 **Non-goals (deferred to later plans):**
-- **`authority_merge`** depends on the permission-plan **compiler** (paddock +
-  carrier assignment, `effective_match_digest`, `permission_plan_descriptor`) —
-  that is Plan 3. Phase 4 defines its signature and refuses it loudly until Plan 3.
+- **`authority_merge`** is implemented as a `DecisionProvider` gate (Plan 3
+  Phase 4); the reference's richer carrier-candidate cohort lane is a follow-up.
 - Egress enforcement, Seatbelt, and the container tier (unchanged non-goals from
   Plan 1 §3).
 - Host wiring (`yaah`) / sub-agent supervision integration.
@@ -99,7 +97,7 @@ recorded-operation boundary + evidence persistence, the dispositions
 | 9 | `runtime_operation_boundary` | `run` records `shepherd.run.executed.v1` via `(*Scope).AppendFact` | `TestReversible_RecordsRunOperation` | ✅ |
 | 10 | authority digest recorded | evidence (`confinement.Evidence`) persisted in the run record | `TestReversible_RecordsEvidence` | ✅ |
 | 11 | `verify_execution_negotiation` under skew | `run` refuses without a capability backend | `TestReversible_RefusesWithoutBackend` | ✅ (shape) |
-| 12 | `success_disposition == "authority_merge"` | `DispositionAuthorityMerge` — refuses until Plan 3 | `TestReversible_AuthorityMergeDeferred` | 🚧 deferred |
+| 12 | `success_disposition == "authority_merge"` | `DispositionAuthorityMerge` + `DecisionProvider` | `TestReversible_AuthorityMerge`, `TestReversible_AuthorityMergeDenied` | ✅ |
 
 ## 5. Architecture
 
@@ -157,7 +155,7 @@ type Disposition string
 const (
     DispositionMerge          Disposition = "merge"           // default
     DispositionSeal           Disposition = "seal"
-    DispositionAuthorityMerge Disposition = "authority_merge" // Plan 3
+    DispositionAuthorityMerge Disposition = "authority_merge"
 )
 
 type Options struct {
@@ -257,11 +255,9 @@ trace.TrustedAppendContext, trace.AppendBatch{...})` returning an
   `*SupervisorDeniedError`.
 - **Seal:** `out := mgr.Seal(ctx, runScope.ID())`; the caller settles later
   (`SettleSelect`/`Apply`), enabling fork-and-choose (`Outcome.Output`).
-- **`authority_merge`:** Python's `merge_with_authority` (binding roots +
-  decision provider + `effective_match_digest` + `permission_plan_digest` +
-  descriptor). **Refuse loudly** (`ErrAuthorityMergeUnsupported`) until Plan 3
-  (the permission-plan compiler) provides the digests. The signature is defined
-  now so callers compile; the behaviour refuses.
+- **`authority_merge`:** the `DecisionProvider` gate (Plan 3 Phase 4) — the run's
+  proposed changes are decided before integration; a denial discards the run and
+  returns `*SupervisorDeniedError`. A missing `Decision` is a validation error.
 - **`non_reversible_run`:** run on the parent scope with `isolation="ground"`,
   recorded so the defaulted-Permissive/loud-opt-out population stays countable
   (the same discipline as `MayResolution.Source`). Refuse if combined with a
@@ -284,7 +280,7 @@ a paddock is exercised). Build the harness on a git worktree sandbox.
 | ✅ | `TestReversible_SealDisposition` | `DispositionSeal` | `Outcome.Output` sealed; caller `Settle(SettleSelect)` integrates it |
 | ✅ | `TestReversible_RecordsRunOperation` | any run | one `shepherd.run.executed.v1` record carries isolation/disposition/exit |
 | ✅ | `TestReversible_RecordsEvidence` | paddocked run | the record carries the authority-evidence digest |
-| ✅ | `TestReversible_AuthorityMergeDeferred` | `DispositionAuthorityMerge` | refuses with `ErrAuthorityMergeUnsupported` |
+| ✅ | `TestReversible_AuthorityMerge`/`_Denied` | `DispositionAuthorityMerge` + `DecisionProvider` | approve→settle; deny→discard + `*SupervisorDeniedError` |
 | ✅ | `TestReversible_NonReversibleWithSealRefused` | `NonReversible` + `Seal` | validation error (mirrors `_command_envelope.py:126`) |
 | ✅ | `TestVerifyHandler_RefusesWithoutCapability` | handler handed a backend-less capability | refuses; a nil return or wrong error fails conformance |
 | 🚧 | `TestReversible_Recovers` | run, restart, `RecoverScopes` | run scope + evidence recoverable from the trace |
@@ -299,7 +295,7 @@ a paddock is exercised). Build the harness on a git worktree sandbox.
 | **Discard on failure** | `owner.discard(run_scope)` | **Parity**: `mgr.Discard` |
 | **Merge on success** | `owner.merge` / `prepare_merge` diff | **Parity**: isolated propagation via `Seal` + `SettleSelect`/`SettleApply` (physical, digest-stable); review gate via `ProposeMerge` |
 | **Seal disposition** | `success_disposition="seal"` | **Parity**: `DispositionSeal` + `Settle*` |
-| **authority_merge disposition** | `merge_with_authority` | **Deferred** to Plan 3 (compiler); refuses now |
+| **authority_merge disposition** | `merge_with_authority` | **Parity (simplified)**: `DecisionProvider` gate; cohort lane is a follow-up |
 | **Loud non-reversible opt-out** | `non_reversible_run` | **Parity** (to build): `Options.NonReversible` + recorded |
 | **Recorded operation bracket** | `runtime_operation_boundary` | **Parity**: `shepherd.run.executed.v1` run record (`(*Scope).AppendFact`) |
 | **Authority evidence persisted** | `permission_plan_digest` in the run | **Parity**: the digest is written into the run record |
@@ -334,8 +330,8 @@ first) → Phase 3 (recorded operation + evidence) → Phase 5 (tests throughout
 2. **Recorded-operation shape** — ✅ **runtime-level record, no kernel change**:
    `shepherd.run.executed.v1` appended via `(*Scope).AppendFact` (schema refs are
    validated only for non-emptiness).
-3. **`authority_merge`** — ✅ **define-and-refuse**:
-   `DispositionAuthorityMerge` returns `ErrAuthorityMergeUnsupported` until Plan 3.
+3. **`authority_merge`** — ✅ **implemented** (Plan 3 Phase 4): the
+   `DecisionProvider` gate over the run's proposed changes.
 4. **Evidence carriage** — ✅ **both**: on `ExecResult` (Plan 1, the seam) and in
    the run record (Plan 2, the durable evidence).
 5. **Handler granularity** — ✅ **multi-command handler**: a handler may issue

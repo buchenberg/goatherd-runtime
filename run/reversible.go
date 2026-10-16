@@ -38,15 +38,16 @@ const (
 	// DispositionSeal freezes the run's changes into a RetainedOutput and leaves
 	// integration to the caller (fork-and-choose).
 	DispositionSeal Disposition = "seal"
-	// DispositionAuthorityMerge is the authority-aware merge. It is defined for
-	// callers to compile but refuses until the permission-plan compiler lands.
+	// DispositionAuthorityMerge is the authority-aware merge: the run's sealed
+	// changes are judged by Options.Decision before integration, and a denial
+	// discards them.
 	DispositionAuthorityMerge Disposition = "authority_merge"
 )
 
-// ErrAuthorityMergeUnsupported is returned for DispositionAuthorityMerge: the
-// disposition needs the permission-plan digests (effective_match_digest,
-// permission_plan_digest, descriptor) the compiler will provide.
-var ErrAuthorityMergeUnsupported = errors.New("run: authority_merge requires the permission-plan compiler (not yet landed)")
+// DecisionProvider judges a run's proposed changes before integration,
+// mirroring merge_with_authority's data-only decision provider. Approve by
+// returning nil; deny by returning an error (the run is discarded).
+type DecisionProvider func(ctx context.Context, proposal shepherd.MergeProposal) error
 
 // Options configures one reversible run. The zero value plus OwnerID runs a
 // merge-disposition, auto-placement, isolated run with a Permissive default
@@ -76,6 +77,9 @@ type Options struct {
 	// Reviewer, when set, gates a merge disposition: a denial discards the run
 	// and returns *shepherd.SupervisorDeniedError.
 	Reviewer shepherd.MergeReviewer
+	// Decision, required for DispositionAuthorityMerge, judges the run's proposed
+	// changes before integration; a denial discards the run.
+	Decision DecisionProvider
 	// Backend is the paddock backend the capability carries (e.g.
 	// landlock.Detect()). It may be nil on an advisory host.
 	Backend containment.Backend
@@ -174,8 +178,8 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 	if disposition == "" {
 		disposition = DispositionMerge
 	}
-	if disposition == DispositionAuthorityMerge {
-		return Outcome{}, ErrAuthorityMergeUnsupported
+	if disposition == DispositionAuthorityMerge && opts.Decision == nil {
+		return Outcome{}, errors.New("run: disposition authority_merge requires Options.Decision")
 	}
 	if opts.NonReversible && disposition != DispositionMerge {
 		return Outcome{}, fmt.Errorf("run: a non-reversible run cannot use disposition %q (mirrors non_reversible_run validation)", disposition)
@@ -272,7 +276,8 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 		return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition}, nil
 	}
 
-	// Reviewer gate (merge only): deny ⇒ discard, never integrate.
+	// Gate: a merge may be reviewed; an authority merge is decided. Both deny by
+	// discarding the run, never integrating.
 	if disposition == DispositionMerge && opts.Reviewer != nil {
 		proposal, err := mgr.ProposeMerge(ctx, runScope.ID(), opts.MaxDiffLines)
 		if err != nil {
@@ -281,6 +286,19 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 				fmt.Errorf("run: propose merge: %w", err)
 		}
 		if deny := opts.Reviewer(*proposal); deny != nil {
+			_ = mgr.Discard(runScope.ID())
+			return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition},
+				&shepherd.SupervisorDeniedError{Reason: deny.Error(), Changes: proposal.Changes}
+		}
+	}
+	if disposition == DispositionAuthorityMerge {
+		proposal, err := mgr.ProposeMerge(ctx, runScope.ID(), opts.MaxDiffLines)
+		if err != nil {
+			_ = mgr.Discard(runScope.ID())
+			return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition},
+				fmt.Errorf("run: propose merge: %w", err)
+		}
+		if deny := opts.Decision(ctx, *proposal); deny != nil {
 			_ = mgr.Discard(runScope.ID())
 			return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition},
 				&shepherd.SupervisorDeniedError{Reason: deny.Error(), Changes: proposal.Changes}

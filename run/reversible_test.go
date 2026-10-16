@@ -162,18 +162,71 @@ func TestReversible_RefusesWithoutBackend(t *testing.T) {
 	}
 }
 
-func TestReversible_AuthorityMergeDeferred(t *testing.T) {
+func TestReversible_AuthorityMerge(t *testing.T) {
 	mgr := newManager(t)
-	parent, _ := newParent(t, mgr, "run:am-main")
+	parent, repo := newParent(t, mgr, "run:am-main")
+
+	var sawChange bool
+	out, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:     "run:am-1",
+		Disposition: DispositionAuthorityMerge,
+		NewSandbox:  worktreeFactory(t, repo),
+		Decision: func(_ context.Context, p shepherd.MergeProposal) error {
+			sawChange = len(p.Changes) == 1
+			return nil
+		},
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		return Result{}, writeIn(rc, "am.txt", "x")
+	})
+	if err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+	if !sawChange {
+		t.Fatal("the decision provider must see the run's proposed change")
+	}
+	if out.Disposition != DispositionAuthorityMerge {
+		t.Fatalf("disposition = %q", out.Disposition)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "am.txt")); err != nil {
+		t.Fatalf("an approved authority merge must land its changes: %v", err)
+	}
+}
+
+func TestReversible_AuthorityMergeDenied(t *testing.T) {
+	mgr := newManager(t)
+	parent, repo := newParent(t, mgr, "run:amd-main")
 
 	_, err := Reversible(context.Background(), mgr, parent, Options{
-		OwnerID:     "run:am-1",
+		OwnerID:     "run:amd-1",
+		Disposition: DispositionAuthorityMerge,
+		NewSandbox:  worktreeFactory(t, repo),
+		Decision: func(_ context.Context, _ shepherd.MergeProposal) error {
+			return errors.New("denied by authority")
+		},
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		return Result{}, writeIn(rc, "am.txt", "x")
+	})
+	var denied *shepherd.SupervisorDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("want *SupervisorDeniedError, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "am.txt")); !os.IsNotExist(err) {
+		t.Fatal("a denied authority merge must not reach the parent workspace")
+	}
+}
+
+func TestReversible_AuthorityMergeRequiresDecision(t *testing.T) {
+	mgr := newManager(t)
+	parent, _ := newParent(t, mgr, "run:amr-main")
+
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:     "run:amr-1",
 		Disposition: DispositionAuthorityMerge,
 	}, func(_ context.Context, _ *RunContext) (Result, error) {
 		return Result{}, nil
 	})
-	if !errors.Is(err, ErrAuthorityMergeUnsupported) {
-		t.Fatalf("want ErrAuthorityMergeUnsupported, got %v", err)
+	if err == nil {
+		t.Fatal("authority_merge without Options.Decision must be refused")
 	}
 }
 
