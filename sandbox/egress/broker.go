@@ -148,9 +148,10 @@ func (b *Broker) handle(conn net.Conn) {
 }
 
 // readConnect reads the CONNECT request head — through the terminating blank line
-// (`\r\n\r\n`) — one byte at a time, so bytes the client pipelines after the head
-// stay in the socket for the spliced tunnel (a bufio.Reader would swallow them
-// into its buffer). It parses only the request line.
+// (`\r\n\r\n`, or a bare `\n\n`) — one byte at a time, so bytes the client
+// pipelines after the head stay in the socket for the spliced tunnel (a
+// bufio.Reader would swallow them into its buffer). It parses only the request
+// line.
 func readConnect(conn net.Conn) (host string, port int, ok bool) {
 	buf := make([]byte, 0, 256)
 	one := make([]byte, 1)
@@ -158,7 +159,10 @@ func readConnect(conn net.Conn) (host string, port int, ok bool) {
 		n, err := conn.Read(one)
 		if n > 0 {
 			buf = append(buf, one[0])
-			if bytes.HasSuffix(buf, []byte("\r\n\r\n")) {
+			// Tolerate both a CRLF and an LF head terminator, so an LF-only
+			// client does not push the loop past the blank line into the
+			// tunnel bytes.
+			if bytes.HasSuffix(buf, []byte("\r\n\r\n")) || bytes.HasSuffix(buf, []byte("\n\n")) {
 				break
 			}
 		}

@@ -62,12 +62,13 @@ func (b *Backend) Available() (bool, string) {
 }
 
 // SupportsNetwork reports whether this kernel can pin network egress (Landlock
-// ABI >= 4). NetAllowAll is always representable (it applies no rule).
+// ABI >= 4). NetAllowAll is always representable; the zero value mirrors the
+// deny_all default (so SupportsNetwork and ProfileFor agree on "").
 func (b *Backend) SupportsNetwork(mode containment.NetMode) bool {
 	switch mode {
-	case containment.NetAllowAll, "":
+	case containment.NetAllowAll:
 		return true
-	case containment.NetDenyAll, containment.NetBroker:
+	case containment.NetDenyAll, containment.NetBroker, "":
 		return supportsNetwork()
 	default:
 		return false

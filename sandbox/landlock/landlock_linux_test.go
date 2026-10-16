@@ -31,13 +31,15 @@ func TestMain(m *testing.M) {
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
 		case e2eConnectSentinel:
-			if len(os.Args) >= 4 {
-				os.Exit(e2eConnect(os.Args[2], os.Args[3]))
+			if len(os.Args) < 4 {
+				os.Exit(ConfineFailedRC) // a sentinel with missing operands must fail loudly, not run the suite
 			}
+			os.Exit(e2eConnect(os.Args[2], os.Args[3]))
 		case e2eDirectSentinel:
-			if len(os.Args) >= 3 {
-				os.Exit(e2eDirect(os.Args[2]))
+			if len(os.Args) < 3 {
+				os.Exit(ConfineFailedRC)
 			}
+			os.Exit(e2eDirect(os.Args[2]))
 		}
 	}
 	os.Exit(m.Run())

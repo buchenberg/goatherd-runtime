@@ -84,11 +84,11 @@ the `copy` carrier (Phase 2); the `clonefile` carrier (Phase 3).
 | 1 | `FileCreate` | `shepherd.effect.file.created.v1` record | `TestEffect_FromChanges` |
 | 2 | `FilePatch` | `shepherd.effect.file.patched.v1` record | `TestEffect_FromChanges` |
 | 3 | `FileDelete` | `shepherd.effect.file.deleted.v1` record | `TestEffect_FromChanges` |
-| 4 | `OverlayEffectExtractor.extract` | `effect.FromChanges(owner, op, []croft.Change)` | `TestEffect_FromChanges` |
+| 4 | `OverlayEffectExtractor.extract` | `effect.FromChanges([]croft.Change)` | `TestEffect_FromChanges` |
 | 5 | `caused_by` (D25) | `CausalParents = [operation record id]` | `TestEffect_Causality` |
 | 6 | effect emission | `(*EffectBus).Publish` + `AppendFact` | `TestEffect_EmittedOnBus` |
 | 7 | whiteouts (D9) | inherent: `croft.Changes` reports `ChangeDelete` | `TestEffect_FromChanges` |
-| 8 | `ContainerDevice.extract_effects` | the run/handler calls `effect.FromChanges` on the sandbox | `TestEffect_ContainerRun` (live) |
+| 8 | `ContainerDevice.extract_effects` | the run/handler calls `effect.FromChanges` on the sandbox's `croft.Changes` output, then `effect.Emit` | `TestEffect_ContainerRun` (live) |
 | 9 | `_copy_carrier.py` | `sandbox/copy` backend | `TestCopyCarrier_*` |
 | 10 | `_clonefile_carrier.py` | `sandbox/clonefile` (darwin) | `TestClonefile_*` (macOS) |
 | 11 | `_kernel_overlay` / `_fuse_overlay` | `croft` (already) | croft's live suite |
@@ -104,7 +104,10 @@ run / handler
 croft.Changes(ctx, ws)  ──►  []Change{Kind: Add|Modify|Delete, Path, IsDir, Mode, Size}
    │
    ▼
-effect.FromChanges(owner, opID, changes)
+effect.FromChanges(changes)  ──►  []ChangeEffect
+   │
+   ▼
+effect.Emit(ctx, scope, bus, opID, effects)   (opID → CausalParents)
    │  ChangeAdd→created, ChangeModify→patched, ChangeDelete→deleted
    ▼
 typed records  ──►  (*EffectBus).Publish(EffectEvent)   (live supervision)
@@ -117,7 +120,7 @@ no overlay walking, no whiteout logic (containerd resolves it), no VM reader.
 ### 5.2 Causality
 
 Python's D25 links each file effect to the *causing intent*. Go links to the
-**operation/scope**: `FromChanges` takes the run/operation id and sets
+**operation/scope**: `Emit` takes the run/operation id and sets
 `CausalParents = [opID]`. Per-intent granularity, where a consumer needs it, uses
 the runtime's operation journal (the same journal settlement already records).
 
