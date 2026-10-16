@@ -186,8 +186,8 @@ func TestLandlock_ProbeCatchesMisloweredWritable(t *testing.T) {
 	wd := t.TempDir()
 	// BUG SIM: a ReadOnly run handed a Permissive-style writable-WORKDIR profile.
 	mislowered := b.ProfileFor([]string{wd}, true)
-	if err := b.Probe(mislowered, wd, nil); !errors.Is(err, containment.ErrJailNotEstablished) {
-		t.Fatalf("want ErrJailNotEstablished, got %v", err)
+	if err := b.Probe(mislowered, wd, nil); !errors.Is(err, containment.ErrPaddockNotEstablished) {
+		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
 }
 

@@ -89,11 +89,11 @@ type ExecRequest struct {
 	// the git backend). It carries the writable-root set, not raw roots, so the
 	// authority layer (package confinement) is the only producer of roots.
 	Confinement *containment.ConfinementSpec
-	// Placement selects where authority is enforced (jail | advisory | auto).
+	// Placement selects where authority is enforced (paddock | advisory | auto).
 	// An empty value asks the backend for its configured default.
 	Placement confinement.Placement
 	// AuthorityMatch is the authority-surface digest the caller is enforcing
-	// (optional). It is folded into the run's authority evidence when jailed.
+	// (optional). It is folded into the run's authority evidence when confined.
 	AuthorityMatch string
 }
 
@@ -103,12 +103,12 @@ type ExecResult struct {
 	Stdout   string
 	Stderr   string
 	Duration time.Duration
-	// Denied reports that a jailed run's failure reads as a syscall denial — the
+	// Denied reports that a confined run's failure reads as a syscall denial — the
 	// write never reached disk. The runtime records a denied run as discarded,
 	// Failed. The signal is heuristic (see containment.DeniedExit) and is only
-	// ever set for jailed runs.
+	// ever set for confined runs.
 	Denied bool
-	// AuthorityEvidence is the jail monitor's permission-plan digest for a jailed
+	// AuthorityEvidence is the paddock monitor's permission-plan digest for a confined
 	// run (empty when unconfined). It cites which monitor enforced the run and is
 	// the record the runtime persists so enforcement is auditable.
 	AuthorityEvidence string

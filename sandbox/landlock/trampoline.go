@@ -12,7 +12,7 @@ const (
 	ProbeSentinel = "__landlock_probe__"
 	// ConfineFailedRC is returned when confinement could not be established — a
 	// value an ordinary command (and a denied write) does not produce, so "no
-	// jail" is distinguishable from "write denied".
+	// paddock" is distinguishable from "write denied".
 	ConfineFailedRC = 3
 )
 

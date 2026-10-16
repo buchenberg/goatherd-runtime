@@ -45,9 +45,9 @@ func TestGitSandbox_ExecRequiresBackend(t *testing.T) {
 	}
 }
 
-func TestGitSandbox_ExecJailed(t *testing.T) {
+func TestGitSandbox_ExecConfined(t *testing.T) {
 	fake := &fakeConfiner{available: true, result: containment.LaunchResult{ExitCode: 7, Stdout: "hi"}}
-	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementJail))
+	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementPaddock))
 
 	res, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "echo", Args: []string{"hi"}})
 	if err != nil {
@@ -57,19 +57,19 @@ func TestGitSandbox_ExecJailed(t *testing.T) {
 		t.Fatalf("result = %+v", res)
 	}
 	if !fake.probed || !fake.launched {
-		t.Fatalf("jail placement must probe then launch (probed=%v launched=%v)", fake.probed, fake.launched)
+		t.Fatalf("paddock placement must probe then launch (probed=%v launched=%v)", fake.probed, fake.launched)
 	}
 }
 
-func TestGitSandbox_ExecJailRefusesWithoutBackend(t *testing.T) {
+func TestGitSandbox_ExecPaddockRefusesWithoutBackend(t *testing.T) {
 	fake := &fakeConfiner{available: false}
-	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementJail))
+	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementPaddock))
 
-	if _, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "true"}); !errors.Is(err, containment.ErrJailNotEstablished) {
-		t.Fatalf("want ErrJailNotEstablished, got %v", err)
+	if _, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "true"}); !errors.Is(err, containment.ErrPaddockNotEstablished) {
+		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
 	if fake.launched {
-		t.Fatal("must not launch when the jail cannot be established")
+		t.Fatal("must not launch when the paddock cannot be established")
 	}
 }
 
@@ -84,9 +84,9 @@ func TestGitSandbox_CapabilitiesHonest(t *testing.T) {
 		t.Fatalf("default containment = %q, want uncontained", def.Containment)
 	}
 
-	jailed := NewLocalGitSandbox(repo, WithExec(&fakeConfiner{available: true}, confinement.PlacementJail)).Capabilities()
-	if !jailed.Exec || jailed.Containment != trace.ContainContained {
-		t.Fatalf("jailed capabilities = %+v", jailed)
+	confined := NewLocalGitSandbox(repo, WithExec(&fakeConfiner{available: true}, confinement.PlacementPaddock)).Capabilities()
+	if !confined.Exec || confined.Containment != trace.ContainContained {
+		t.Fatalf("confined capabilities = %+v", confined)
 	}
 
 	advisory := NewLocalGitSandbox(repo, WithExec(&fakeConfiner{available: true}, confinement.PlacementAdvisory)).Capabilities()
@@ -102,14 +102,14 @@ func TestGitSandbox_CapabilitiesHonest(t *testing.T) {
 
 func TestGitSandbox_ExecRecordsAuthorityEvidence(t *testing.T) {
 	fake := &fakeConfiner{available: true, result: containment.LaunchResult{ExitCode: 0}}
-	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementJail))
+	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementPaddock))
 
 	res, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "true", AuthorityMatch: "match-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.AuthorityEvidence == "" {
-		t.Fatal("a jailed run must carry authority evidence")
+		t.Fatal("a confined run must carry authority evidence")
 	}
 
 	advisory := NewLocalGitSandbox(newTestRepo(t), WithExec(&fakeConfiner{available: true}, confinement.PlacementAdvisory))
@@ -122,15 +122,15 @@ func TestGitSandbox_ExecRecordsAuthorityEvidence(t *testing.T) {
 	}
 }
 
-func TestGitSandbox_ExecMayLowersAndJails(t *testing.T) {
+func TestGitSandbox_ExecMayLowersAndConfines(t *testing.T) {
 	fake := &fakeConfiner{available: true, result: containment.LaunchResult{ExitCode: 0}}
-	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementJail))
+	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementPaddock))
 
 	if _, err := sb.ExecMay(context.Background(), sbx.ExecRequest{Command: "true"}, "ReadOnly", "m"); err != nil {
 		t.Fatalf("ExecMay(ReadOnly): %v", err)
 	}
 	if !fake.launched {
-		t.Fatal("jail must launch the lowered run")
+		t.Fatal("paddock must launch the lowered run")
 	}
 	if _, err := sb.ExecMay(context.Background(), sbx.ExecRequest{Command: "true"}, "Standard", "m"); !errors.Is(err, confinement.ErrUnsupportedMayProfile) {
 		t.Fatalf("unknown may= must refuse, got %v", err)
@@ -139,7 +139,7 @@ func TestGitSandbox_ExecMayLowersAndJails(t *testing.T) {
 
 func TestGitSandbox_ExecDeniedClassified(t *testing.T) {
 	fake := &fakeConfiner{available: true, result: containment.LaunchResult{ExitCode: 1, Stderr: "touch: cannot touch '/x': Permission denied"}}
-	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementJail))
+	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementPaddock))
 
 	res, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "touch"})
 	if err != nil {

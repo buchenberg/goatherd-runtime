@@ -70,7 +70,7 @@ type Options struct {
 	// Reviewer, when set, gates a merge disposition: a denial discards the run
 	// and returns *shepherd.SupervisorDeniedError.
 	Reviewer shepherd.MergeReviewer
-	// Backend is the jail backend the capability carries (e.g.
+	// Backend is the paddock backend the capability carries (e.g.
 	// landlock.Detect()). It may be nil on an advisory host.
 	Backend containment.Backend
 	// NewSandbox constructs the run's isolated sandbox. Required for a
@@ -87,7 +87,7 @@ type Options struct {
 // RunContext is what a Handler receives: the run's scope, the execution
 // capability that proves authority, and the resolved confinement spec. The
 // handler runs confined commands through RunContext.Exec (capability-first,
-// jail-or-refuse) or the scope's sandbox (sandbox-first), and never needs to
+// paddock-or-refuse) or the scope's sandbox (sandbox-first), and never needs to
 // know about forks or settlement.
 type RunContext struct {
 	Scope       *shepherd.Scope
@@ -97,7 +97,7 @@ type RunContext struct {
 
 // Exec runs a command confined by the capability: resolve → profile → probe →
 // launch. It is the handler's first-class execution path and refuses without a
-// jail backend (ErrJailNotEstablished) rather than running unconfined — the
+// paddock backend (ErrPaddockNotEstablished) rather than running unconfined — the
 // structural guarantee that real execution implies authority.
 func (rc *RunContext) Exec(req containment.LaunchRequest) (containment.LaunchResult, error) {
 	if req.WorkingRoot == "" {
@@ -107,7 +107,7 @@ func (rc *RunContext) Exec(req containment.LaunchRequest) (containment.LaunchRes
 }
 
 // Result is a handler's outcome: its value, the authority-evidence digest (the
-// jail monitor's permission-plan digest, when a jailed run recorded one), and
+// paddock monitor's permission-plan digest, when a confined run recorded one), and
 // the run's primary execution status.
 type Result struct {
 	Value    map[string]any
@@ -142,11 +142,11 @@ type Outcome struct {
 
 // Reversible runs handler as a reversible transaction.
 //
-//  1. Resolve placement and backend availability before forking, so a jail that
+//  1. Resolve placement and backend availability before forking, so a paddock that
 //     cannot be established never allocates a scope.
 //  2. A reversible run creates an isolated child scope (ForkIsolated); a
 //     NonReversible run uses the parent scope.
-//  3. The capability is minted only after the fork succeeded, and a jailed run
+//  3. The capability is minted only after the fork succeeded, and a confined run
 //     is guarded by RequireExecutionAuthority.
 //  4. The handler runs; on error the child is discarded, never half-merged.
 //  5. On success the disposition integrates (merge), seals, or refuses.
@@ -180,15 +180,15 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 		placement = confinement.PlacementAuto
 	}
 
-	// Resolve the jail BEFORE allocating anything: a jail placement on a
-	// jail-less host refuses without leaving an orphan scope behind.
+	// Resolve the paddock BEFORE allocating anything: a paddock placement on a
+	// paddock-less host refuses without leaving an orphan scope behind.
 	available := false
 	if opts.Backend != nil {
 		if ok, _ := opts.Backend.Available(); ok {
 			available = true
 		}
 	}
-	jailed, err := confinement.ResolvePlacement(placement, available)
+	confined, err := confinement.ResolvePlacement(placement, available)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -220,7 +220,7 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 		WorkingRoot: workDirOf(runScope),
 		Isolation:   isolation,
 	}
-	if jailed {
+	if confined {
 		if err := containment.RequireExecutionAuthority(&capability); err != nil {
 			if !opts.NonReversible {
 				_ = mgr.Discard(runScope.ID())
@@ -301,7 +301,7 @@ func defaultSpec(opts Options, workDir string) containment.ConfinementSpec {
 // probe is a RunContext the caller supplies (typically a throwaway scope
 // carrying a backend-less capability); it is passed to the handler. A handler
 // that attempts execution through the capability refuses with
-// ErrExecutionAuthorityRequired or ErrJailNotEstablished — VerifyHandler
+// ErrExecutionAuthorityRequired or ErrPaddockNotEstablished — VerifyHandler
 // requires exactly that. A handler that returns nil ran without authority and
 // fails. This is a deliberate, opt-in probe for handlers that should be
 // execution-bound; a pure-data path never receives a RunContext at all.
@@ -319,8 +319,8 @@ func VerifyHandler(ctx context.Context, probe *RunContext, h Handler) error {
 	if err == nil {
 		return errors.New("run: VerifyHandler: handler ran real execution without authority (no refusal)")
 	}
-	if !errors.Is(err, containment.ErrExecutionAuthorityRequired) && !errors.Is(err, containment.ErrJailNotEstablished) {
-		return fmt.Errorf("run: VerifyHandler: handler refused with %v, want ErrExecutionAuthorityRequired or ErrJailNotEstablished", err)
+	if !errors.Is(err, containment.ErrExecutionAuthorityRequired) && !errors.Is(err, containment.ErrPaddockNotEstablished) {
+		return fmt.Errorf("run: VerifyHandler: handler refused with %v, want ErrExecutionAuthorityRequired or ErrPaddockNotEstablished", err)
 	}
 	return nil
 }

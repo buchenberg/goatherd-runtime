@@ -87,8 +87,8 @@ func TestLaunchConfined_ProbesFirst(t *testing.T) {
 func TestLaunchConfined_RefusesWhenUnavailable(t *testing.T) {
 	fb := &fakeBackend{available: false}
 	_, err := LaunchConfined(fb, ReadOnlySpec(), LaunchRequest{WorkingRoot: t.TempDir(), Command: []string{"true"}})
-	if !errors.Is(err, ErrJailNotEstablished) {
-		t.Fatalf("want ErrJailNotEstablished, got %v", err)
+	if !errors.Is(err, ErrPaddockNotEstablished) {
+		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
 	if fb.probed {
 		t.Fatal("must not probe when the backend is unavailable")
@@ -96,10 +96,10 @@ func TestLaunchConfined_RefusesWhenUnavailable(t *testing.T) {
 }
 
 func TestLaunchConfined_ProbeFailureRefuses(t *testing.T) {
-	fb := &fakeBackend{available: true, probeErr: ErrJailNotEstablished}
+	fb := &fakeBackend{available: true, probeErr: ErrPaddockNotEstablished}
 	_, err := LaunchConfined(fb, ReadOnlySpec(), LaunchRequest{WorkingRoot: t.TempDir(), Command: []string{"true"}})
-	if !errors.Is(err, ErrJailNotEstablished) {
-		t.Fatalf("want ErrJailNotEstablished, got %v", err)
+	if !errors.Is(err, ErrPaddockNotEstablished) {
+		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
 	if fb.launched {
 		t.Fatal("must not launch when the probe refuses")
@@ -108,15 +108,15 @@ func TestLaunchConfined_ProbeFailureRefuses(t *testing.T) {
 
 func TestLaunchConfined_NilBackend(t *testing.T) {
 	_, err := LaunchConfined(nil, ReadOnlySpec(), LaunchRequest{Command: []string{"true"}})
-	if !errors.Is(err, ErrJailNotEstablished) {
-		t.Fatalf("want ErrJailNotEstablished, got %v", err)
+	if !errors.Is(err, ErrPaddockNotEstablished) {
+		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
 }
 
 func TestCapability_RefusesWithoutBackend(t *testing.T) {
 	cap := Capability{WorkingRoot: t.TempDir(), Isolation: "ground"}
-	if _, err := cap.LaunchConfined(ReadOnlySpec(), LaunchRequest{Command: []string{"true"}}); !errors.Is(err, ErrJailNotEstablished) {
-		t.Fatalf("want ErrJailNotEstablished, got %v", err)
+	if _, err := cap.LaunchConfined(ReadOnlySpec(), LaunchRequest{Command: []string{"true"}}); !errors.Is(err, ErrPaddockNotEstablished) {
+		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
 }
 

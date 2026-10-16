@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// DeniedExit heuristically classifies a jailed run's result as a syscall denial
+// DeniedExit heuristically classifies a confined run's result as a syscall denial
 // rather than an ordinary command failure.
 //
 // A Landlock denial is transparent — the kernel returns EACCES/EPERM to the
@@ -17,7 +17,7 @@ import (
 // A command that exits non-zero for unrelated reasons but mentions permission in
 // its stderr can be misclassified; callers needing exactness should use a
 // command with a known exit code. The fail-closed probe, not this heuristic, is
-// the authority for whether a jail is live.
+// the authority for whether a paddock is live.
 func DeniedExit(res LaunchResult) bool {
 	if res.ExitCode == 0 {
 		return false

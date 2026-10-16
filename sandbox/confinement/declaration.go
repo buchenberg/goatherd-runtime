@@ -32,12 +32,12 @@ func GrantsDeclaration(match string, grants ...BindingRootGrant) Declaration {
 	return Declaration{Grants: grants, Match: match}
 }
 
-// Install lowers a declaration to a two-monitor PermissionPlan: the jail monitor
+// Install lowers a declaration to a two-monitor PermissionPlan: the paddock monitor
 // carries the lowered ConfinementSpec; the carrier check-at-commit monitor is the
 // reversible-write completeness backstop. Both underlying lowerings fail closed,
-// so Install never returns a plan whose jail clause is un-enforceable.
+// so Install never returns a plan whose paddock clause is un-enforceable.
 //
-// Mirrors dialect/permission_plan.py:install — the seam where the jail lane and
+// Mirrors dialect/permission_plan.py:install — the seam where the paddock lane and
 // the carrier lane meet in one plan instead of running side by side.
 func Install(decl Declaration, workingPath string) (PermissionPlan, error) {
 	switch {

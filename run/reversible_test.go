@@ -145,20 +145,20 @@ func TestReversible_SealDisposition(t *testing.T) {
 
 func TestReversible_RefusesWithoutBackend(t *testing.T) {
 	mgr := newManager(t)
-	parent, repo := newParent(t, mgr, "run:jail-main")
+	parent, repo := newParent(t, mgr, "run:paddock-main")
 
 	_, err := Reversible(context.Background(), mgr, parent, Options{
-		OwnerID:    "run:jail-1",
-		Placement:  confinement.PlacementJail,
+		OwnerID:    "run:paddock-1",
+		Placement:  confinement.PlacementPaddock,
 		NewSandbox: worktreeFactory(t, repo),
 	}, func(_ context.Context, _ *RunContext) (Result, error) {
 		return Result{}, nil
 	})
-	if !errors.Is(err, containment.ErrJailNotEstablished) {
-		t.Fatalf("want ErrJailNotEstablished, got %v", err)
+	if !errors.Is(err, containment.ErrPaddockNotEstablished) {
+		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
 	if len(parent.Children()) != 0 {
-		t.Fatal("a refused jail must not allocate a run scope")
+		t.Fatal("a refused paddock must not allocate a run scope")
 	}
 }
 
@@ -215,7 +215,7 @@ func TestReversible_MergeDeniedByReviewer(t *testing.T) {
 	}
 }
 
-// fakeBackend is a containment.Backend double for the jailed-run test.
+// fakeBackend is a containment.Backend double for the confined-run test.
 type fakeBackend struct{ available bool }
 
 func (f *fakeBackend) Name() string                         { return "fake" }
@@ -239,11 +239,11 @@ func TestReversible_HandlerRunsConfined(t *testing.T) {
 
 	out, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:   "run:conf-1",
-		Placement: confinement.PlacementJail,
+		Placement: confinement.PlacementPaddock,
 		Backend:   fake,
 		NewSandbox: func(string) (sandbox.Sandbox, error) {
 			return git.NewWorktreeSandbox(repo, filepath.Join(t.TempDir(), "wt"),
-				git.WithExec(fake, confinement.PlacementJail)), nil
+				git.WithExec(fake, confinement.PlacementPaddock)), nil
 		},
 	}, func(ctx context.Context, rc *RunContext) (Result, error) {
 		res, err := rc.Scope.Sandbox().Exec(ctx, sandbox.ExecRequest{Command: "true", AuthorityMatch: "m1"})
@@ -256,7 +256,7 @@ func TestReversible_HandlerRunsConfined(t *testing.T) {
 		t.Fatalf("Reversible: %v", err)
 	}
 	if out.Result.Evidence == "" {
-		t.Fatal("a jailed run must produce authority evidence")
+		t.Fatal("a confined run must produce authority evidence")
 	}
 }
 
@@ -302,11 +302,11 @@ func TestReversible_RecordsEvidence(t *testing.T) {
 
 	if _, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:   "run:ev-1",
-		Placement: confinement.PlacementJail,
+		Placement: confinement.PlacementPaddock,
 		Backend:   fake,
 		NewSandbox: func(string) (sandbox.Sandbox, error) {
 			return git.NewWorktreeSandbox(repo, filepath.Join(t.TempDir(), "wt"),
-				git.WithExec(fake, confinement.PlacementJail)), nil
+				git.WithExec(fake, confinement.PlacementPaddock)), nil
 		},
 	}, func(ctx context.Context, rc *RunContext) (Result, error) {
 		res, err := rc.Scope.Sandbox().Exec(ctx, sandbox.ExecRequest{Command: "true", AuthorityMatch: "m1"})
@@ -329,8 +329,8 @@ func TestReversible_RecordsEvidence(t *testing.T) {
 
 func TestRunContext_ExecRefusesWithoutBackend(t *testing.T) {
 	rc := &RunContext{Capability: containment.Capability{}, Confinement: containment.ReadOnlySpec()}
-	if _, err := rc.Exec(containment.LaunchRequest{Command: []string{"true"}}); !errors.Is(err, containment.ErrJailNotEstablished) {
-		t.Fatalf("want ErrJailNotEstablished, got %v", err)
+	if _, err := rc.Exec(containment.LaunchRequest{Command: []string{"true"}}); !errors.Is(err, containment.ErrPaddockNotEstablished) {
+		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
 }
 

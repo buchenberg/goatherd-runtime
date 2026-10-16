@@ -14,8 +14,8 @@ import (
 // Monitor identifiers. The set is open by design — a transmit gate or egress
 // broker joins here as the plan learns to assign it.
 const (
-	// JailMonitor is the pre-action syscall-deny monitor.
-	JailMonitor = "syscall_jail"
+	// PaddockMonitor is the pre-action syscall-deny monitor.
+	PaddockMonitor = "syscall_paddock"
 	// CarrierMonitor is the check-at-commit monitor (settlement / DeltaApplier).
 	CarrierMonitor = "carrier_check_at_commit"
 )
@@ -39,7 +39,7 @@ type Evidence struct {
 // MonitorAssignment names one monitor made responsible for a clause, with the
 // basis that makes it real. CompletenessBasis states which routes the monitor
 // covers; TamperBasis states why the judged body cannot disable it.
-// Confinement is the jail monitor's lowered spec; monitors that do not lower to
+// Confinement is the paddock monitor's lowered spec; monitors that do not lower to
 // a spec (the carrier gate) leave it nil.
 //
 // Mirrors dialect/permission_plan.py:MonitorAssignment.
@@ -68,14 +68,14 @@ type PermissionPlan struct {
 // The monitor bases. They are strings, not behaviour: the plan records *who*
 // enforces *what*, citable by digest.
 const (
-	jailCompleteness    = "managed-filesystem writes on a jailed placement (Landlock deny-closed over the writable roots)"
-	jailTamper          = "the jail is applied in the confined child before exec, outside the task process (PR_SET_NO_NEW_PRIVS + Landlock RestrictSelf)"
+	paddockCompleteness = "managed-filesystem writes on a confined placement (Landlock deny-closed over the writable roots)"
+	paddockTamper       = "the paddock is applied in the confined child before exec, outside the task process (PR_SET_NO_NEW_PRIVS + Landlock RestrictSelf)"
 	carrierCompleteness = "reversible filesystem writes captured in the carrier working-tree delta, proposed at return before merge; the backstop for managed writes that bypass cooperative paths"
 	carrierTamper       = "the check runs in the coordinator/reversible wrap, outside the task process"
 )
 
 // CarrierCheckAuthority is the authority declaration for a carrier-only plan
-// (a check-at-commit route with no jail clause).
+// (a check-at-commit route with no paddock clause).
 type CarrierCheckAuthority struct {
 	EffectiveMatchDigest       string
 	AuthoritySurfacePlanDigest string
@@ -85,7 +85,7 @@ type CarrierCheckAuthority struct {
 }
 
 // PlanForSpec builds a two-monitor plan from an already-lowered confinement
-// spec: the jail monitor carries the spec; the carrier monitor is the
+// spec: the paddock monitor carries the spec; the carrier monitor is the
 // reversible-write completeness backstop. matchDigest, when non-empty, is
 // folded into the carrier assignment's evidence (effective_match_digest), the
 // authority-surface provenance a settlement can re-validate. It is the
@@ -106,10 +106,10 @@ func PlanForSpec(spec containment.ConfinementSpec, matchDigest string) Permissio
 		Fallback: "enforce",
 		Assignments: []MonitorAssignment{
 			{
-				Monitor:           JailMonitor,
+				Monitor:           PaddockMonitor,
 				Timing:            TimingPreAction,
-				CompletenessBasis: jailCompleteness,
-				TamperBasis:       jailTamper,
+				CompletenessBasis: paddockCompleteness,
+				TamperBasis:       paddockTamper,
 				Confinement:       &s,
 			},
 			carrier,
@@ -161,13 +161,13 @@ func (p PermissionPlan) Monitor(name string) (MonitorAssignment, bool) {
 	return MonitorAssignment{}, false
 }
 
-// Confinement returns the jail monitor's spec — the behaviour-preserving
+// Confinement returns the paddock monitor's spec — the behaviour-preserving
 // output the run hands to LaunchConfined. It errors when the plan assigns no
-// jail monitor (a carrier-only plan).
+// paddock monitor (a carrier-only plan).
 func (p PermissionPlan) Confinement() (containment.ConfinementSpec, error) {
-	a, ok := p.Monitor(JailMonitor)
+	a, ok := p.Monitor(PaddockMonitor)
 	if !ok || a.Confinement == nil {
-		return containment.ConfinementSpec{}, fmt.Errorf("%w: plan has no jail monitor assignment carrying a spec", ErrPlanEvidence)
+		return containment.ConfinementSpec{}, fmt.Errorf("%w: plan has no paddock monitor assignment carrying a spec", ErrPlanEvidence)
 	}
 	return *a.Confinement, nil
 }

@@ -39,7 +39,7 @@ Current state:
    plan records this as deliberately out of scope
    ([`parity-plan.md:120`](file:///home/greg/Code/Agentic/Frameworks/shepherd-kernel-go/docs/history/parity-plan.md#L120)).
 
-**Goal:** bring the kernel-enforced filesystem jail to the lightweight
+**Goal:** bring the kernel-enforced filesystem paddock to the lightweight
 Git-worktree path *and* the contract that makes it a policy-enforcement surface,
 so the component can honestly claim parity with Python Shepherd's **Linux host
 containment tier** — unprivileged, no root, no containerd daemon — as a
@@ -57,7 +57,7 @@ family doc names them as signposted, not built). Therefore:
 - **Linux host containment parity == Landlock parity.**
 - macOS Seatbelt parity is **out of scope** for the Go port (matches the fence
   in `parity-plan.md`).
-- The egress/network axis is a *separate* axis; the jail is host-blind and never
+- The egress/network axis is a *separate* axis; the paddock is host-blind and never
   reads it (`_execution_capability.py:82-88`). Its enforcement is out of scope,
   but its **spec shape must ship** for the lowering to be complete.
 
@@ -74,7 +74,7 @@ family doc names them as signposted, not built). Therefore:
 | `may=` lowering (`resolve_may`, `MayResolution`, `lower_may_to_confinement`, `UnsupportedMayProfileError`) | `dialect/confinement.py` | `sandbox/confinement` | ✅ |
 | Per-binding grants (`BindingRootGrant`, `lower_grants_to_confinement`, `validate_disjoint_roots`, `OverlappingBoundRootsError`, alias/nesting guard) | `dialect/confinement.py` | `sandbox/confinement` | ✅ |
 | Monitor assignment (`PermissionPlan`, `JAIL_MONITOR`, `CARRIER_MONITOR`, digest evidence) | `dialect/permission_plan.py` | `sandbox/confinement` (minimal) | ✅ (minimal) |
-| Placement (`jail` / `advisory` / `auto`) | dialect docs / placements | `sandbox/confinement` | ✅ |
+| Placement (`paddock` / `advisory` / `auto`) | dialect docs / placements | `sandbox/confinement` | ✅ |
 | `ExecutionAuthorityRequired` negotiation guard | `_execution_capability.py:62-71, 227-273` | `containment` | ✅ (shape) |
 | macOS Seatbelt backend | `_seatbelt_containment.py` | — | ❌ non-goal |
 | Container / VM / AppContainer containment backends | (signposted) | `croft` (separate module) | ❌ non-goal |
@@ -105,7 +105,7 @@ conformance test that proves it. This is the objective definition of "done."
 |---|---|---|---|---|
 | 1 | `ContainmentBackend` | `containment.Backend` (interface) | exercised by every backend test (`fakeBackend`, `landlock`) | ✅ |
 | 2 | `SandboxDenied` | `containment.ErrSandboxDenied` (+ `DeniedExit`/`DenyError`) | `TestDeniedExit_ClassifiesSyscallDenial`, `TestLandlock_DeniedClassified` | ✅ |
-| 3 | `JailNotEstablished` | `containment.ErrJailNotEstablished` | `TestLandlock_ProbeCatchesMisloweredWritable`, `TestLaunchConfined_*` | ✅ |
+| 3 | `JailNotEstablished` | `containment.ErrPaddockNotEstablished` | `TestLandlock_ProbeCatchesMisloweredWritable`, `TestLaunchConfined_*` | ✅ |
 | 4 | `landlock_abi` | `landlock.ABI()` | `TestLandlock_ABIDetection` | ✅ |
 | 5 | `_WRITE_ACCESS` (v1 mask) | `landlock.WriteAccessMask` | `TestLandlock_MaskIsV1Compatible` | ✅ |
 | 6 | `landlock_confine` | `landlock.Confine(roots)` | `TestLandlock_ConfineDeniesOutside` | ✅ |
@@ -125,7 +125,7 @@ conformance test that proves it. This is the objective definition of "done."
 | 20 | `validate_disjoint_roots` + alias/nesting guard | `confinement.ValidateDisjointRoots` | `TestValidateDisjointRoots_NestingRejected`, `_AliasRejected`, `_UnicodeAliasRejected` | ✅ |
 | 21 | `OverlappingBoundRootsError` | `confinement.ErrOverlappingBoundRoots` | (row 20) | ✅ |
 | 22 | `PermissionPlan` + `JAIL_MONITOR` digest | `confinement.PermissionPlan` / `Evidence` | `TestPermissionPlan_DigestStable` | ✅ |
-| 23 | placement `jail`/`advisory`/`auto` | `confinement.Placement` | `TestPlacement_AutoResolves` | ✅ |
+| 23 | placement `jail`/`advisory`/`auto` | `confinement.Placement` (Go wire value `paddock`) | `TestPlacement_AutoResolves` | ✅ |
 | 24 | `ExecutionAuthorityRequired` | `containment.ErrExecutionAuthorityRequired` | `TestNegotiation_RefusesWithoutCapability` | ✅ |
 
 ## 5. Architecture
@@ -179,7 +179,7 @@ sequenceDiagram
     participant Target as Sandboxed Process (bash / agent tool)
 
     Host->>Host: LaunchConfined: ResolveSpec → ProfileFor → Probe (fail-closed)
-    Note over Host: probe proves jail is LIVE and grant-CONFORMANT before the body
+    Note over Host: probe proves paddock is LIVE and grant-CONFORMANT before the body
     Host->>Tramp: exec.Command("/proc/self/exe", "__landlock_exec__") + JSON spec on stdin
     Note over Tramp: runtime.LockOSThread() FIRST — Landlock domains are per-OS-thread
     Tramp->>Kernel: ABI probe (SYS_LANDLOCK_CREATE_RULESET, VERSION)
@@ -197,7 +197,7 @@ Two correctness requirements:
 1. **`runtime.LockOSThread()` is mandatory.** A Go process is multi-threaded and
    Landlock domains are attached to a single `task_struct`. Without pinning, the
    goroutine can be rescheduled between `RESTRICT_SELF` and `unix.Exec`, and the
-   exec lands on an **unrestricted** thread — the jail silently evaporates.
+   exec lands on an **unrestricted** thread — the paddock silently evaporates.
 2. **Re-exec via `/proc/self/exe`, not `os.Args[0].`** `os.Args[0]` may be
    relative or resolved through `PATH`; `/proc/self/exe` is the running image.
 
@@ -220,7 +220,7 @@ func main() {
 
 This is a required integration point with a documented failure mode: a binary
 that forgets the hook makes every `Launch` fail with the confine-failed sentinel
-(rc 3), which the probe turns into `ErrJailNotEstablished` — fail-closed, never
+(rc 3), which the probe turns into `ErrPaddockNotEstablished` — fail-closed, never
 silent-unconfined.
 
 ## 6. Phase 1 — The containment contract (`sandbox/containment`)
@@ -233,12 +233,12 @@ package containment
 // Error taxonomy — the two failure classes the runtime acts on differently.
 var (
     ErrSandboxDenied        = errors.New("containment: operation refused at the syscall")
-    ErrJailNotEstablished   = errors.New("containment: fail-closed, confinement not established")
+    ErrPaddockNotEstablished   = errors.New("containment: fail-closed, confinement not established")
     ErrUnsupportedKernel    = errors.New("containment: kernel lacks the required LSM or it is blocked")
     ErrUnsupportedConfinementSpec = errors.New("containment: spec has no faithful lowering on this host")
 )
 
-// Backend is the syscall-deny jail contract. It is the Linux member's seam.
+// Backend is the syscall-deny paddock contract. It is the Linux member's seam.
 type Backend interface {
     Name() string                       // "landlock"
     EnforcementTier() string            // "native-syscall-deny"
@@ -256,12 +256,12 @@ type NetMode string
 const (
     NetDenyAll  NetMode = "deny_all"
     NetAllowAll NetMode = "allow_all"
-    NetBroker   NetMode = "broker" // host-filtered; NOT a jail lowering
+    NetBroker   NetMode = "broker" // host-filtered; NOT a paddock lowering
 )
 
 type NetworkPolicy struct {
     Mode         NetMode
-    AllowedHosts []string // broker_grants seam; the jail is host-blind and ignores it
+    AllowedHosts []string // broker_grants seam; the paddock is host-blind and ignores it
     BrokerPort   int
 }
 
@@ -274,7 +274,7 @@ func ReadOnlySpec() ConfinementSpec
 func PermissiveFor(workingPath string) ConfinementSpec // 1 root + allow-all egress
 
 // ResolveSpec is _resolve_spec: canonicalizes roots, maps the network axis, and
-// refuses a broker (host-filtered) policy — the jail cannot filter by host.
+// refuses a broker (host-filtered) policy — the paddock cannot filter by host.
 func ResolveSpec(spec ConfinementSpec) (roots []string, allowNetwork bool, err error)
 ```
 
@@ -289,13 +289,13 @@ func LaunchConfined(b Backend, spec ConfinementSpec, workingRoot string,
     if err != nil { return LaunchResult{}, err }
     profile := b.ProfileFor(roots, allowNet)
     if err := b.Probe(profile, workingRoot, roots); err != nil {
-        return LaunchResult{}, err // ErrJailNotEstablished — never run unconfined
+        return LaunchResult{}, err // ErrPaddockNotEstablished — never run unconfined
     }
     return b.Launch(profile, workingRoot, command, env)
 }
 ```
 
-`Detect()` returns the host backend or `nil` on a jail-less host (mirrors
+`Detect()` returns the host backend or `nil` on a paddock-less host (mirrors
 `detect_containment_backend`).
 
 ## 7. Phase 2 — The Landlock syscall engine + trampoline (`sandbox/landlock` nested module)
@@ -396,9 +396,9 @@ Mirrors `_landlock_containment.py:105-194`. Implements `containment.Backend`.
      in-workdir path outside every root must be *denied* (catches the
      copy-paste-the-writable-root mis-lowering).
 
-  A canary whose rc == `confineFailedRC` (3) is treated as *"no jail,"* not
-  *"write denied"* — so a broken Landlock can never pass as a working jail. Any
-  violation returns `ErrJailNotEstablished`.
+  A canary whose rc == `confineFailedRC` (3) is treated as *"no paddock,"* not
+  *"write denied"* — so a broken Landlock can never pass as a working paddock. Any
+  violation returns `ErrPaddockNotEstablished`.
 
   *Implementation choice:* the probe uses an internal trampoline write-verb
   (`__landlock_exec__ ... --probe-write <path>`) rather than shelling out to
@@ -413,7 +413,7 @@ Mirrors `_landlock_containment.py:105-194`. Implements `containment.Backend`.
 
 ## 9. Phase 4 — The authority lowering (`sandbox/confinement`)
 
-This is the authority layer; without it, the jail has no *policy* to enforce.
+This is the authority layer; without it, the paddock has no *policy* to enforce.
 Mirrors `dialect/confinement.py` and `dialect/permission_plan.py`.
 
 ### 9.1 `may=` profiles
@@ -467,11 +467,11 @@ disjointness is what makes whole-root-per-binding sound.
   `permission_plan.py`). This is the authority-evidence artifact the trace
   records. Minimal v0: two monitors, one placement, `enforce`|`refuse` fallback
   only — never `under-enforce`.
-- **`Placement`** — `jail` | `advisory` | `auto`.
-  - `jail` — require a live backend; refuse (`ErrJailNotEstablished`) if none.
+- **`Placement`** — `paddock` | `advisory` | `auto`.
+  - `paddock` — require a live backend; refuse (`ErrPaddockNotEstablished`) if none.
   - `advisory` — run unconfined when no backend; the run records containment
     as uncontained.
-  - `auto` — resolve to `jail` when a backend is available, else `advisory`
+  - `auto` — resolve to `paddock` when a backend is available, else `advisory`
     (mirrors Python's placement auto-resolution).
 
 ### 9.4 Denied → discarded failed run
@@ -479,10 +479,10 @@ disjointness is what makes whole-root-per-binding sound.
 Map the two syscall outcomes into the runtime, mirroring
 `_containment.py:35-46` and `SandboxDenied`'s doc:
 
-- `ErrJailNotEstablished` on a `jail` placement ⇒ the **run refuses** before the
+- `ErrPaddockNotEstablished` on a `paddock` placement ⇒ the **run refuses** before the
   body (no effects).
 - A body that exits non-zero because the syscall denied a write ⇒ the run is
-  recorded **discarded / Failed**, with the jail monitor's digest as authority
+  recorded **discarded / Failed**, with the paddock monitor's digest as authority
   evidence (the write never reached disk — stronger than the carrier's
   optimistic check-at-commit).
 
@@ -505,7 +505,7 @@ type ExecRequest struct {
     // Confinement is the lowering of the caller's authority declaration.
     // nil ⇒ backend default (unconfined for an advisory backend).
     Confinement *containment.ConfinementSpec
-    Placement   confinement.Placement // jail | advisory | auto
+    Placement   confinement.Placement // paddock | advisory | auto
 }
 ```
 
@@ -515,16 +515,16 @@ type ExecRequest struct {
   backend keeps `Exec=false` and existing behavior. When enabled:
   - resolve placement → `LaunchConfined` with the request's spec (default
     `PermissiveFor(workDir)` when nil);
-  - `jail` + no backend ⇒ `ErrJailNotEstablished` (fail-closed);
+  - `paddock` + no backend ⇒ `ErrPaddockNotEstablished` (fail-closed);
   - `advisory` + no backend ⇒ direct `exec.CommandContext`.
 - **Capabilities must be honest.** Do **not** unconditionally stamp
   `Exec:true, Containment:ContainContained`: a
   Go `Backend` cannot probe from `Capabilities()` (no ctx, no error), and
-  claiming "contained" on a jail-less host is exactly the "pretending" the
+  claiming "contained" on a paddock-less host is exactly the "pretending" the
   kernel contract forbids (`sandbox.go:1-8, 92-98`).
   - Probe the ABI **once at construction** and store the resolved placement,
     mode-aware:
-    - jail-capable + `jail`/`auto` ⇒ `Exec:true, Containment:ContainContained`;
+    - paddock-capable + `paddock`/`auto` ⇒ `Exec:true, Containment:ContainContained`;
     - advisory / backend unavailable ⇒ `Exec:true, Containment:ContainUncontained`.
   - This **changes `TestGitSandbox_Capabilities`** (`backend_test.go:96-101`),
     which currently asserts `!inPlace.Exec` and `ContainUncontained` for the
@@ -551,7 +551,7 @@ and of each `TestMain` that exercises `Launch` (§5.2). Within this plan that
 means the runtime's own test binaries and any in-module example; a host binary
 (e.g. `yaah/main.go`) adds the same one line when it later adopts the component
 (§15). A binary that omits the hook fails closed — rc 3 →
-`ErrJailNotEstablished` — rather than running unconfined.
+`ErrPaddockNotEstablished` — rather than running unconfined.
 
 ## 11. Phase 6 — Test & conformance matrix
 
@@ -571,27 +571,27 @@ against the development host (Landlock ABI 11).
 | ✅ | `TestLandlock_ReadOnlyDeniesEverywhere` | privileged | `ProfileFor(nil)` | all writes denied |
 | ✅ | `TestLandlock_PerBindingDenyClosed` | privileged | one RW root + ungranted sibling | RW OK; sibling & unbound denied |
 | ✅ | `TestLandlock_ProbePassesForConformant` | privileged | probe Permissive + ReadOnly | no error |
-| ✅ | `TestLandlock_ProbeCatchesMisloweredWritable` | privileged | ReadOnly run handed a writable profile | `ErrJailNotEstablished` (deny-closed canary) |
+| ✅ | `TestLandlock_ProbeCatchesMisloweredWritable` | privileged | ReadOnly run handed a writable profile | `ErrPaddockNotEstablished` (deny-closed canary) |
 | ✅ | `TestLandlock_TrampolineDispatch` | Linux | `MaybeRunTrampoline` sentinel | sentinel handled; rc 3 on missing spec |
-| ✅ | `TestLaunchConfined_ProbesFirst` | privileged | `LaunchConfined` on a live jail | probes then launches; write lands |
+| ✅ | `TestLaunchConfined_ProbesFirst` | privileged | `LaunchConfined` on a live paddock | probes then launches; write lands |
 | ✅ | `TestLandlock_DeniedClassified` | privileged | confined write outside the root | `DeniedExit` true from stderr |
-| ✅ | `TestIntegration_GitSandboxJailExec` | privileged | GitSandbox → LaunchConfined → kernel | in-repo write lands; out-of-repo denied + classified |
+| ✅ | `TestIntegration_GitSandboxPaddockExec` | privileged | GitSandbox → LaunchConfined → kernel | in-repo write lands; out-of-repo denied + classified |
 | ✅ | `TestResolveSpec_BrokerRefuses` | any | `ResolveSpec(NetBroker)` | `ErrUnsupportedConfinementSpec` |
 | ✅ | `TestResolveSpec_CanonicalizesRoots` | any | roots with `..`/symlinks | canonicalized |
 | ✅ | `TestResolveMay_DefaultPermissive` | any | `ResolveMay("")` | resolved Permissive, source `defaulted` |
 | ✅ | `TestLowerMay_ReadOnlyPermissive` / `_RefusesUnknown` | any | lowering | correct spec / `ErrUnsupportedMayProfile` |
 | ✅ | `TestLowerGrants_ReadOnlyContributesNothing` | any | mixed grants | only RW roots writable |
 | ✅ | `TestValidateDisjointRoots_{Nesting,Alias,UnicodeAlias}Rejected` | any | nested/aliased roots | `ErrOverlappingBoundRoots` |
-| ✅ | `TestPermissionPlan_DigestStable` | any | plan digest | stable + jail monitor named |
-| ✅ | `TestPlacement_AutoResolves` | any | `auto` with/without backend | jail / advisory |
-| ✅ | `TestGitSandbox_CapabilitiesHonest` | any | opt-in constructors | `ContainContained` iff jail-capable |
-| ✅ | `TestGitSandbox_ExecMayLowersAndJails` | any | `ExecMay` over a fake backend | lowers + jails; unknown profile refuses |
-| ✅ | `TestGitSandbox_ExecRecordsAuthorityEvidence` | any | jailed vs advisory run | evidence on jailed; empty on advisory |
+| ✅ | `TestPermissionPlan_DigestStable` | any | plan digest | stable + paddock monitor named |
+| ✅ | `TestPlacement_AutoResolves` | any | `auto` with/without backend | paddock / advisory |
+| ✅ | `TestGitSandbox_CapabilitiesHonest` | any | opt-in constructors | `ContainContained` iff paddock-capable |
+| ✅ | `TestGitSandbox_ExecMayLowersAndPaddocks` | any | `ExecMay` over a fake backend | lowers + paddocks; unknown profile refuses |
+| ✅ | `TestGitSandbox_ExecRecordsAuthorityEvidence` | any | paddocked vs advisory run | evidence on paddocked; empty on advisory |
 | ✅ | `TestNegotiation_RefusesWithoutCapability` | any | exec without capability | `ErrExecutionAuthorityRequired` before body |
 
 > **Note.** Python's Seatbelt test `..._probe_raises_when_not_jailed` has no
 > Landlock analogue: a Landlock profile is always a ruleset (§8), so a
-> "non-jailing" profile cannot be constructed. The refusal coverage is the
+> "non-paddocking" profile cannot be constructed. The refusal coverage is the
 > mis-lowered-writable canary instead.
 
 ## 12. Parity Comparison: Go Port vs. Python Shepherd
@@ -599,11 +599,11 @@ against the development host (Landlock ABI 11).
 | Capability / Attribute | Python Shepherd | Go Port (this plan) |
 |---|---|---|
 | **Linux host confinement (Landlock)** | Raw syscalls, confine-then-exec, ABI-probed | **Parity**: same syscalls, same mask, same trampoline (hardened: `LockOSThread`, `/proc/self/exe`) |
-| **Fail-closed probe (liveness + conformance)** | `probe()`, exit-code aware | **Parity**: same three checks, `ErrJailNotEstablished` |
-| **Error taxonomy** | `SandboxDenied` / `JailNotEstablished` | **Parity**: `ErrSandboxDenied` / `ErrJailNotEstablished` |
+| **Fail-closed probe (liveness + conformance)** | `probe()`, exit-code aware | **Parity**: same three checks, `ErrPaddockNotEstablished` |
+| **Error taxonomy** | `SandboxDenied` / `JailNotEstablished` | **Parity**: `ErrSandboxDenied` / `ErrPaddockNotEstablished` |
 | **`may=` + per-binding grants** | `dialect/confinement.py` | **Parity**: `sandbox/confinement` |
 | **Disjoint-root / alias guard** | realpath + `samefile` + case/Unicode fold | **Parity**: same three lenses |
-| **Placement `jail`/`advisory`/`auto`** | dialect placements | **Parity**: `Placement` |
+| **Placement `paddock`/`advisory`/`auto`** | dialect placements | **Parity**: `Placement` |
 | **Monitor assignment + digest evidence** | `permission_plan.py` | **Parity (minimal)**: `PermissionPlan` |
 | **Network/egress enforcement** | `_egress_broker.py` | Spec ships; enforcement deferred to `croft`/**separate axis** |
 | **macOS Seatbelt** | `_seatbelt_containment.py` | **Omitted** (fenced; macOS runs advisory or in a Linux container) |
@@ -650,15 +650,15 @@ Steps 1–6 are entirely within the component (§15). Host (`yaah`) and containe
 
 - *Silent loss of confinement from thread migration* → `LockOSThread` (§5.2) +
   `TestLandlock_TrampolineRoundTrip`.
-- *Broken Landlock passing as a jail* → exit-code-aware probe (§8).
+- *Broken Landlock passing as a paddock* → exit-code-aware probe (§8).
 - *Kernel-version mask rejection* → pinned v1 mask (§7.2) +
   `TestLandlock_MaskIsV1Compatible`.
-- *Nested/aliased roots silently re-widening the jail* → `ValidateDisjointRoots`
+- *Nested/aliased roots silently re-widening the paddock* → `ValidateDisjointRoots`
   (§9.2).
 - *Dishonest capability claims* → mode-aware capabilities (§10.2) +
   `TestGitSandbox_CapabilitiesHonest`.
 - *A host forgetting the trampoline hook* → confine-failed rc 3 →
-  `ErrJailNotEstablished` (fail-closed, never silent-unconfined) (§5.2).
+  `ErrPaddockNotEstablished` (fail-closed, never silent-unconfined) (§5.2).
 
 ## 14. Backlog / Fence Closure
 
@@ -717,7 +717,7 @@ shepherd-runtime-go/                       module: github.com/buchenberg/shepher
 │   │   ├── may.go                         #   ResolveMay, MayResolution, LowerMay, LowerGrants, BindingRootGrant
 │   │   ├── disjoint.go                    #   ValidateDisjointRoots (+ alias/nesting/hardlink guard)
 │   │   ├── plan.go                        #   PermissionPlan, monitors, digest
-│   │   └── placement.go                   #   Placement (jail / advisory / auto)
+│   │   └── placement.go                   #   Placement (paddock / advisory / auto)
 │   ├── git/                               # GitSandbox — ONE consumer of the contract
 │   └── landlock/                          # ★ NESTED MODULE: github.com/buchenberg/shepherd-runtime-go/sandbox/landlock
 │       ├── go.mod                         #   requires golang.org/x/sys (direct) + the root runtime
@@ -790,7 +790,7 @@ from the text above.
 | 2 | `sandbox/landlock/{syscall_*,trampoline*,paths}.go` | ✅ ABI, v1 mask, `Confine`, trampoline |
 | 3 | `sandbox/landlock/backend.go` | ✅ `ProfileFor`/`Probe`/`Launch`, `Detect` |
 | 4 | `sandbox/confinement/{may,disjoint,placement,plan}.go` | ✅ may=, grants, disjointness, placement, plan |
-| 5 | `sandbox/sandbox.go`, `sandbox/git/backend.go` | ✅ `ExecRequest` fields; `WithExec` option; honest `Capabilities`; jailed/advisory `Exec` |
+| 5 | `sandbox/sandbox.go`, `sandbox/git/backend.go` | ✅ `ExecRequest` fields; `WithExec` option; honest `Capabilities`; paddocked/advisory `Exec` |
 | 6 | `*_test.go` across all four packages | ✅ see §16.3, §16.5 |
 | 15 | `sandbox/landlock/go.mod` (nested module) | ✅ nested module; dev-time `replace` (§16.2 #6) |
 
@@ -840,6 +840,15 @@ only `sandbox/landlock` pulls `golang.org/x/sys` directly.
    with Python's separator is neither required nor tested; the test asserts the
    decoded root array instead. §4 row 8's "byte-identical" is thus relaxed to
    "shape-identical".
+8. **Vocabulary: `jail` → `paddock`.** The Go code renames Python's `jail` to
+   `paddock` (an enclosed livestock area — it fits the shepherd/croft theme),
+   covering Go vocabulary **and wire values**: `PlacementPaddock` (wire
+   `"paddock"`), `PaddockMonitor` (wire `"syscall_paddock"`),
+   `ErrPaddockNotEstablished`. The Python reference keeps its own spelling
+   (`JailNotEstablished`, `JAIL_MONITOR`, `"syscall_jail"`, placement `"jail"`).
+   Because the monitor id is a plan-descriptor field, Go permission-plan digests
+   diverge from Python's by construction — the one intentional vocabulary
+   divergence; semantics are unchanged. See the roadmap's vocabulary note.
 
 ### 16.3 Verification (all green)
 
@@ -850,7 +859,7 @@ only `sandbox/landlock` pulls `golang.org/x/sys` directly.
   against real Landlock: `ConfineDeniesOutside`, `ReadOnlyDeniesEverywhere`,
   `PerBindingDenyClosed`, `ProbePassesForConformant`,
   `ProbeCatchesMisloweredWritable`, `TrampolineDispatch`, `DeniedClassified`,
-  `Detect_MatchesAvailability`, plus `TestIntegration_GitSandboxJailExec`, which
+  `Detect_MatchesAvailability`, plus `TestIntegration_GitSandboxPaddockExec`, which
   drives the whole stack (GitSandbox → `LaunchConfined` → trampoline → kernel) and
   proves an out-of-repo write is refused at the syscall and classified.
 - `gofmt -l` clean; `go vet ./...` clean in both modules; cross-compiles clean for
@@ -862,22 +871,22 @@ The first cut left `ErrSandboxDenied`, `ErrExecutionAuthorityRequired`, the
 `PermissionPlan`, and the authority→exec wiring as stubs. They are now real:
 
 1. **Denial classification (§9.4).** `containment.DeniedExit` / `DenyError`
-   classify a jailed failure as a syscall denial (documented heuristic over the
+   classify a paddocked failure as a syscall denial (documented heuristic over the
    `EACCES`/`EPERM` stderr signature — Landlock is transparent, and the Python
    reference defines `SandboxDenied` as vocabulary without raising it).
-   `GitSandbox.Exec` sets `ExecResult.Denied` for jailed runs, which the runtime
+   `GitSandbox.Exec` sets `ExecResult.Denied` for paddocked runs, which the runtime
    records as a discarded, Failed run. Verified by `DeniedClassified` (real
    kernel) and `TestGitSandbox_ExecDeniedClassified`.
 2. **Negotiation guard (§6 / §4 row 24).** `containment.RequireExecutionAuthority`
    refuses a real-execution dispatch carrying no capability with
    `ErrExecutionAuthorityRequired`, distinct from `LaunchConfined`'s
-   `ErrJailNotEstablished`. Verified by `TestNegotiation_RefusesWithoutCapability`.
+   `ErrPaddockNotEstablished`. Verified by `TestNegotiation_RefusesWithoutCapability`.
 3. **Authority → exec wiring + evidence (§9.3 / §10).** `GitSandbox.ExecMay` /
    `ExecGrants` lower a `may=` declaration / per-binding grants into
    `ExecRequest.Confinement` (the lowerers are now called by a real path), and
-   `GitSandbox.Exec` records `ExecResult.AuthorityEvidence` — the jail monitor's
+   `GitSandbox.Exec` records `ExecResult.AuthorityEvidence` — the paddock monitor's
    `confinement.Evidence(...)` plan digest, citable at settlement. Verified by
-   `TestGitSandbox_ExecMayLowersAndJails` and
+   `TestGitSandbox_ExecMayLowersAndPaddocks` and
    `TestGitSandbox_ExecRecordsAuthorityEvidence`.
 4. **`landlock.Detect`** is exercised by `TestDetect_MatchesAvailability`.
 
@@ -890,8 +899,8 @@ The first cut left `ErrSandboxDenied`, `ErrExecutionAuthorityRequired`, the
 - Dropping the dev-time `replace` and cutting `sandbox/landlock/v0.1.0` (a release
   action; the parent must be tagged first).
 - Recording the §3 decision against the kernel's `GAP-REPORT.md` (§14).
-- The `ErrSandboxDenied` classifier is a **heuristic**: a jailed command that
-  exits non-zero and mentions permission in stderr for a non-jail reason is
+- The `ErrSandboxDenied` classifier is a **heuristic**: a paddocked command that
+  exits non-zero and mentions permission in stderr for a non-paddock reason is
   flagged. Exact classification would need the kernel to report denials
   (e.g. `landlock_restrict_self` accounting or a seccomp-log path), which neither
   implementation has.

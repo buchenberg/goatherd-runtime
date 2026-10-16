@@ -14,11 +14,11 @@ import (
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/git"
 )
 
-// TestIntegration_GitSandboxJailExec exercises the whole stack end to end:
+// TestIntegration_GitSandboxPaddockExec exercises the whole stack end to end:
 // GitSandbox.Exec → containment.LaunchConfined → landlock backend → trampoline →
-// real kernel-enforced jail. An in-repo write lands; an out-of-repo write is
+// real kernel-enforced paddock. An in-repo write lands; an out-of-repo write is
 // refused at the syscall.
-func TestIntegration_GitSandboxJailExec(t *testing.T) {
+func TestIntegration_GitSandboxPaddockExec(t *testing.T) {
 	b := requireLandlock(t)
 	touch := requireTouch(t)
 	if _, err := exec.LookPath("git"); err != nil {
@@ -27,7 +27,7 @@ func TestIntegration_GitSandboxJailExec(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init", "-q")
 
-	sb := git.NewLocalGitSandbox(repo, git.WithExec(b, confinement.PlacementJail))
+	sb := git.NewLocalGitSandbox(repo, git.WithExec(b, confinement.PlacementPaddock))
 	if !sb.Capabilities().Exec {
 		t.Fatal("sandbox with WithExec must report Exec")
 	}

@@ -625,7 +625,7 @@ func (g *GitSandbox) Diff(ctx context.Context, ws trace.WorkspaceState, maxLines
 // state, not processes).
 //
 // The request's Confinement (or a Permissive default over the workspace) is
-// resolved against the placement: a jailed placement probes the jail fail-closed
+// resolved against the placement: a confined placement probes the paddock fail-closed
 // and refuses when it cannot be established; an advisory placement runs
 // unconfined. Authority root selection is the caller's job (package confinement);
 // Exec never invents roots.
@@ -658,7 +658,7 @@ func (g *GitSandbox) Exec(ctx context.Context, req sbx.ExecRequest) (sbx.ExecRes
 	if ok, _ := g.confiner.Available(); ok {
 		available = true
 	}
-	jail, err := confinement.ResolvePlacement(placement, available)
+	paddock, err := confinement.ResolvePlacement(placement, available)
 	if err != nil {
 		return sbx.ExecResult{}, err
 	}
@@ -676,12 +676,12 @@ func (g *GitSandbox) Exec(ctx context.Context, req sbx.ExecRequest) (sbx.ExecRes
 		Timeout:     req.Timeout,
 	}
 
-	if jail {
+	if paddock {
 		lr, err := containment.LaunchConfined(g.confiner, spec, launchReq)
 		if err != nil {
 			return sbx.ExecResult{}, err
 		}
-		// §9.4: a jailed run whose failure reads as a syscall denial is a
+		// §9.4: a confined run whose failure reads as a syscall denial is a
 		// discarded, Failed run; flag it on the result (the write never reached
 		// disk) and always cite the authority evidence.
 		return sbx.ExecResult{
@@ -721,7 +721,7 @@ func (g *GitSandbox) ExecGrants(ctx context.Context, req sbx.ExecRequest, grants
 	return g.Exec(ctx, req)
 }
 
-// advisoryExec runs launchReq with no confinement — the advisory tier: no jail on
+// advisoryExec runs launchReq with no confinement — the advisory tier: no paddock on
 // this host, and the placement permits proceeding unconfined.
 func (g *GitSandbox) advisoryExec(ctx context.Context, req containment.LaunchRequest, start time.Time) (sbx.ExecResult, error) {
 	cmdCtx := ctx

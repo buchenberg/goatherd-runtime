@@ -1,9 +1,9 @@
 // Package landlock is the Linux Landlock containment backend — the native
-// syscall-deny jail tier with no container and no root. It is the Go port of
+// syscall-deny paddock tier with no container and no root. It is the Go port of
 // vcs-core/_landlock_containment.py:LandlockContainmentBackend.
 //
 // The backend compiles a deny-closed profile (a JSON array of canonical writable
-// roots), proves the jail is both live and grant-conformant with an
+// roots), proves the paddock is both live and grant-conformant with an
 // exit-code-aware probe, and launches commands through a confine-then-exec
 // trampoline in this same binary (see MaybeRunTrampoline).
 //
@@ -32,8 +32,8 @@ type Backend struct{}
 // New returns a Landlock backend.
 func New() *Backend { return &Backend{} }
 
-// Detect returns a Landlock backend when the host can provide the jail, or nil on
-// a jail-less host (advisory tier only). It mirrors detect_containment_backend,
+// Detect returns a Landlock backend when the host can provide the paddock, or nil on
+// a paddock-less host (advisory tier only). It mirrors detect_containment_backend,
 // but lives here rather than in package containment because the root module must
 // not import this nested module.
 func Detect() containment.Backend {
@@ -71,9 +71,9 @@ func (b *Backend) ProfileFor(roots []string, allowNetwork bool) string {
 	return string(payload)
 }
 
-// Probe proves the jail is BOTH live and grant-conformant before the body runs
-// (fail-closed §6). It is exit-code aware: a confine failure (rc 3) is "no jail",
-// not "write denied", so a broken Landlock can never pass as a working jail.
+// Probe proves the paddock is BOTH live and grant-conformant before the body runs
+// (fail-closed §6). It is exit-code aware: a confine failure (rc 3) is "no paddock",
+// not "write denied", so a broken Landlock can never pass as a working paddock.
 //
 // Mirrors _landlock_containment.py:probe (three checks: liveness, per-root
 // conformance, deny-closed).
@@ -82,36 +82,36 @@ func (b *Backend) Probe(profile, workingRoot string, roots []string) error {
 	canonicalRoots := canonicalAll(roots)
 
 	// (1) liveness: an out-of-WORKDIR write must be denied.
-	denied, err := b.probeDenied(profile, wd, filepath.Join(filepath.Dir(wd), ".jail-probe"))
+	denied, err := b.probeDenied(profile, wd, filepath.Join(filepath.Dir(wd), ".paddock-probe"))
 	if err != nil {
 		return err
 	}
 	if !denied {
-		return fmt.Errorf("%w: out-of-WORKDIR write was NOT denied — no jail established", containment.ErrJailNotEstablished)
+		return fmt.Errorf("%w: out-of-WORKDIR write was NOT denied — no paddock established", containment.ErrPaddockNotEstablished)
 	}
 
 	// (2) per-root: each declared writable root must accept writes.
 	for _, root := range canonicalRoots {
-		denied, err := b.probeDenied(profile, wd, filepath.Join(root, ".jail-probe-canary"))
+		denied, err := b.probeDenied(profile, wd, filepath.Join(root, ".paddock-probe-canary"))
 		if err != nil {
 			return err
 		}
 		if denied {
 			return fmt.Errorf("%w: writable root %s DENIES writes (profile too strict) — a legit body's writes would spuriously fail",
-				containment.ErrJailNotEstablished, root)
+				containment.ErrPaddockNotEstablished, root)
 		}
 	}
 
 	// (3) deny-closed: an in-WORKDIR path outside every writable root must be
 	// denied, catching a ReadOnly run mis-lowered to a writable WORKDIR.
 	if !withinAnyRoot(wd, canonicalRoots) {
-		denied, err := b.probeDenied(profile, wd, filepath.Join(wd, ".jail-probe-denied"))
+		denied, err := b.probeDenied(profile, wd, filepath.Join(wd, ".paddock-probe-denied"))
 		if err != nil {
 			return err
 		}
 		if !denied {
 			return fmt.Errorf("%w: an in-WORKDIR path outside every writable root was PERMITTED — would silently escalate",
-				containment.ErrJailNotEstablished)
+				containment.ErrPaddockNotEstablished)
 		}
 	}
 	return nil
@@ -128,7 +128,7 @@ func (b *Backend) probeDenied(profile, workingRoot, target string) (bool, error)
 		return false, err
 	}
 	if rc == ConfineFailedRC {
-		return false, fmt.Errorf("%w: Landlock confinement could not be established", containment.ErrJailNotEstablished)
+		return false, fmt.Errorf("%w: Landlock confinement could not be established", containment.ErrPaddockNotEstablished)
 	}
 	return rc != 0, nil
 }

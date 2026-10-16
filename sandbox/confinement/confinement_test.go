@@ -119,17 +119,17 @@ func TestValidateDisjointRoots_UnicodeAliasRejected(t *testing.T) {
 }
 
 func TestPlacement_AutoResolves(t *testing.T) {
-	if jail, err := ResolvePlacement(PlacementAuto, false); err != nil || jail {
-		t.Fatalf("auto, unavailable = (%v, %v)", jail, err)
+	if paddock, err := ResolvePlacement(PlacementAuto, false); err != nil || paddock {
+		t.Fatalf("auto, unavailable = (%v, %v)", paddock, err)
 	}
-	if jail, err := ResolvePlacement(PlacementAuto, true); err != nil || !jail {
-		t.Fatalf("auto, available = (%v, %v)", jail, err)
+	if paddock, err := ResolvePlacement(PlacementAuto, true); err != nil || !paddock {
+		t.Fatalf("auto, available = (%v, %v)", paddock, err)
 	}
-	if _, err := ResolvePlacement(PlacementJail, false); !errors.Is(err, containment.ErrJailNotEstablished) {
-		t.Fatalf("jail, unavailable must refuse, got %v", err)
+	if _, err := ResolvePlacement(PlacementPaddock, false); !errors.Is(err, containment.ErrPaddockNotEstablished) {
+		t.Fatalf("paddock, unavailable must refuse, got %v", err)
 	}
-	if jail, err := ResolvePlacement(PlacementAdvisory, true); err != nil || jail {
-		t.Fatalf("advisory must never jail, got (%v, %v)", jail, err)
+	if paddock, err := ResolvePlacement(PlacementAdvisory, true); err != nil || paddock {
+		t.Fatalf("advisory must never paddock, got (%v, %v)", paddock, err)
 	}
 }
 
@@ -150,8 +150,8 @@ func TestInstall_MayAndGrants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Install(may): %v", err)
 	}
-	if _, ok := plan.Monitor(JailMonitor); !ok {
-		t.Fatal("plan must assign the jail monitor")
+	if _, ok := plan.Monitor(PaddockMonitor); !ok {
+		t.Fatal("plan must assign the paddock monitor")
 	}
 	if _, ok := plan.Monitor(CarrierMonitor); !ok {
 		t.Fatal("plan must assign the carrier monitor")
@@ -161,7 +161,7 @@ func TestInstall_MayAndGrants(t *testing.T) {
 		t.Fatalf("Confinement(): %v", err)
 	}
 	if len(spec.WritableRoots) != 0 {
-		t.Fatalf("ReadOnly jail spec = %+v, want no writable roots", spec)
+		t.Fatalf("ReadOnly paddock spec = %+v, want no writable roots", spec)
 	}
 
 	rw := filepath.Join(root, "backend")
@@ -177,14 +177,14 @@ func TestInstall_MayAndGrants(t *testing.T) {
 		t.Fatalf("Confinement(): %v", err)
 	}
 	if len(spec2.WritableRoots) != 1 || spec2.WritableRoots[0] != containment.Canonical(rw) {
-		t.Fatalf("grant jail spec = %+v", spec2)
+		t.Fatalf("grant paddock spec = %+v", spec2)
 	}
 }
 
 func TestInstall_CarrierOnly(t *testing.T) {
 	plan := InstallCarrierCheck(CarrierCheckAuthority{EffectiveMatchDigest: "e1", Route: "carrier_diff"})
-	if _, ok := plan.Monitor(JailMonitor); ok {
-		t.Fatal("a carrier-only plan must not assign the jail monitor")
+	if _, ok := plan.Monitor(PaddockMonitor); ok {
+		t.Fatal("a carrier-only plan must not assign the paddock monitor")
 	}
 	if _, err := plan.Confinement(); !errors.Is(err, ErrPlanEvidence) {
 		t.Fatalf("Confinement() on a carrier-only plan = %v, want ErrPlanEvidence", err)
@@ -217,7 +217,7 @@ func TestPermissionPlan_DigestStable(t *testing.T) {
 	}
 }
 
-func TestPermissionPlan_ConfinementIsTheJailSpec(t *testing.T) {
+func TestPermissionPlan_ConfinementIsThePaddockSpec(t *testing.T) {
 	want := containment.PermissiveFor(t.TempDir())
 	plan := PlanForSpec(want, "")
 	got, err := plan.Confinement()
@@ -225,15 +225,15 @@ func TestPermissionPlan_ConfinementIsTheJailSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got.WritableRoots) != len(want.WritableRoots) || got.Network.Mode != want.Network.Mode {
-		t.Fatalf("Confinement() = %+v, want the jail spec %+v", got, want)
+		t.Fatalf("Confinement() = %+v, want the paddock spec %+v", got, want)
 	}
 }
 
 func TestMonitorAssignment_Present(t *testing.T) {
 	plan := PlanForSpec(containment.ReadOnlySpec(), "")
-	jail, ok := plan.Monitor(JailMonitor)
-	if !ok || jail.Timing != TimingPreAction || jail.Confinement == nil {
-		t.Fatalf("jail assignment = %+v", jail)
+	paddock, ok := plan.Monitor(PaddockMonitor)
+	if !ok || paddock.Timing != TimingPreAction || paddock.Confinement == nil {
+		t.Fatalf("paddock assignment = %+v", paddock)
 	}
 	carrier, ok := plan.Monitor(CarrierMonitor)
 	if !ok || carrier.Timing != TimingCommit || carrier.Confinement != nil {

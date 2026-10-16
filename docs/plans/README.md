@@ -10,13 +10,24 @@ to Go targets with a covering test, an explicit scope/non-goals section, and a
 test matrix. Plans 1 and 2 are written; 3–5 are scoped here and get their own
 documents when started.
 
+> **Vocabulary — "paddock".** The Go code renames Python Shepherd's `jail` to
+> **`paddock`** (an enclosed livestock area — it fits the shepherd/croft theme;
+> "jail" was the one term that did not). This rename covers **Go vocabulary and
+> wire values**: `PlacementPaddock` (wire `"paddock"`), `PaddockMonitor` (wire
+> `"syscall_paddock"`), `ErrPaddockNotEstablished`. The **Python reference keeps
+> its own spelling** (`JailNotEstablished`, `JAIL_MONITOR`, `"syscall_jail"`,
+> placement `"jail"`), and the plan tables show Python symbols in their original
+> form. **Consequence:** because the monitor id is a plan-descriptor field, Go
+> permission-plan digests diverge from Python's by construction. That is the one
+> intentional vocabulary divergence; the semantics are unchanged.
+
 ## Status
 
 | Plan | Goal | Covers | Doc | Status |
 |---|---|---|---|---|
-| **1** | Linux Landlock containment | jail, contract, probe, may=/grants lowering, placement, evidence, denial classification | [`01-landlock-containment.md`](01-landlock-containment.md) | ✅ implemented |
+| **1** | Linux Landlock containment | paddock, contract, probe, may=/grants lowering, placement, evidence, denial classification | [`01-landlock-containment.md`](01-landlock-containment.md) | ✅ implemented |
 | **2** | Reversible execution runs | fork-isolated-by-default, capability-after-fork, discard-on-failure, merge/seal, recorded run operation | [`02-reversible-runs.md`](02-reversible-runs.md) | 🚧 Phases 1–3 done; 4 planned |
-| **3** | Authority declarations & permission-plan compiler | `May[…]`/grant authoring, jail **+ carrier** monitor compiler, `authority_merge`, evidence persistence | [`03-authority-and-plan-compiler.md`](03-authority-and-plan-compiler.md) | 🚧 Phases 1–2 done; 3, 4 planned |
+| **3** | Authority declarations & permission-plan compiler | `May[…]`/grant authoring, paddock **+ carrier** monitor compiler, `authority_merge`, evidence persistence | [`03-authority-and-plan-compiler.md`](03-authority-and-plan-compiler.md) | 🚧 Phases 1–2 done; 3, 4 planned |
 | **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | — | 📝 scoped |
 | **5** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
 
@@ -25,7 +36,7 @@ documents when started.
 A self-contained `sandbox/containment` contract + `sandbox/confinement` authority
 lowering in the root module, and a `sandbox/landlock` **nested module** (its own
 `go.mod`/version stream) with the raw-syscall engine, the confine-then-exec
-trampoline, the fail-closed probe, and the backend. `GitSandbox` gains jailed
+trampoline, the fail-closed probe, and the backend. `GitSandbox` gains paddocked
 `Exec` via `WithExec`. Verified against the live kernel (13 Landlock tests + a
 full-stack integration test). See the plan for the module layout (§15) and the
 as-built status/deviations (§16).
@@ -53,9 +64,9 @@ the *monitor-assignment* half (which monitor enforces what).
   bind roots (`ReadOnly`/`ReadWrite`), lowered through `confinement.LowerGrants`
   with the existing disjointness guard.
 - **3b — Permission-plan compiler.** Python's `install()` compiles a
-  `PermissionPlan` naming **both** the syscall jail (pre-action) and the carrier
+  `PermissionPlan` naming **both** the syscall paddock (pre-action) and the carrier
   check-at-commit, and `run_driver` consumes it. Deliverable: the compiler
-  (jail + carrier assignments, `SpecDigest`, descriptor, `Digest`) and its
+  (paddock + carrier assignments, `SpecDigest`, descriptor, `Digest`) and its
   consumption by the Plan-2 `run` package, mapping the carrier monitor to the
   existing `DeltaApplier`/settlement check-at-commit.
 - **3c — `authority_merge` disposition.** Plan 2 defines the signature and
@@ -97,7 +108,7 @@ Depends on Plan 1 (spec/NetworkPolicy) and Plan 3 (network-axis lowering).
 but the reference ships **no** seccomp backend, so this is not a parity gap. A
 seccomp tier would deny whole dangerous syscalls (`mount`, `ptrace`, `keyctl`,
 `bpf`, raw `socket`) regardless of arguments, complementing Landlock's
-object-based jail. Go can install cBPF via `SECCOMP_SET_MODE_FILTER`, but the
+object-based paddock. Go can install cBPF via `SECCOMP_SET_MODE_FILTER`, but the
 filter is arch-specific and fiddly; defer until a concrete need (untrusted code
 without containerd) justifies it.
 
@@ -154,5 +165,9 @@ Plan 1 (landlock, done)
   => ../..` for local development, dropped at release when the root is tagged.
   A repo-root `go.work` was tried and rejected (it propagates the nested
   require into the root build).
+- **Vocabulary — "jail" became "paddock".** The Go code renames Python's `jail`
+  to `paddock` (see the roadmap's vocabulary note). Wire values changed too
+  (`syscall_paddock`, placement `paddock`), so Go permission-plan digests diverge
+  from Python's by construction. Semantics unchanged.
 - **Non-goals (unchanged):** Windows containment; VM / AppContainer tiers
   (signposted in both implementations); host-wiring `yaah`.

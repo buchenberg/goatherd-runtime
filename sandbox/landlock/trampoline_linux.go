@@ -21,7 +21,7 @@ func runExecTrampoline(args []string) int {
 
 	// Pin the OS thread: a Landlock domain is attached to a single task_struct.
 	// Without this the goroutine could be rescheduled between restrict_self and
-	// Exec, and the jail would silently evaporate onto an unrestricted thread.
+	// Exec, and the paddock would silently evaporate onto an unrestricted thread.
 	runtime.LockOSThread()
 	if err := confine(canonicalAll(roots)); err != nil {
 		return ConfineFailedRC

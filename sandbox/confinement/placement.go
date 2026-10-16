@@ -10,22 +10,22 @@ import (
 type Placement string
 
 const (
-	// PlacementJail requires a jail-capable backend; the run refuses otherwise.
-	PlacementJail Placement = "jail"
-	// PlacementAdvisory runs unconfined when no jail is available.
+	// PlacementPaddock requires a paddock-capable backend; the run refuses otherwise.
+	PlacementPaddock Placement = "paddock"
+	// PlacementAdvisory runs unconfined when no paddock is available.
 	PlacementAdvisory Placement = "advisory"
-	// PlacementAuto jails when a backend is available, else falls back to advisory.
+	// PlacementAuto paddocks when a backend is available, else falls back to advisory.
 	PlacementAuto Placement = "auto"
 )
 
-// ResolvePlacement decides whether a run is jailed, given whether a jail is
-// available on this host. jail refuses without one (fail-closed); advisory never
-// jails; auto jails when available.
-func ResolvePlacement(p Placement, available bool) (jail bool, err error) {
+// ResolvePlacement decides whether a run is confined, given whether a paddock is
+// available on this host. paddock refuses without one (fail-closed); advisory never
+// paddocks; auto paddocks when available.
+func ResolvePlacement(p Placement, available bool) (paddock bool, err error) {
 	switch p {
-	case PlacementJail:
+	case PlacementPaddock:
 		if !available {
-			return false, fmt.Errorf("%w: placement=jail requires a jail-capable backend, none available", containment.ErrJailNotEstablished)
+			return false, fmt.Errorf("%w: placement=paddock requires a paddock-capable backend, none available", containment.ErrPaddockNotEstablished)
 		}
 		return true, nil
 	case PlacementAdvisory:

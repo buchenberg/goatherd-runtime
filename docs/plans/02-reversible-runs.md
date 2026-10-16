@@ -2,7 +2,7 @@
 
 > **Scope.** This is **Plan 2** of the containment/execution work. Plan 1
 > (`01-landlock-containment.md`) delivered the Linux containment component —
-> the jail, its contract, the authority lowering, and confined `Exec`. What Plan 1
+> the paddock, its contract, the authority lowering, and confined `Exec`. What Plan 1
 > deliberately fenced out is *how a confined execution is run*: Python Shepherd
 > wraps execution in a **reversible transaction** (isolated fork → capability →
 > recorded operation → merge/discard). This plan brings that wrap to Go.
@@ -26,7 +26,7 @@ Plan 1 shipped:
 - `containment.Backend` + `landlock` (confined `Exec`, fail-closed probe, denial
   classification, authority evidence digest).
 - `confinement` (may= / grants → `ConfinementSpec`, placement, `PermissionPlan`).
-- `GitSandbox.Exec` with `WithExec` (jailed/advisory) and `ExecMay`/`ExecGrants`.
+- `GitSandbox.Exec` with `WithExec` (paddocked/advisory) and `ExecMay`/`ExecGrants`.
 
 What is missing for functional parity with Python's execution boundary: a
 **reversible-by-default execution wrap**. In Python, an execution-bound command is
@@ -77,7 +77,7 @@ recorded-operation boundary + evidence persistence, the dispositions
 (merge default, seal, non-reversible opt-out), and the test matrix.
 
 **Non-goals (deferred to later plans):**
-- **`authority_merge`** depends on the permission-plan **compiler** (jail +
+- **`authority_merge`** depends on the permission-plan **compiler** (paddock +
   carrier assignment, `effective_match_digest`, `permission_plan_descriptor`) —
   that is Plan 3. Phase 4 defines its signature and refuses it loudly until Plan 3.
 - Egress enforcement, Seatbelt, and the container tier (unchanged non-goals from
@@ -140,7 +140,7 @@ run.Reversible(ctx, mgr, parent, opts, handler)
 
 1. **Pre-flight before fork.** Python forks first and may fail later (leaving a
    scope to discard). Go resolves placement + backend availability *before*
-   `ForkIsolated`, so a jail-less host never allocates a worktree.
+   `ForkIsolated`, so a paddock-less host never allocates a worktree.
 2. **Explicit sandbox factory.** Python's carrier forks implicitly; Go's
    `ForkIsolated` takes the sandbox, so the wrap needs `Options.NewSandbox`.
 3. **Shared vs isolated is explicit.** A `NonReversible` run reuses the parent's
@@ -180,7 +180,7 @@ type RunContext struct {
 
 type Result struct {
     Value    map[string]any
-    Evidence string // permission-plan digest, when a jailed run recorded one
+    Evidence string // permission-plan digest, when a paddocked run recorded one
 }
 
 type Outcome struct {
@@ -209,14 +209,14 @@ receiving the `ExecutionCapability` per call (never stored). As built:
 
 - `RunContext` carries the scope, the `Capability`, and the resolved
   `ConfinementSpec`; `RunContext.Exec` is the handler's first-class confined
-  execution path (capability-first, jail-or-refuse via `LaunchConfined`).
+  execution path (capability-first, paddock-or-refuse via `LaunchConfined`).
 - `containment.RequireExecutionAuthority` (and its method form
-  `Capability.RequireAuthority`) is the version-skew guard: no jail backend for a
-  jail placement ⇒ refuse before dispatch.
+  `Capability.RequireAuthority`) is the version-skew guard: no paddock backend for a
+  paddock placement ⇒ refuse before dispatch.
 - `run.VerifyHandler(ctx, probe, h)` is the negotiation conformance probe,
   mirroring `verify_execution_negotiation`: a handler handed a backend-less
   capability must refuse with `ErrExecutionAuthorityRequired` /
-  `ErrJailNotEstablished`; a handler that returns nil (ran without authority) or
+  `ErrPaddockNotEstablished`; a handler that returns nil (ran without authority) or
   refuses with an unrelated error fails conformance. Verified by
   `TestVerifyHandler_RefusesWithoutCapability`.
 - A "pure-data" path never receives a `RunContext` — the structural analogue of a
@@ -270,20 +270,20 @@ trace.TrustedAppendContext, trace.AppendBatch{...})` returning an
 ## 10. Phase 5 — Test & conformance matrix
 
 Mirrors the Python PD2 behaviours; runs against the real runtime (+ Landlock where
-a jail is exercised). Build the harness on a git worktree sandbox.
+a paddock is exercised). Build the harness on a git worktree sandbox.
 
 | Done | Test | Action | Expected |
 |---|---|---|---|
 | ✅ | `TestReversible_MergeDefault` | reversible run on a repo | child scope, `Isolation=="isolated"`, parent's tree untouched, then merged |
 | ✅ | `TestReversible_NonReversibleOptOut` | `NonReversible: true` | runs on parent scope, `Isolation=="ground"`, write lands directly |
 | ✅ | (capability-after-fork) | inspect `RunContext.Capability` in the handler | capability carries `Isolation=="isolated"` (asserted in `MergeDefault`) |
-| ✅ | `TestReversible_RefusesWithoutBackend` | jail placement, nil backend | `ErrJailNotEstablished`; **no scope allocated** |
-| ✅ | `TestReversible_HandlerRunsConfined` | handler runs a jailed command | jailed run; `Result.Evidence` non-empty |
+| ✅ | `TestReversible_RefusesWithoutBackend` | paddock placement, nil backend | `ErrPaddockNotEstablished`; **no scope allocated** |
+| ✅ | `TestReversible_HandlerRunsConfined` | handler runs a paddocked command | paddocked run; `Result.Evidence` non-empty |
 | ✅ | `TestReversible_DiscardOnFailure` | handler returns error | `mgr.Discard`; parent unchanged |
 | ✅ | `TestReversible_MergeDeniedByReviewer` | rejecting `MergeReviewer` | `*SupervisorDeniedError`; parent untouched |
 | ✅ | `TestReversible_SealDisposition` | `DispositionSeal` | `Outcome.Output` sealed; caller `Settle(SettleSelect)` integrates it |
 | ✅ | `TestReversible_RecordsRunOperation` | any run | one `shepherd.run.executed.v1` record carries isolation/disposition/exit |
-| ✅ | `TestReversible_RecordsEvidence` | jailed run | the record carries the authority-evidence digest |
+| ✅ | `TestReversible_RecordsEvidence` | paddocked run | the record carries the authority-evidence digest |
 | ✅ | `TestReversible_AuthorityMergeDeferred` | `DispositionAuthorityMerge` | refuses with `ErrAuthorityMergeUnsupported` |
 | ✅ | `TestReversible_NonReversibleWithSealRefused` | `NonReversible` + `Seal` | validation error (mirrors `_command_envelope.py:126`) |
 | ✅ | `TestVerifyHandler_RefusesWithoutCapability` | handler handed a backend-less capability | refuses; a nil return or wrong error fails conformance |
@@ -313,7 +313,7 @@ a jail is exercised). Build the harness on a git worktree sandbox.
 first) → Phase 3 (recorded operation + evidence) → Phase 5 (tests throughout).
 
 **Dependencies:** Plan 1 (done); the runtime's Scope/Settlement/Merge-gate
-(done); a git worktree sandbox with `WithExec(landlock, jail)` for jailed runs.
+(done); a git worktree sandbox with `WithExec(landlock, paddock)` for paddocked runs.
 
 **Risks / mitigations:**
 - *Orphan worktrees on early failure* → pre-flight placement/availability before

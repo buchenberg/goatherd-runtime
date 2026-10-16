@@ -13,7 +13,7 @@ import (
 )
 
 // ErrOverlappingBoundRoots: bound roots overlap or nest — refuse, because the
-// syscall jail's writable-root rules are additive, so a ReadOnly root nested
+// syscall paddock's writable-root rules are additive, so a ReadOnly root nested
 // inside a ReadWrite root would be silently writable. Whole-root-per-binding
 // soundness therefore requires disjoint roots; overlap fails closed here.
 var ErrOverlappingBoundRoots = errors.New("confinement: bound roots overlap, alias, or nest")

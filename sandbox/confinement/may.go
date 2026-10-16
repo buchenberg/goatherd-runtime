@@ -56,7 +56,7 @@ func LowerMayResolution(res MayResolution, workingPath string) (containment.Conf
 }
 
 // BindingRootGrant is one bound root and whether its per-binding grant makes the
-// subtree writable. The pure input to per-binding jail lowering, decoupled from
+// subtree writable. The pure input to per-binding paddock lowering, decoupled from
 // the signature-annotation machinery that produces it.
 type BindingRootGrant struct {
 	Binding  string

@@ -13,11 +13,11 @@ const (
 	NetDenyAll NetMode = "deny_all"
 	// NetAllowAll is unrestricted egress.
 	NetAllowAll NetMode = "allow_all"
-	// NetBroker is host-filtered egress — the egress broker's job, not the jail's.
+	// NetBroker is host-filtered egress — the egress broker's job, not the paddock's.
 	NetBroker NetMode = "broker"
 )
 
-// NetworkPolicy is the network axis — coarse today, host-granular later. The jail
+// NetworkPolicy is the network axis — coarse today, host-granular later. The paddock
 // is host-blind (a filesystem LSM cannot filter by host) and ignores it; a broker
 // consumes AllowedHosts.
 type NetworkPolicy struct {
@@ -27,7 +27,7 @@ type NetworkPolicy struct {
 }
 
 // ConfinementSpec is the generic, may=-agnostic confinement policy. The authority
-// layer (package confinement) lowers to this; the jail backend enforces it.
+// layer (package confinement) lowers to this; the paddock backend enforces it.
 type ConfinementSpec struct {
 	WritableRoots []string
 	Network       NetworkPolicy
@@ -48,9 +48,9 @@ func PermissiveFor(workingPath string) ConfinementSpec {
 	}
 }
 
-// ResolveSpec resolves a spec to the jail's inputs: canonical writable roots and
-// a network flag. Only the network axis can refuse — the jail is host-blind, so a
-// broker (host-filtered) policy has no faithful jail lowering.
+// ResolveSpec resolves a spec to the paddock's inputs: canonical writable roots and
+// a network flag. Only the network axis can refuse — the paddock is host-blind, so a
+// broker (host-filtered) policy has no faithful paddock lowering.
 //
 // Mirrors _resolve_spec in _execution_capability.py:135-158.
 func ResolveSpec(spec ConfinementSpec) (roots []string, allowNetwork bool, err error) {
@@ -61,7 +61,7 @@ func ResolveSpec(spec ConfinementSpec) (roots []string, allowNetwork bool, err e
 		allowNetwork = true
 	default:
 		return nil, false, fmt.Errorf(
-			"%w: network mode %q has no jail lowering — host-filtered egress is the broker's job, not the syscall jail's (representable: deny_all, allow_all)",
+			"%w: network mode %q has no paddock lowering — host-filtered egress is the broker's job, not the syscall paddock's (representable: deny_all, allow_all)",
 			ErrUnsupportedConfinementSpec, spec.Network.Mode)
 	}
 	roots = make([]string, 0, len(spec.WritableRoots))

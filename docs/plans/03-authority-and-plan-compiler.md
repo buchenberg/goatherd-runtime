@@ -1,14 +1,14 @@
 # Implementation Plan: Authority Declarations & the Permission-Plan Compiler (Go)
 
 > **Scope.** This is **Plan 3** of the containment/execution work. Plan 1
-> (`01-landlock-containment.md`) shipped the jail, its contract, and the
+> (`01-landlock-containment.md`) shipped the paddock, its contract, and the
 > `may=`/grant *lowering*. Plan 2 (`02-reversible-runs.md`) shipped the
 > reversible-run wrap. Two gaps remain in the authority spine:
 >
 > 1. **Where grants come from.** Plan 1's `BindingRootGrant` is a pure input with
 >    no producer; Python derives grants from task-signature annotations.
 > 2. **The monitor-assignment compiler.** Python's `install()` compiles one
->    authority declaration into a `PermissionPlan` naming *both* the syscall jail
+>    authority declaration into a `PermissionPlan` naming *both* the syscall paddock
 >    (pre-action) and the carrier check-at-commit, and the run driver consumes it.
 >
 > Plan 3 builds the Go authority-declaration surface, the compiler, the evidence
@@ -35,11 +35,11 @@ What is missing:
 - **A producer for grants.** `BindingRootGrant` exists; nothing builds it from a
   declaration. Python's dialect extracts `May[GitRepo, ReadWrite]` from task
   signatures (`run_driver.py`), rebases per-binding grants, and lowers them.
-- **The two-monitor plan.** Python's `install()` — the seam where the jail lane
+- **The two-monitor plan.** Python's `install()` — the seam where the paddock lane
   and the carrier lane meet — assigns `JAIL_MONITOR` (pre-action) **and**
   `CARRIER_MONITOR` (check-at-commit), with completeness/tamper bases, and exposes
   `plan.confinement` (behaviour-preserving) and `plan.digest` (authority evidence).
-  Go's `PermissionPlan` is jail-only and carries none of that.
+  Go's `PermissionPlan` is paddock-only and carries none of that.
 - **The `authority_merge` disposition.** Plan 2 defines it and refuses; it needs
   the plan digests and a decision provider.
 
@@ -66,7 +66,7 @@ Go-shaped `authority_merge` disposition.
 
 **Non-goals:**
 - **Egress broker / network enforcement** — Plan 4 (the plan only *names* the
-  carrier and jail; the network axis stays spec-only).
+  carrier and paddock; the network axis stays spec-only).
 - **Seatbelt** — Plan 4.
 - **seccomp** — Plan 5.
 - **The full vcs-core carrier-candidate machinery** of `merge_with_authority`
@@ -82,8 +82,8 @@ Go-shaped `authority_merge` disposition.
 | 1 | task-signature `May[…]` → grants | `confinement.Declaration` (Go authoring surface) | `TestDeclaration_MayAndGrants` | ✅ |
 | 2 | rebased per-binding grants | `confinement.BindingRootGrant` producer | `TestInstall_MayAndGrants` | ✅ |
 | 3 | `MonitorAssignment` | `confinement.MonitorAssignment` (full fields) | `TestMonitorAssignment_Present` | ✅ |
-| 4 | `PermissionPlan` (jail-only today) | `confinement.PermissionPlan` (two-monitor) | `TestInstall_MayAndGrants`, `TestMonitorAssignment_Present` | ✅ |
-| 5 | `PermissionPlan.confinement` | `(*PermissionPlan).Confinement()` | `TestPermissionPlan_ConfinementIsTheJailSpec` | ✅ |
+| 4 | `PermissionPlan` (paddock-only today) | `confinement.PermissionPlan` (two-monitor) | `TestInstall_MayAndGrants`, `TestMonitorAssignment_Present` | ✅ |
+| 5 | `PermissionPlan.confinement` | `(*PermissionPlan).Confinement()` | `TestPermissionPlan_ConfinementIsThePaddockSpec` | ✅ |
 | 6 | `PermissionPlan.digest` / `to_descriptor` | `(*PermissionPlan).Digest()` / `Descriptor()` | `TestPermissionPlan_DigestStable` | ✅ |
 | 7 | `install(authority, working_path)` | `confinement.Install(decl, workingPath)` | `TestInstall_MayAndGrants` | ✅ |
 | 8 | `CarrierCheckAuthority` | `confinement.CarrierCheckAuthority` | `TestInstall_CarrierOnly` | ✅ |
@@ -102,7 +102,7 @@ Python: `install(authority, working_path) → PermissionPlan`; `plan.confinement
 feeds `launch_confined`; `plan.digest` is authority evidence. Go:
 
 ```
-confinement.Install(decl, workingPath) → PermissionPlan{jail, carrier}
+confinement.Install(decl, workingPath) → PermissionPlan{paddock, carrier}
         │                                          │
         │ .Confinement() ─► run.RunContext.Confinement ─► LaunchConfined
         │ .Digest()      ─► run evidence ─► shepherd.run.executed.v1
@@ -115,8 +115,9 @@ from*, not the spec.
 
 ### 5.2 The two monitors
 
-- **`JAIL_MONITOR`** (`syscall_jail`, `pre_action`, fallback `refuse`) — carries
-  the `ConfinementSpec`; the Landlock jail enforces it.
+- **`PaddockMonitor`** (wire `syscall_paddock`; Python's `JAIL_MONITOR`/`syscall_jail`
+  — see the vocabulary note) — pre-action; carries the `ConfinementSpec`; the
+  Landlock syscall deny enforces it.
 - **`CARRIER_MONITOR`** (`carrier_check_at_commit`, `commit`) — the completeness
   backstop for managed writes that bypass cooperative paths. In Go this maps to
   the runtime's existing check-at-commit seam: `Scope.Seal` + the Plan-2
@@ -159,11 +160,11 @@ plan.
 package confinement
 
 type MonitorAssignment struct {
-    Monitor           string   // JAIL_MONITOR | CARRIER_MONITOR
+    Monitor           string   // PaddockMonitor | CarrierMonitor
     Timing            string   // "pre_action" | "commit"
     CompletenessBasis string
     TamperBasis       string
-    Confinement       *containment.ConfinementSpec // jail only
+    Confinement       *containment.ConfinementSpec // paddock only
     Route             string   // carrier route, e.g. "carrier_diff"
     Evidence          []Evidence // (key, digest) pairs
 }
@@ -174,7 +175,7 @@ type PermissionPlan struct {
 }
 
 func (p PermissionPlan) Monitor(name string) (MonitorAssignment, bool)
-func (p PermissionPlan) Confinement() (containment.ConfinementSpec, error) // jail's spec
+func (p PermissionPlan) Confinement() (containment.ConfinementSpec, error) // paddock's spec
 func (p PermissionPlan) Digest() string
 func (p PermissionPlan) Descriptor() map[string]any // schema "shepherd.permission-plan.v1"
 
@@ -192,8 +193,8 @@ func ValidatePlanEvidence(digest string, descriptor map[string]any, route, match
 ```
 
 `Install` lowers the declaration via the Plan-1 lowerers (whole-workspace via
-`LowerMay`, per-binding via `LowerGrants`), then assigns jail + carrier. Both
-lowerers already fail closed, so `Install` never returns an un-enforceable jail
+`LowerMay`, per-binding via `LowerGrants`), then assigns paddock + carrier. Both
+lowerers already fail closed, so `Install` never returns an un-enforceable paddock
 clause.
 
 ## 8. Phase 3 — Consume the plan in `run` (evidence chain)
@@ -233,14 +234,14 @@ over the sealed output is the simplified analogue and is recorded as such.
 | Done | Test | Action | Expected |
 |---|---|---|---|
 | ✅ | `TestDeclaration_MayAndGrants` | build both declaration forms | correct fields; mutually exclusive |
-| ✅ | `TestInstall_MayAndGrants` | `Install` over `may=` and grants | two-monitor plan; jail spec matches the direct lowerer |
-| ✅ | `TestInstall_CarrierOnly` | `InstallCarrierCheck` | carrier-only plan; no jail assignment |
+| ✅ | `TestInstall_MayAndGrants` | `Install` over `may=` and grants | two-monitor plan; paddock spec matches the direct lowerer |
+| ✅ | `TestInstall_CarrierOnly` | `InstallCarrierCheck` | carrier-only plan; no paddock assignment |
 | ✅ | `TestInstall_RefusesUnsupported` | unsupported `may=` / both May+Grants | propagates `ErrUnsupportedMayProfile` / refuses the mixed declaration |
-| ✅ | `TestPermissionPlan_ConfinementIsTheJailSpec` | `plan.Confinement()` | equals the Plan-1 lowerer's spec (behaviour-preserving) |
+| ✅ | `TestPermissionPlan_ConfinementIsThePaddockSpec` | `plan.Confinement()` | equals the Plan-1 lowerer's spec (behaviour-preserving) |
 | ✅ | `TestPermissionPlan_DigestStable` | digest twice, then change the match | stable; changes with input |
-| ✅ | `TestMonitorAssignment_Present` | jail + carrier assignments | correct timing; jail carries the spec, carrier does not |
+| ✅ | `TestMonitorAssignment_Present` | paddock + carrier assignments | correct timing; paddock carries the spec, carrier does not |
 | ✅ | `TestValidatePlanEvidence` | matching / mismatched evidence | nil / `ErrPlanEvidence` |
-| 🚧 | `TestReversible_PlanDrivesConfinement` | run with `Options.Plan` | `RunContext.Confinement` is the plan's jail spec (Phase 3) |
+| 🚧 | `TestReversible_PlanDrivesConfinement` | run with `Options.Plan` | `RunContext.Confinement` is the plan's paddock spec (Phase 3) |
 | 🚧 | `TestReversible_RecordsPlanDigest` | run with a plan | the run record carries `permission_plan_digest` (Phase 3) |
 | 🚧 | `TestReversible_AuthorityMerge` | approving / denying `DecisionProvider` | approves→settle; denies→discard + denial (Phase 4) |
 | 🚧 | `TestReversible_AuthorityMergeRequiresDecision` | `DispositionAuthorityMerge`, nil `Decision` | validation error (Phase 4) |
@@ -266,7 +267,7 @@ evidence) → Phase 4 (`authority_merge`, unblocks Plan 2 Phase 4).
 `Seal`/`Settle`/`DeltaApplier`.
 
 **Risks / mitigations:**
-- *Plan/driver divergence* → `TestPermissionPlan_ConfinementIsJailSpec` pins
+- *Plan/driver divergence* → `TestPermissionPlan_ConfinementIsPaddockSpec` pins
   `plan.Confinement()` to the direct lowerer's output (behaviour-preserving).
 - *Un-enforceable clause* → the lowerers fail closed; `Install` propagates.
 - *Evidence spoofing* → `ValidatePlanEvidence` re-checks digest ↔ descriptor ↔
