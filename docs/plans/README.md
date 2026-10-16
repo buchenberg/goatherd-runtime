@@ -154,8 +154,10 @@ move is to make that the **default** for every sub-agent (folding
 `spawn_subagent`, which today mutates the host directly), then attach the
 confiner to the one retained launch.
 
-- **Phase 0:** tag the runtime + `sandbox/landlock` (drop the dev `replace`);
-  verify yaah builds against kernel v0.17.0 (up from v0.16.0).
+- **Phase 0:** ✅ done — `shepherd-runtime-go v0.17.0` and
+  `sandbox/landlock/v0.1.0` published (the nested module's dev `replace`
+  dropped); yaah ported onto the split modules (kernel v0.17.0 + runtime
+  v0.17.0) — a pure import rewrite across 44 files.
 - **Phase 1:** a thin **confinement seam spike** on the existing retained lane —
   no behavior flip.
 - **Phase 2 (the spine):** every sub-agent dispatch returns a **proposal**

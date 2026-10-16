@@ -21,9 +21,10 @@
 
 ## 1. Objective & Context
 
-`yaah` does not depend on `shepherd-runtime-go`; it pins `croft v0.3.0` +
-`shepherd-kernel-go v0.16.0`. But it **already owns the settlement machine** — on
-one lane:
+`yaah` now depends on `shepherd-runtime-go v0.17.0` + `shepherd-kernel-go
+v0.17.0` (Phase 0, done — the modules are split, and yaah was ported onto them),
+plus `croft v0.3.0`. But it **already owns the settlement machine** — on one
+lane:
 
 - **`supervised_task` *is* a retained run.** It forks an isolated child scope
   owning its own worktree and "seals it as a **retained output** — frozen"
@@ -190,15 +191,33 @@ Any captured entry point (test binaries) adds the same line to `TestMain`.
 
 ## 7. Phases
 
-### Phase 0 — Release mechanics (prerequisite)
+### Phase 0 — Release mechanics ✅ done
 
-The nested `sandbox/landlock` module carries a dev-time `replace … => ../..`.
+The prerequisite: publish the split modules and port yaah onto them.
 
-1. Tag the runtime; drop the replace; tag `sandbox/landlock/v0.1.0`.
-2. **Version skew:** yaah pins kernel **v0.16.0**, the runtime pins **v0.17.0** —
-   adding the runtime bumps yaah to v0.17.0 (MVS). `go build ./...` + `go test
-   ./...` in yaah; fix import-path moves from the runtime extraction.
-3. *(Interim)* a local `replace` to the runtime checkout — must not ship.
+1. ✅ **`shepherd-runtime-go v0.17.0`** tagged (annotated, on `main`) and
+   published; the tag's `release-verify` CI confirms it resolves from a clean
+   consumer.
+2. ✅ **`sandbox/landlock/go.mod` replace dropped** (PR #2) — the nested module
+   now resolves the runtime from the proxy; **`sandbox/landlock/v0.1.0`** tagged
+   and verified.
+3. ✅ **yaah ported** (PR #336). This was **not** a version bump: kernel
+   `v0.17.0` is *post-extraction* (trace-only — no `ScopeManager`, `sandbox/`,
+   `substrate/`, `task/`, `supervisor/`), so yaah had to move onto the runtime.
+   A **pure import rewrite** — 44 files, 89/89 lines, no source changes:
+   `.../shepherd-kernel-go/trace → .../shepherd-kernel-go` (package `trace`, 40);
+   `.../shepherd-kernel-go → .../shepherd-runtime-go` (30);
+   `.../sandbox`, `.../sandbox/git`, `.../supervisor` → the runtime (19).
+   `go.mod` pins both at `v0.17.0`. Green on ubuntu/macos/windows.
+
+   The suite passing with only import edits is the proof that runtime `v0.17.0`
+   is API-compatible with the runtime code yaah already used.
+
+**Follow-ups noted during Phase 0 (not blocking):** the runtime's
+`release-verify` CI scans only the **root** `go.mod` and only fires on `v*` tags,
+so nested modules are uncovered — the exact hole that let the Landlock `replace`
+linger; the runtime `CHANGELOG` still reads `[Unreleased]` (the kernel convention
+renames it after tagging); and Plan 7's own branch is unmerged.
 
 ### Phase 1 — Confinement seam spike (thin, on the existing retained lane)
 
