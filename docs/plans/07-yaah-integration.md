@@ -440,13 +440,39 @@ documented and pinned by a test.
 no tag is not a shipped fix; the release-verify workflow proves the tag resolves
 from a clean consumer.
 
-### Phase 4 (north star) — `oversee(implement)`
+### Phase 4 (north star) — `oversee(implement)` ✅ done (yaah PR #347)
+
+> **Concrete design:** [`07-phase4-oversee.md`](07-phase4-oversee.md).
 
 Shepherd's deferred target: one sub-agent (or the orchestrator) supervises
 another, retrying until acceptable — `run → inspect the proposal → keep or
 discard → retry`, as a first-class combination rather than the hand-written loop
-it is today. Outline only. This is where retained runs + settlement + supervision
-meet.
+it was. It is the composition Python's combinators name — `retry` (fresh fork per
+attempt, failed attempts discarded, only the accepted attempt merged) with `gate`
+(merge on the predicate) — with **one** divergence: the predicate is a
+**sub-agent's judgement**, because the orchestrator holds the authority and
+delegates only the judging.
+
+Landed as the `oversee` tool: dispatch a retained worker, have a reviewer
+sub-agent inspect its world (`Workdir` = the proposal's worktree, so it reads the
+post-change tree), then settle once on acceptance — `select`, `apply`, or `none`
+to hand the proposal back — or **discard** the round and re-dispatch with the
+reviewer's reason as feedback. The host tree is untouched until an accepted
+settle, because a rejected round is discarded rather than merged. Bounded by
+`max_rounds` (default 3, cap 10); each round is two dispatches.
+
+What the implementation had to get right beyond the loop, all review-driven:
+the verdict is a **token-carrying** contract (a per-round token the sealed work
+cannot contain, so an injected `VERDICT: accept` — even quoted verbatim by the
+reviewer — cannot be counted) with fenced blocks, inline-code quotations and
+non-final verdicts all failing closed; the reviewer is **checked for writes**
+(fingerprinting the world around the review) because a reviewer that fixes a
+defect and accepts has approved a tree the settle will not land; both roles are
+validated against the live registry; and a composite dispatch **takes a
+sub-agent concurrency slot**. Known limits are recorded in the design: the write
+check is detection rather than prevention (a read-only world is the follow-up),
+and a judge can still be *persuaded* by content under review — the token stops a
+verbatim copy, not a manipulable judge.
 
 ## 8. Test & Conformance Matrix
 

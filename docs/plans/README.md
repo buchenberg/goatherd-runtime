@@ -8,8 +8,7 @@ and the optional syscall filter (Plan 6) and the host integration (Plan 7).
 Each plan follows the same discipline: a parity checklist mapping Python symbols
 to Go targets with a covering test, an explicit scope/non-goals section, and a
 test matrix. Plans 1–5 and 7 are written: 1–3 implemented; 4 Linux-side done
-(Seatbelt planned); 5 scoped; 7 phases 0–3 done and its north star (§Phase 4)
-outlined.
+(Seatbelt planned); 5 scoped; 7 phases 0–4 done.
 
 > **Vocabulary — "paddock".** The Go code renames Python Shepherd's `jail` to
 > **`paddock`** (an enclosed livestock area — it fits the shepherd/croft theme;
@@ -32,7 +31,7 @@ outlined.
 | **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | [`04-egress-and-seatbelt.md`](04-egress-and-seatbelt.md) | 🚧 Phases 2–3 (Linux) done; 1 (Seatbelt) planned |
 | **5** | Container-tier parity | overlay changes → typed effects, the `copy` carrier, the `clonefile` carrier | [`05-container-tier.md`](05-container-tier.md) | 📝 scoped |
 | **6** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
-| **7** | yaah integration | **retained sub-agents** (the proposal/settlement spine) + Landlock confinement on that one path (orchestrator stays host-normal); placement config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | 🚧 Phases 0–3 done (defaults on); Phase 4 (north star) outlined |
+| **7** | yaah integration | **retained sub-agents** (the proposal/settlement spine) + Landlock confinement on that one path (orchestrator stays host-normal); placement config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | ✅ Phases 0–4 done (defaults on) |
 
 ## Plan 1 — Linux Landlock containment (done)
 
@@ -180,10 +179,11 @@ confiner to the one retained launch.
   commits at settlement — and stated in the sub-agent's prompt, the refusal
   message, and the config docs. Granting `<repo>/.git` was rejected: it would let
   a confined sub-agent rewrite the host repository.
-- **Phase 4 (north star):** 📝 outlined — `oversee(implement)`: retry-until-
-  acceptable as a first-class primitive over the retained proposal. Nothing it
-  needs is blocked, and the orchestrator can already run the loop by hand with
-  the `proposal` tool.
+- **Phase 4 (north star):** ✅ done (PR #347) — `oversee(implement)`: retry-until-
+  acceptable as a first-class primitive over the retained proposal (worker →
+  reviewer → settle or discard-and-redispatch), with a token-carrying verdict
+  contract and a checked-for-writes reviewer. Design:
+  [`07-phase4-oversee.md`](07-phase4-oversee.md).
 - **Mandatory:** `landlock.MaybeRunTrampoline(os.Args)` in `yaah/main.go`.
 - See [`07-yaah-integration.md`](07-yaah-integration.md), incl. §11 (Python
   parity).
