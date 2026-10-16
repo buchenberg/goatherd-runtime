@@ -12,12 +12,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go"
 	"io/fs"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	trace "github.com/buchenberg/shepherd-kernel-go"
+
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 )
 
 // ErrUnsupported is returned by a Sandbox method whose capability is false
@@ -79,6 +83,18 @@ type ExecRequest struct {
 	Env     map[string]string
 	Timeout time.Duration
 	Stdin   []byte
+
+	// Confinement is the lowering of the caller's authority declaration. A nil
+	// value asks the backend for its default (Permissive over the workspace for
+	// the git backend). It carries the writable-root set, not raw roots, so the
+	// authority layer (package confinement) is the only producer of roots.
+	Confinement *containment.ConfinementSpec
+	// Placement selects where authority is enforced (jail | advisory | auto).
+	// An empty value asks the backend for its configured default.
+	Placement confinement.Placement
+	// AuthorityMatch is the authority-surface digest the caller is enforcing
+	// (optional). It is folded into the run's authority evidence when jailed.
+	AuthorityMatch string
 }
 
 // ExecResult is the outcome of one command execution.
@@ -87,6 +103,15 @@ type ExecResult struct {
 	Stdout   string
 	Stderr   string
 	Duration time.Duration
+	// Denied reports that a jailed run's failure reads as a syscall denial — the
+	// write never reached disk. The runtime records a denied run as discarded,
+	// Failed. The signal is heuristic (see containment.DeniedExit) and is only
+	// ever set for jailed runs.
+	Denied bool
+	// AuthorityEvidence is the jail monitor's permission-plan digest for a jailed
+	// run (empty when unconfined). It cites which monitor enforced the run and is
+	// the record the runtime persists so enforcement is auditable.
+	AuthorityEvidence string
 }
 
 // Sandbox is the execution substrate for a scope. It owns a workspace and can

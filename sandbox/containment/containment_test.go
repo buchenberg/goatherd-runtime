@@ -1,0 +1,160 @@
+package containment
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// fakeBackend is a containment.Backend double for contract tests.
+type fakeBackend struct {
+	available bool
+	probeErr  error
+	probed    bool
+	launched  bool
+	result    LaunchResult
+}
+
+func (f *fakeBackend) Name() string            { return "fake" }
+func (f *fakeBackend) EnforcementTier() string { return "test" }
+func (f *fakeBackend) Available() (bool, string) {
+	if f.available {
+		return true, "ok"
+	}
+	return false, "unavailable"
+}
+func (f *fakeBackend) ProfileFor([]string, bool) string { return "[]" }
+func (f *fakeBackend) Probe(string, string, []string) error {
+	f.probed = true
+	return f.probeErr
+}
+func (f *fakeBackend) Launch(string, LaunchRequest) (LaunchResult, error) {
+	f.launched = true
+	return f.result, nil
+}
+
+func TestReadOnlyAndPermissiveSpecs(t *testing.T) {
+	ro := ReadOnlySpec()
+	if len(ro.WritableRoots) != 0 || ro.Network.Mode != NetDenyAll {
+		t.Fatalf("ReadOnlySpec = %+v", ro)
+	}
+	p := PermissiveFor("/x")
+	if len(p.WritableRoots) != 1 || p.Network.Mode != NetAllowAll {
+		t.Fatalf("PermissiveFor = %+v", p)
+	}
+}
+
+func TestResolveSpec_BrokerRefuses(t *testing.T) {
+	_, _, err := ResolveSpec(ConfinementSpec{Network: NetworkPolicy{Mode: NetBroker}})
+	if !errors.Is(err, ErrUnsupportedConfinementSpec) {
+		t.Fatalf("want ErrUnsupportedConfinementSpec, got %v", err)
+	}
+}
+
+func TestResolveSpec_CanonicalizesRoots(t *testing.T) {
+	root := t.TempDir()
+	unclean := filepath.Join(root, "a", "..")
+	if err := os.MkdirAll(filepath.Join(root, "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	roots, allow, err := ResolveSpec(ConfinementSpec{
+		WritableRoots: []string{unclean},
+		Network:       NetworkPolicy{Mode: NetAllowAll},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allow {
+		t.Fatal("allow_all must map to allowNetwork=true")
+	}
+	if len(roots) != 1 || roots[0] != Canonical(root) {
+		t.Fatalf("roots = %v, want [%s]", roots, Canonical(root))
+	}
+}
+
+func TestLaunchConfined_ProbesFirst(t *testing.T) {
+	fb := &fakeBackend{available: true, result: LaunchResult{ExitCode: 0}}
+	_, err := LaunchConfined(fb, PermissiveFor(t.TempDir()), LaunchRequest{WorkingRoot: t.TempDir(), Command: []string{"true"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fb.probed || !fb.launched {
+		t.Fatalf("probe must run before launch (probed=%v launched=%v)", fb.probed, fb.launched)
+	}
+}
+
+func TestLaunchConfined_RefusesWhenUnavailable(t *testing.T) {
+	fb := &fakeBackend{available: false}
+	_, err := LaunchConfined(fb, ReadOnlySpec(), LaunchRequest{WorkingRoot: t.TempDir(), Command: []string{"true"}})
+	if !errors.Is(err, ErrJailNotEstablished) {
+		t.Fatalf("want ErrJailNotEstablished, got %v", err)
+	}
+	if fb.probed {
+		t.Fatal("must not probe when the backend is unavailable")
+	}
+}
+
+func TestLaunchConfined_ProbeFailureRefuses(t *testing.T) {
+	fb := &fakeBackend{available: true, probeErr: ErrJailNotEstablished}
+	_, err := LaunchConfined(fb, ReadOnlySpec(), LaunchRequest{WorkingRoot: t.TempDir(), Command: []string{"true"}})
+	if !errors.Is(err, ErrJailNotEstablished) {
+		t.Fatalf("want ErrJailNotEstablished, got %v", err)
+	}
+	if fb.launched {
+		t.Fatal("must not launch when the probe refuses")
+	}
+}
+
+func TestLaunchConfined_NilBackend(t *testing.T) {
+	_, err := LaunchConfined(nil, ReadOnlySpec(), LaunchRequest{Command: []string{"true"}})
+	if !errors.Is(err, ErrJailNotEstablished) {
+		t.Fatalf("want ErrJailNotEstablished, got %v", err)
+	}
+}
+
+func TestCapability_RefusesWithoutBackend(t *testing.T) {
+	cap := Capability{WorkingRoot: t.TempDir(), Isolation: "ground"}
+	if _, err := cap.LaunchConfined(ReadOnlySpec(), LaunchRequest{Command: []string{"true"}}); !errors.Is(err, ErrJailNotEstablished) {
+		t.Fatalf("want ErrJailNotEstablished, got %v", err)
+	}
+}
+
+func TestNegotiation_RefusesWithoutCapability(t *testing.T) {
+	if err := RequireExecutionAuthority(nil); !errors.Is(err, ErrExecutionAuthorityRequired) {
+		t.Fatalf("nil capability: want ErrExecutionAuthorityRequired, got %v", err)
+	}
+	if err := RequireExecutionAuthority(&Capability{}); !errors.Is(err, ErrExecutionAuthorityRequired) {
+		t.Fatalf("backend-less capability: want ErrExecutionAuthorityRequired, got %v", err)
+	}
+	if err := RequireExecutionAuthority(&Capability{Backend: &fakeBackend{available: true}}); err != nil {
+		t.Fatalf("a bound capability must pass the guard, got %v", err)
+	}
+}
+
+func TestDeniedExit_ClassifiesSyscallDenial(t *testing.T) {
+	cases := []struct {
+		name string
+		res  LaunchResult
+		want bool
+	}{
+		{"clean exit", LaunchResult{ExitCode: 0}, false},
+		{"permission denied", LaunchResult{ExitCode: 1, Stderr: "touch: cannot touch '/x': Permission denied"}, true},
+		{"operation not permitted", LaunchResult{ExitCode: 1, Stderr: "ln: Operation not permitted"}, true},
+		{"unrelated failure", LaunchResult{ExitCode: 1, Stderr: "boom"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DeniedExit(tc.res); got != tc.want {
+				t.Fatalf("DeniedExit = %v, want %v", got, tc.want)
+			}
+			err := DenyError(tc.res, "ctx")
+			if tc.want && !errors.Is(err, ErrSandboxDenied) {
+				t.Fatalf("DenyError = %v, want ErrSandboxDenied", err)
+			}
+			if !tc.want && err != nil {
+				t.Fatalf("DenyError = %v, want nil", err)
+			}
+		})
+	}
+}
