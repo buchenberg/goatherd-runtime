@@ -3,11 +3,11 @@
 How the Go runtime reaches functional parity with Python Shepherd's execution
 boundary: confinement (Plan 1), reversible execution (Plan 2), authority policy
 (Plan 3), the second enforcement surface (Plan 4), the container tier (Plan 5),
-and the optional syscall filter (Plan 6).
+and the optional syscall filter (Plan 6) and the host integration (Plan 7).
 
 Each plan follows the same discipline: a parity checklist mapping Python symbols
 to Go targets with a covering test, an explicit scope/non-goals section, and a
-test matrix. Plans 1–5 are written (1–3 implemented; 4, 5 partly/scoped).
+test matrix. Plans 1–5 and 7 are written (1–3 implemented; 4, 5, 7 scoped/partial).
 
 > **Vocabulary — "paddock".** The Go code renames Python Shepherd's `jail` to
 > **`paddock`** (an enclosed livestock area — it fits the shepherd/croft theme;
@@ -30,6 +30,7 @@ test matrix. Plans 1–5 are written (1–3 implemented; 4, 5 partly/scoped).
 | **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | [`04-egress-and-seatbelt.md`](04-egress-and-seatbelt.md) | 🚧 Phases 2–3 (Linux) done; 1 (Seatbelt) planned |
 | **5** | Container-tier parity | overlay changes → typed effects, the `copy` carrier, the `clonefile` carrier | [`05-container-tier.md`](05-container-tier.md) | 📝 scoped |
 | **6** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
+| **7** | yaah integration (Level A) | Landlock write-jail on yaah's local exec path; config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | 📝 scoped |
 
 ## Plan 1 — Linux Landlock containment (done)
 
@@ -136,6 +137,25 @@ object-based paddock. Go can install cBPF via `SECCOMP_SET_MODE_FILTER`, but the
 filter is arch-specific and fiddly; defer until a concrete need (untrusted code
 without containerd) justifies it.
 
+## Plan 7 — yaah integration (Level A)
+
+**Wire the write-jail into the host.** `yaah` runs local commands directly
+(`localWorkspace.Exec` → `exec.CommandContext`, `internal/tools/workspace.go:179`)
+and does **not** depend on the runtime. This plan swaps that one method for
+`containment.LaunchConfined(landlock.Detect(), spec, req)` — a Landlock write-jail
+over the workspace (`WritableRoots = [WorkDir()]`), with no change to the agent
+loop. Everything else (the container `croft` backend) is untouched; a jail-less
+host falls back to today's behavior.
+
+- **Prerequisite (Phase 0):** tag the runtime + `sandbox/landlock` (drop the dev
+  `replace`); verify yaah builds against kernel v0.17.0 (up from v0.16.0).
+- **Config:** `workspace.containment: auto|jail|off` (→ `Placement` `auto`/
+  `paddock`/`advisory`), `workspace.network: allow_all|deny_all|broker`
+  (default `allow_all` — a *write*-jail; egress opt-in).
+- **Mandatory:** `landlock.MaybeRunTrampoline(os.Args)` in `yaah/main.go`.
+- **Level B** (reversible runs) is a later phase. See
+  [`07-yaah-integration.md`](07-yaah-integration.md).
+
 ## Small items
 
 - **Sandbox file IO** — ✅ done: `GitSandbox.ReadFile`/`WriteFile` with
@@ -183,6 +203,7 @@ Plan 1 (landlock, done)
   ├─ Plan 4a (Seatbelt)   Plan 4b (broker)
   └─ Plan 5 (container tier: effects + copy/clonefile carriers)
                               Plan 6 (seccomp, optional)
+Plan 7 (yaah integration) depends on a released runtime (Phase 0) + Plan 4a (macOS)
 ```
 
 ## Decisions & invariants
