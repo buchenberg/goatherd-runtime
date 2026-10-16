@@ -12,13 +12,13 @@
 > `Seal`, `Settle`, merge gate, recovery). This plan is a *composition* layer that
 > joins those primitives to the Plan-1 confined `Exec` — not new substrate.
 >
-> **Status:** Phase 1 (the reversible-run wrap) and Phase 3 (the recorded run
-> operation + evidence persistence) are implemented in
-> [`run/reversible.go`](../../run/reversible.go) and
-> [`fact.go`](../../fact.go) — 11 passing tests. Phase 2 (handler/negotiation
-> seam) and Phase 4 (`authority_merge`, pending the compiler) remain. Merge
-> propagates physically via `Seal` + `SettleSelect`/`SettleApply` — `CommitMerge`
-> refuses isolated children (§9).
+> **Status:** Phases 1 (the reversible-run wrap), 2 (the handler/negotiation
+> seam), and 3 (the recorded run operation + evidence persistence) are
+> implemented in [`run/reversible.go`](../../run/reversible.go) and
+> [`fact.go`](../../fact.go) — 14 passing tests. Phase 4 (`authority_merge`)
+> remains, pending the permission-plan compiler (Plan 3). Merge propagates
+> physically via `Seal` + `SettleSelect`/`SettleApply` — `CommitMerge` refuses
+> isolated children (§9).
 
 ## 1. Objective & Context
 
@@ -201,24 +201,27 @@ The handler runs confined commands through `rc.Capability.LaunchConfined(spec, r
 or `rc.Scope.Sandbox().Exec(ctx, req)`; it never needs to know about forks or
 settlement — that is the wrap's job.
 
-## 7. Phase 2 — The execution-bound handler seam
+## 7. Phase 2 — The execution-bound handler seam (implemented)
 
 Go has no driver protocol; the analogue is a **handler** that structurally
 receives execution authority through `RunContext`, mirroring `prepare_bound`
-receiving the `ExecutionCapability` per call (never stored). The negotiation rule
-maps to:
+receiving the `ExecutionCapability` per call (never stored). As built:
 
-- A handler is *execution-bound* by definition (it receives `RunContext`).
-- `containment.RequireExecutionAuthority` is the version-skew guard: no jail
-  backend for a jail placement ⇒ refuse before dispatch (Plan 1 §16.5).
-- A "pure-data" path (no handler) never receives a `RunContext` — the structural
-  analogue of a driver that doesn't implement `prepare_bound`.
-
-`verify_execution_negotiation` has a Go analogue for **host-supplied handlers**:
-`run.VerifyHandler(h Handler) error` probes that an execution-bound handler
-refuses to run when handed a capability with no backend (never a silent
-in-process fallback). Kept minimal; the driver *binding* machinery is out of
-scope (host integration).
+- `RunContext` carries the scope, the `Capability`, and the resolved
+  `ConfinementSpec`; `RunContext.Exec` is the handler's first-class confined
+  execution path (capability-first, jail-or-refuse via `LaunchConfined`).
+- `containment.RequireExecutionAuthority` (and its method form
+  `Capability.RequireAuthority`) is the version-skew guard: no jail backend for a
+  jail placement ⇒ refuse before dispatch.
+- `run.VerifyHandler(ctx, probe, h)` is the negotiation conformance probe,
+  mirroring `verify_execution_negotiation`: a handler handed a backend-less
+  capability must refuse with `ErrExecutionAuthorityRequired` /
+  `ErrJailNotEstablished`; a handler that returns nil (ran without authority) or
+  refuses with an unrelated error fails conformance. Verified by
+  `TestVerifyHandler_RefusesWithoutCapability`.
+- A "pure-data" path never receives a `RunContext` — the structural analogue of a
+  driver that doesn't implement `prepare_bound`. Driver *binding* remains out of
+  scope (host integration).
 
 ## 8. Phase 3 — Recorded run operation + evidence persistence (implemented)
 
@@ -283,7 +286,7 @@ a jail is exercised). Build the harness on a git worktree sandbox.
 | ✅ | `TestReversible_RecordsEvidence` | jailed run | the record carries the authority-evidence digest |
 | ✅ | `TestReversible_AuthorityMergeDeferred` | `DispositionAuthorityMerge` | refuses with `ErrAuthorityMergeUnsupported` |
 | ✅ | `TestReversible_NonReversibleWithSealRefused` | `NonReversible` + `Seal` | validation error (mirrors `_command_envelope.py:126`) |
-| 🚧 | `TestVerifyHandler_RefusesWithoutCapability` | handler handed a backend-less capability | refuses, never in-process (Phase 2) |
+| ✅ | `TestVerifyHandler_RefusesWithoutCapability` | handler handed a backend-less capability | refuses; a nil return or wrong error fails conformance |
 | 🚧 | `TestReversible_Recovers` | run, restart, `RecoverScopes` | run scope + evidence recoverable from the trace |
 
 ## 11. Parity Comparison: Reversible Execution

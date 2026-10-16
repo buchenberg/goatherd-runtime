@@ -45,6 +45,15 @@ func (c Capability) LaunchConfined(spec ConfinementSpec, req LaunchRequest) (Lau
 	return LaunchConfined(c.Backend, spec, req)
 }
 
+// RequireAuthority is the negotiation guard as a method: it returns
+// ErrExecutionAuthorityRequired when the capability carries no backend. An
+// execution-bound handler calls it (or RequireExecutionAuthority) before doing
+// real work, so a capability-less dispatch refuses rather than running
+// unconfined.
+func (c Capability) RequireAuthority() error {
+	return RequireExecutionAuthority(&c)
+}
+
 // RequireExecutionAuthority is the negotiation guard: a real-execution dispatch
 // that carries no capability refuses with ErrExecutionAuthorityRequired — the
 // fail-closed rule under version skew (a coordinator that does not hand out a

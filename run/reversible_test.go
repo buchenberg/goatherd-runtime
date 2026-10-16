@@ -326,3 +326,52 @@ func TestReversible_RecordsEvidence(t *testing.T) {
 		t.Fatalf("run record must carry the authority-evidence digest: %+v", recs)
 	}
 }
+
+func TestRunContext_ExecRefusesWithoutBackend(t *testing.T) {
+	rc := &RunContext{Capability: containment.Capability{}, Confinement: containment.ReadOnlySpec()}
+	if _, err := rc.Exec(containment.LaunchRequest{Command: []string{"true"}}); !errors.Is(err, containment.ErrJailNotEstablished) {
+		t.Fatalf("want ErrJailNotEstablished, got %v", err)
+	}
+}
+
+func TestRunContext_ExecConfined(t *testing.T) {
+	fake := &fakeBackend{available: true}
+	rc := &RunContext{
+		Capability:  containment.Capability{Backend: fake, WorkingRoot: t.TempDir()},
+		Confinement: containment.ReadOnlySpec(),
+	}
+	res, err := rc.Exec(containment.LaunchRequest{Command: []string{"true"}})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit = %d, want 0", res.ExitCode)
+	}
+}
+
+func TestVerifyHandler_RefusesWithoutCapability(t *testing.T) {
+	mgr := newManager(t)
+	parent, _ := newParent(t, mgr, "run:vh-main")
+	probe := &RunContext{Scope: parent, Capability: containment.Capability{}}
+
+	// A handler that refuses through the guard passes.
+	if err := VerifyHandler(context.Background(), probe, func(_ context.Context, rc *RunContext) (Result, error) {
+		return Result{}, rc.Capability.RequireAuthority()
+	}); err != nil {
+		t.Fatalf("execution-bound handler should pass conformance: %v", err)
+	}
+
+	// A handler that runs without authority fails.
+	if err := VerifyHandler(context.Background(), probe, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, nil
+	}); err == nil {
+		t.Fatal("a handler that ran without authority must fail conformance")
+	}
+
+	// A handler that refuses with the wrong error fails.
+	if err := VerifyHandler(context.Background(), probe, func(_ context.Context, _ *RunContext) (Result, error) {
+		return Result{}, errors.New("unrelated failure")
+	}); err == nil {
+		t.Fatal("a handler refusing with the wrong error must fail conformance")
+	}
+}

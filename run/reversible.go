@@ -84,13 +84,26 @@ type Options struct {
 	MaxDiffLines int
 }
 
-// RunContext is what a Handler receives: the run's scope and the execution
-// capability that proves authority. The handler runs confined commands through
-// the scope's sandbox or the capability, and never needs to know about forks or
-// settlement.
+// RunContext is what a Handler receives: the run's scope, the execution
+// capability that proves authority, and the resolved confinement spec. The
+// handler runs confined commands through RunContext.Exec (capability-first,
+// jail-or-refuse) or the scope's sandbox (sandbox-first), and never needs to
+// know about forks or settlement.
 type RunContext struct {
-	Scope      *shepherd.Scope
-	Capability containment.Capability
+	Scope       *shepherd.Scope
+	Capability  containment.Capability
+	Confinement containment.ConfinementSpec
+}
+
+// Exec runs a command confined by the capability: resolve → profile → probe →
+// launch. It is the handler's first-class execution path and refuses without a
+// jail backend (ErrJailNotEstablished) rather than running unconfined — the
+// structural guarantee that real execution implies authority.
+func (rc *RunContext) Exec(req containment.LaunchRequest) (containment.LaunchResult, error) {
+	if req.WorkingRoot == "" {
+		req.WorkingRoot = rc.Capability.WorkingRoot
+	}
+	return containment.LaunchConfined(rc.Capability.Backend, rc.Confinement, req)
 }
 
 // Result is a handler's outcome: its value, the authority-evidence digest (the
@@ -216,7 +229,7 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 		}
 	}
 
-	result, runErr := handler(ctx, &RunContext{Scope: runScope, Capability: capability})
+	result, runErr := handler(ctx, &RunContext{Scope: runScope, Capability: capability, Confinement: defaultSpec(opts, capability.WorkingRoot)})
 	recordErr := recordRun(ctx, runScope, parent, isolation, disposition, result)
 	if runErr != nil {
 		if !opts.NonReversible {
@@ -269,6 +282,47 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 		}
 	}
 	return out, nil
+}
+
+// defaultSpec resolves the confinement a handler's RunContext carries: the
+// caller's lowering, or a Permissive default over the run's working root.
+func defaultSpec(opts Options, workDir string) containment.ConfinementSpec {
+	if opts.Confinement != nil {
+		return *opts.Confinement
+	}
+	return containment.PermissiveFor(workDir)
+}
+
+// VerifyHandler is the negotiation conformance probe for a host-supplied
+// handler, mirroring verify_execution_negotiation. A handler is execution-bound
+// by receiving a RunContext; conformance means it refuses real execution when
+// handed a capability with no backend, rather than succeeding unconfined.
+//
+// probe is a RunContext the caller supplies (typically a throwaway scope
+// carrying a backend-less capability); it is passed to the handler. A handler
+// that attempts execution through the capability refuses with
+// ErrExecutionAuthorityRequired or ErrJailNotEstablished — VerifyHandler
+// requires exactly that. A handler that returns nil ran without authority and
+// fails. This is a deliberate, opt-in probe for handlers that should be
+// execution-bound; a pure-data path never receives a RunContext at all.
+func VerifyHandler(ctx context.Context, probe *RunContext, h Handler) error {
+	if h == nil {
+		return errors.New("run: VerifyHandler: nil handler")
+	}
+	if probe == nil {
+		return errors.New("run: VerifyHandler: nil probe context")
+	}
+	if err := containment.RequireExecutionAuthority(&probe.Capability); err == nil {
+		return errors.New("run: VerifyHandler: the probe capability must have no backend")
+	}
+	_, err := h(ctx, probe)
+	if err == nil {
+		return errors.New("run: VerifyHandler: handler ran real execution without authority (no refusal)")
+	}
+	if !errors.Is(err, containment.ErrExecutionAuthorityRequired) && !errors.Is(err, containment.ErrJailNotEstablished) {
+		return fmt.Errorf("run: VerifyHandler: handler refused with %v, want ErrExecutionAuthorityRequired or ErrJailNotEstablished", err)
+	}
+	return nil
 }
 
 // workDirOf returns the sandbox's durable address when it is path-addressed
