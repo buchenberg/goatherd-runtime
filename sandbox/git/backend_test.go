@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
 	sbx "github.com/buchenberg/shepherd-runtime-go/sandbox"
 )

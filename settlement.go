@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 	sandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
 	"log/slog"
 	"sync"

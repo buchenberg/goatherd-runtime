@@ -8,7 +8,7 @@ package shepherd
 import (
 	"testing"
 
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 
 	"github.com/buchenberg/shepherd-kernel-go/testkit"
 	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"

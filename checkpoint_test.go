@@ -2,7 +2,7 @@ package shepherd
 
 import (
 	"context"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
 	sandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/git"

@@ -28,7 +28,7 @@ import (
 	"encoding/hex"
 
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 	"math"
 	"strings"
 )

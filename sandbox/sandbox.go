@@ -12,7 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 	"io/fs"
 	"sort"
 	"strings"

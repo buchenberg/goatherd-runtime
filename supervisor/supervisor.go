@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 	shepherd "github.com/buchenberg/shepherd-runtime-go"
 )
 

@@ -11,7 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 	substrate "github.com/buchenberg/shepherd-runtime-go/substrate"
 	"path/filepath"
 	"reflect"

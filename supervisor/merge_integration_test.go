@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 	shepherd "github.com/buchenberg/shepherd-runtime-go"
 	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
 	"github.com/buchenberg/shepherd-runtime-go/internal/rttest"

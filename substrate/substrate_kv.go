@@ -14,7 +14,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 	"strings"
 	"sync"
 )

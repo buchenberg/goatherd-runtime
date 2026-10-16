@@ -22,5 +22,6 @@ kernel behind as the trace store, canonical model, effect bus, and projections.
   and the root package become `github.com/buchenberg/shepherd-runtime-go/...`.
 - `github.com/buchenberg/shepherd-kernel-go/internal/testvectors` becomes the
   kernel's public `github.com/buchenberg/shepherd-kernel-go/testkit`.
-- Imports of `github.com/buchenberg/shepherd-kernel-go/trace` are unchanged —
-  the kernel keeps the trace package at the same import path.
+- Imports of `github.com/buchenberg/shepherd-kernel-go/trace` become
+  `github.com/buchenberg/shepherd-kernel-go` — the kernel's trace package is now
+  the module root (package `trace`).

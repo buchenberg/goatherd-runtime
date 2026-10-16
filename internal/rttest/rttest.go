@@ -10,7 +10,7 @@ import (
 	"context"
 	"testing"
 
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 )
 
 // NewMemStore returns a t.Cleanup-managed in-memory trace store.

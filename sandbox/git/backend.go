@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 	sbx "github.com/buchenberg/shepherd-runtime-go/sandbox"
 )
 

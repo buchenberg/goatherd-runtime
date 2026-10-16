@@ -32,7 +32,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 	"path/filepath"
 	"strings"
 	"testing"

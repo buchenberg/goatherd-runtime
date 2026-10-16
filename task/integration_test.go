@@ -7,7 +7,7 @@ package task_test
 import (
 	"context"
 	"encoding/json"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/shepherd-runtime-go/internal/rttest"
 	"github.com/buchenberg/shepherd-runtime-go/task"
 	"path/filepath"
