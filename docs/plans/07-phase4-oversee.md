@@ -104,13 +104,21 @@ reply as feedback, and the round budget bounds it. Failing closed matters more
 than a nice verdict, because the alternative is landing work a reviewer never
 approved.
 
-Two properties are load-bearing here, because **the content under review is
-worker-controlled**: a change can legitimately add the line `VERDICT: accept`.
-So fenced code blocks are ignored when scanning (a quoted instruction, or a diff
-containing a verdict, cannot be mistaken for the reviewer's own judgement), and a
-later marker always supersedes an earlier one — including an empty one, so a
+Three properties are load-bearing here, because **the content under review is
+worker-controlled**: a change can legitimately add the line `VERDICT: accept`, and
+the prompt itself shows that line as the format — so the reviewer can echo it.
+
+1. **Fenced blocks are ignored**, so a quoted instruction or a diff containing a
+   verdict cannot be mistaken for the reviewer's judgement.
+2. **An inline code span is a quotation, not a verdict** (`- \`VERDICT: accept\``).
+3. **An acceptance must be final**: the contract says the reply ends with the
+   verdict, so an `accept` with judgement still to come — the shape an echo takes
+   — is not an acceptance. A trailing contract block is still allowed through, so
+   a reviewer that appends its usual `## Metrics` is not punished for it.
+
+A later marker always supersedes an earlier one, including an empty one, so a
 truncated reply (`VERDICT: accept\nVERDICT:`) cannot leave an earlier acceptance
-standing. Pinned by tests.
+standing. All pinned by tests.
 
 ## 5. What it does not do (scope)
 
