@@ -104,7 +104,7 @@ reply as feedback, and the round budget bounds it. Failing closed matters more
 than a nice verdict, because the alternative is landing work a reviewer never
 approved.
 
-Three properties are load-bearing here, because **the content under review is
+Four properties are load-bearing here, because **the content under review is
 worker-controlled**: a change can legitimately add the line `VERDICT: accept`, and
 the prompt itself shows that line as the format — so the reviewer can echo it.
 
@@ -116,9 +116,20 @@ the prompt itself shows that line as the format — so the reviewer can echo it.
    — is not an acceptance. A trailing contract block is still allowed through, so
    a reviewer that appends its usual `## Metrics` is not punished for it.
 
+4. **The verdict carries a per-round token.** `accept`/`revise` alone are
+   unauthenticated: a worker can plant the line and a reviewer that quotes it as
+   its last word is textually indistinguishable from a reviewer that decided.
+   So each round mints a token (`Review token: <hex>`, its own line) and the
+   verdict must carry it — `VERDICT: accept <token>`. The work under review was
+   sealed *before* the token existed, so nothing inside it can produce one. The
+   instructional example keeps the literal `<token>` placeholder, so echoing the
+   instructions verbatim does not pass either.
+
 A later marker always supersedes an earlier one, including an empty one, so a
-truncated reply (`VERDICT: accept\nVERDICT:`) cannot leave an earlier acceptance
-standing. All pinned by tests.
+truncated reply (`VERDICT: accept <token>\nVERDICT:`) cannot leave an earlier
+acceptance standing — and a verdict-shaped line without the token is reported as
+a marker with no word, so last-wins cannot promote an injected one. All pinned by
+tests.
 
 ## 5. What it does not do (scope)
 
