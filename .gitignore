@@ -1,0 +1,16 @@
+# Binaries
+/shepherd-runtime-go
+
+# Test binary
+*.test
+
+# Coverage
+*.out
+
+# Go workspace files (local only)
+go.work
+go.work.sum
+
+# OS files
+.DS_Store
+Thumbs.db
