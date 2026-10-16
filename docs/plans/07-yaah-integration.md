@@ -290,6 +290,62 @@ it); the work was moved onto a branch and landed via PR #338.
 4. `internal/doctor` gains a containment check (`landlock.New().Available()`),
    reporting `native-syscall-deny (ABI N)` or "advisory".
 
+#### The writable-root problem — and how Python solves it
+
+A strict jail admits **exactly one writable root** (the worktree). A sub-agent
+that builds writes a **cache outside it** (`$GOCACHE`, `~/.npm`, `$TMPDIR`), so
+those writes would be denied. Python's answer is **not to widen the jail** — the
+v0 lowering admits exactly one root, and `writable_roots` is only ever the
+`ReadWrite` grant roots. Instead it **redirects the environment into that root**
+and scrubs the evidence (`providers.py`, `ClaudeHeadlessProvider`):
+
+> the env redirect — `HOME`/`CLAUDE_CONFIG_DIR`/`TMPDIR` pointed into
+> `<working_path>/.claude-scratch` (the v0 lowering admits exactly one writable
+> root, so housekeeping writes redirect in; the scratch is scrubbed before return
+> so the captured delta stays the agent's intended writes only), auto-updater off
+> (it writes to the install dir: denied).
+
+Four disciplines, adopted as-is:
+
+1. **Redirect, don't widen.** The retained launch passes
+   `TMPDIR`/`HOME`/`XDG_CACHE_HOME`/`GOCACHE`/`npm_config_cache` →
+   `<worktree>/.yaah-scratch/…`, all inside the writable root.
+2. **Scrub before `Seal`.** Remove the scratch before the workspace is sealed, so
+   the proposal's delta is the sub-agent's *intended* writes, not cache noise.
+   (The kernel captures the whole worktree delta; the scrub is what keeps it
+   clean.)
+3. **Warm outside the jail.** `WorktreeBootstrap` already runs *before* the body,
+   unconfined — it is where `go mod download` / `npm ci` populate dependencies
+   that the confined body then only *reads*. Reads are free (Landlock governs
+   writes only), so a shared read-only module cache still works; only *new*
+   downloads need a write.
+4. **Disable what cannot be redirected.** Auto-updaters and anything that writes
+   to a fixed install path are off, as Python turns off `DISABLE_AUTOUPDATER`.
+
+**The trade-off, stated:** redirecting `GOCACHE` means a **cold build cache per
+dispatch**. Two exits: warm it via the bootstrap, or opt in to a narrow
+**"warm cache roots" allowlist** (a shared `GOCACHE`/`GOMODCACHE` as extra
+writable roots). Python refuses the latter deliberately; a build cache is a
+low-sensitivity target and yaah's body is a compiler, not an LLM CLI — so
+**redirect is the default and the allowlist is an explicit opt-in** for repos
+that need fast builds.
+
+#### `/dev` — the allowance that has no narrower form ✅ (runtime PR #4)
+
+Landlock governs writes by the paths a ruleset **covers**, so a confined body
+could not even run `cmd > /dev/null`. Seatbelt already allowed it (every Python
+profile appends `(allow file-write* (subpath "/dev"))`); the Go Landlock backend
+had no equivalent, so the Linux tier silently denied it. Fixed in the runtime
+(`devWriteRoot`).
+
+**The allowance is the whole `/dev` subtree, and cannot be narrower:**
+`landlock_add_rule(LANDLOCK_RULE_PATH_BENEATH)` requires a **directory** — a rule
+on a device *file* is rejected with `EINVAL` (verified: `/dev/null` → EINVAL,
+`/dev/pts` → ok) — and Landlock has **no deny rules**, so `/dev/shm` cannot be
+carved out. That is the same trade-off Seatbelt makes; the alternative is denying
+`/dev/null` outright, which breaks shells and build tools. The consequence is
+documented and pinned by a test.
+
 ### Phase 4 (north star) — `oversee(implement)`
 
 Shepherd's deferred target: one sub-agent (or the orchestrator) supervises
