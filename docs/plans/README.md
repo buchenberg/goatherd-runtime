@@ -2,13 +2,12 @@
 
 How the Go runtime reaches functional parity with Python Shepherd's execution
 boundary: confinement (Plan 1), reversible execution (Plan 2), authority policy
-(Plan 3), the second enforcement surface (Plan 4), and the optional syscall
-filter (Plan 5).
+(Plan 3), the second enforcement surface (Plan 4), the container tier (Plan 5),
+and the optional syscall filter (Plan 6).
 
 Each plan follows the same discipline: a parity checklist mapping Python symbols
 to Go targets with a covering test, an explicit scope/non-goals section, and a
-test matrix. Plans 1–4 are written (1–3 implemented; 4 partly); 5 is scoped here
-and gets its own document when started.
+test matrix. Plans 1–5 are written (1–3 implemented; 4, 5 partly/scoped).
 
 > **Vocabulary — "paddock".** The Go code renames Python Shepherd's `jail` to
 > **`paddock`** (an enclosed livestock area — it fits the shepherd/croft theme;
@@ -29,7 +28,8 @@ and gets its own document when started.
 | **2** | Reversible execution runs | fork-isolated-by-default, capability-after-fork, discard-on-failure, merge/seal, recorded run operation, authority merge | [`02-reversible-runs.md`](02-reversible-runs.md) | ✅ implemented |
 | **3** | Authority declarations & permission-plan compiler | `May[…]`/grant authoring, paddock **+ carrier** monitor compiler, `authority_merge`, evidence persistence | [`03-authority-and-plan-compiler.md`](03-authority-and-plan-compiler.md) | ✅ implemented |
 | **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | [`04-egress-and-seatbelt.md`](04-egress-and-seatbelt.md) | 🚧 Phases 2–3 (Linux) done; 1 (Seatbelt) planned |
-| **5** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
+| **5** | Container-tier parity | overlay changes → typed effects, the `copy` carrier, the `clonefile` carrier | [`05-container-tier.md`](05-container-tier.md) | 📝 scoped |
+| **6** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
 
 ## Plan 1 — Linux Landlock containment (done)
 
@@ -103,7 +103,30 @@ Depends on Plan 2.
 
 Depends on Plan 1 (spec/NetworkPolicy) and Plan 3 (network-axis lowering).
 
-## Plan 5 — Syscall filter (seccomp-bpf)
+## Plan 5 — Container-tier parity
+
+**The last tier.** `croft` (containerd overlayfs) already covers isolation,
+resource limits, network posture, secrets, fork/rollback, and multi-tenancy
+(`croft-broker`). What's missing versus Python is the **effect-extraction tier**
+and the carrier family:
+
+- **5a — Overlay changes → typed effects.** Python's `OverlayEffectExtractor`
+  mines the overlay upper layer into `FileCreate`/`FilePatch`/`FileDelete`
+  (causally linked, D25). Go **rejected the fold model**, and croft's
+  `Changes(ctx, ws)` already classifies — so this is a **mapping**, not a
+  mechanism: `effect.FromChanges([]croft.Change)` → typed records
+  (`shepherd.effect.file.*.v1`), **published live on the `EffectBus` and appended
+  to the trace**, caused by the run/operation id.
+- **5b — `copy` carrier.** The universal, all-platforms `Sandbox` backend
+  (mirrors `_copy_carrier.py`): plain recursive copy + capture/apply/diff/merge.
+- **5c — `clonefile` carrier (macOS).** APFS copy-on-write clone
+  (`_clonefile_carrier.py`), inheriting the copy carrier's lifecycle.
+
+**Non-goals:** remote/cloud providers (`daytona/e2b/k8s/modal/prime` — vendor
+debt; the reference keeps them optional) and the macOS VM-overlay path
+(superseded by `clonefile`). See [`05-container-tier.md`](05-container-tier.md).
+
+## Plan 6 — Syscall filter (seccomp-bpf)
 
 **Signposted, not built.** Python's containment family names "Landlock+seccomp",
 but the reference ships **no** seccomp backend, so this is not a parity gap. A
@@ -146,7 +169,9 @@ without containerd) justifies it.
 | Seatbelt (macOS) | ❌ | Plan 4a |
 | Egress broker | ✅ | Plan 4b (`sandbox/egress`) |
 | Egress pinning (Linux) | ✅ (ahead of ref) | Plan 4c |
-| seccomp | ➖ not a gap | Plan 5 (optional) |
+| seccomp | ➖ not a gap | Plan 6 (optional) |
+| Container effects (overlay → typed) | ❌ | Plan 5a |
+| `copy` / `clonefile` carriers | ❌ | Plan 5b/5c |
 | Container / VM / AppContainer | ➖ | `croft` (container); VM/AppContainer signposted in both |
 
 ## Dependency graph
@@ -155,8 +180,9 @@ without containerd) justifies it.
 Plan 1 (landlock, done)
   ├─ Plan 2 (reversible runs) ── Plan 3 (authority + plan compiler)
   │                                   └─ Plan 4c (egress pinning / network lowering)
-  └─ Plan 4a (Seatbelt)   Plan 4b (broker)
-                              Plan 5 (seccomp, optional)
+  ├─ Plan 4a (Seatbelt)   Plan 4b (broker)
+  └─ Plan 5 (container tier: effects + copy/clonefile carriers)
+                              Plan 6 (seccomp, optional)
 ```
 
 ## Decisions & invariants
