@@ -28,7 +28,7 @@ their own documents when started.
 | **1** | Linux Landlock containment | paddock, contract, probe, may=/grants lowering, placement, evidence, denial classification | [`01-landlock-containment.md`](01-landlock-containment.md) | ✅ implemented |
 | **2** | Reversible execution runs | fork-isolated-by-default, capability-after-fork, discard-on-failure, merge/seal, recorded run operation, authority merge | [`02-reversible-runs.md`](02-reversible-runs.md) | ✅ implemented |
 | **3** | Authority declarations & permission-plan compiler | `May[…]`/grant authoring, paddock **+ carrier** monitor compiler, `authority_merge`, evidence persistence | [`03-authority-and-plan-compiler.md`](03-authority-and-plan-compiler.md) | ✅ implemented |
-| **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | — | 📝 scoped |
+| **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | [`04-egress-and-seatbelt.md`](04-egress-and-seatbelt.md) | 🚧 Phase 2 (broker) done; 1, 3 planned |
 | **5** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
 
 ## Plan 1 — Linux Landlock containment (done)
@@ -141,7 +141,7 @@ without containerd) justifies it.
 | ExecutionBoundDriver / negotiation | ✅ | Plan 2 (adapted) |
 | Sandbox file IO | 🟡 | small item |
 | Seatbelt (macOS) | ❌ | Plan 4a |
-| Egress broker (enforcement) | ❌ | Plan 4b |
+| Egress broker | ✅ | Plan 4b (`sandbox/egress`) |
 | Egress pinning (Linux) | ❌ (ahead of ref) | Plan 4c |
 | seccomp | ➖ not a gap | Plan 5 (optional) |
 | Container / VM / AppContainer | ➖ | `croft` (container); VM/AppContainer signposted in both |
