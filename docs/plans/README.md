@@ -161,10 +161,10 @@ confiner to the one retained launch.
 - **Phase 1:** ✅ done — the confinement seam (PR #337): the trampoline hook,
   a confiner on `localWorkspace`, and the sub-agent workdir lane attaching it
   under the new `agents.subagent.containment` (default off — no behavior flip).
-- **Phase 2 (the spine):** every sub-agent dispatch returns a **proposal**
-  (kernel `ForkIsolated` + `Seal` + `Settle*`, generalized from the review
-  session); a new `proposal` tool settles it; `agents.subagent.mode:
-  retained|shared` (default `retained`). Concrete design:
+- **Phase 2 (the spine):** ✅ done (PR #338) — every sub-agent dispatch returns
+  a **proposal** (kernel `ForkIsolated` + `Seal` + `Settle*`); a new `proposal`
+  tool settles it (`select`/`apply`/`release`/`discard`); `agents.subagent.mode:
+  retained|shared` (default `retained`). Design:
   [`07-phase2-retention-spine.md`](07-phase2-retention-spine.md).
 - **Phase 3:** confinement on the unified retained path;
   `agents.subagent.placement: auto|jail|advisory` (`jail` fails closed),

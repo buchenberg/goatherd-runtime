@@ -251,26 +251,31 @@ its worktree (`$GOCACHE`, `npm`) would be denied — which is why this lands off
 default, and why the writable-root set is a Phase-3 decision when the default
 flips to `auto`.
 
-### Phase 2 — The retention spine (the parity move)
+### Phase 2 — The retention spine ✅ done (the parity move)
 
-> **Concrete design:** [`07-phase2-retention-spine.md`](07-phase2-retention-spine.md)
-> — the kernel primitive, the `spawn_subagent` → proposal fold, and the new
-> `proposal` settlement tool.
+> **Concrete design:** [`07-phase2-retention-spine.md`](07-phase2-retention-spine.md).
 
-Make the retained run the default for **all** sub-agents; `spawn_subagent`
-returns a **proposal** instead of mutating the host.
+The retained run is now the **default** unit of sub-agent work (yaah PR #338):
 
-1. Route every non-container dispatch through the retained path: fork-isolated
-   bound world (worktree) → body → **seal** a retained output → return the
-   proposal.
-2. `spawn_subagent` reports "what I changed" as a proposal the orchestrator
-   settles (`choose`/`select`/`apply`/`discard`); `supervised_task` stays the
-   supervised spelling of the same primitive.
-3. Config `agents.subagent.mode: retained | shared` (default **`retained`**;
-   `shared` preserves the terminal-bench baseline during migration).
-4. **Acceptance:** the orchestrator loop is unchanged, and yaah's own harness
-   (`docs/shepherd-benchmark.md`) still passes. A retained run that is never
-   settled leaves the host tree untouched.
+1. ✅ `spawn_subagent` (retained mode) runs each sub-agent in an **isolated
+   worktree** — its bound world — seeded at the dispatch basis, and **seals** its
+   delta into a retained output, returned as a
+   `proposal {proposal_id, result, diff, files, next}`.
+2. ✅ A new **`proposal` tool** settles one proposal exactly once — `select`
+   (fast-forward), `apply` (three-way, path-disjoint), `release`, `discard`,
+   plus `list`/`show` — mirroring Shepherd's `run select | apply | release |
+   discard`. `supervised_task` remains the interactive spelling of the same
+   primitive.
+3. ✅ `agents.subagent.mode: retained | shared` (default **`retained`**;
+   `shared` is the migration/benchmark opt-out). Retained needs tracing + a root
+   scope, and is local-mode only (the container is the substrate otherwise).
+4. ✅ **Acceptance:** the host tree is untouched until settlement (pinned by
+   `TestRetained_HostUntouchedUntilSettle`; `select` lands it, `discard`/`release`
+   do not). Retained-mode prompt guidance tells the orchestrator to read and
+   settle. Green on ubuntu/macos/windows.
+
+The naive first draft committed to `main` by mistake (branch protection caught
+it); the work was moved onto a branch and landed via PR #338.
 
 ### Phase 3 — Confinement on the unified retained path
 
