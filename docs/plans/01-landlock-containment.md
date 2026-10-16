@@ -98,32 +98,35 @@ scope" row) must be updated so the fence reflects reality.
 Each row is a symbol that must exist in Go for parity; the test column names the
 conformance test that proves it. This is the objective definition of "done."
 
-| # | Python symbol | Go symbol (target) | Test |
-|---|---|---|---|
-| 1 | `ContainmentBackend` | `containment.Backend` (interface) | `TestBackend_ProtocolConformant` |
-| 2 | `SandboxDenied` | `containment.ErrSandboxDenied` | `TestLandlock_DeniedClassified` |
-| 3 | `JailNotEstablished` | `containment.ErrJailNotEstablished` | `TestLandlock_ProbeRefusesNonJailing` |
-| 4 | `landlock_abi` | `landlock.ABI()` | `TestLandlock_ABIDetection` |
-| 5 | `_WRITE_ACCESS` (v1 mask) | `landlock.WriteAccessMask` const | `TestLandlock_MaskIsV1Compatible` |
-| 6 | `landlock_confine` | `landlock.Confine(roots)` | `TestLandlock_ConfineDeniesOutside` |
-| 7 | `_run_confined` (sentinel) | `landlock.MaybeRunTrampoline(os.Args)` | `TestLandlock_TrampolineRoundTrip` |
-| 8 | `profile_for` | `(*Landlock).ProfileFor(roots, allowNet)` | `TestLandlock_ProfileForParity` |
-| 9 | `probe` (exit-code aware) | `(*Landlock).Probe(profile, wd, roots)` | `TestLandlock_Probe*` (4 cases) |
-| 10 | `launch` | `(*Landlock).Launch(profile, wd, cmd, env)` | `TestLandlock_Launch*` |
-| 11 | `ConfinementSpec` | `containment.ConfinementSpec` | `TestConfinementSpec_ReadOnlyPermissive` |
-| 12 | `NetworkPolicy` / `NetMode` | `containment.NetworkPolicy` / `NetMode` | `TestResolveSpec_BrokerRefuses` |
-| 13 | `_resolve_spec` | `containment.ResolveSpec` | `TestResolveSpec_CanonicalizesRoots` |
-| 14 | `launch_confined` | `containment.LaunchConfined` | `TestLaunchConfined_ProbesFirst` |
-| 15 | `detect_containment_backend` | `containment.Detect()` | `TestDetect_NoneOnJailLessHost` |
-| 16 | `resolve_may` / `MayResolution` | `confinement.ResolveMay` / `MayResolution` | `TestResolveMay_DefaultPermissive` |
-| 17 | `lower_may_to_confinement` | `confinement.LowerMay` | `TestLowerMay_ReadOnlyPermissive` |
-| 18 | `UnsupportedMayProfileError` | `confinement.ErrUnsupportedMayProfile` | `TestLowerMay_RefusesUnknown` |
-| 19 | `BindingRootGrant` + `lower_grants_to_confinement` | `confinement.BindingRootGrant` / `LowerGrants` | `TestLowerGrants_ReadOnlyContributesNothing` |
-| 20 | `validate_disjoint_roots` + alias/nesting guard | `confinement.ValidateDisjointRoots` | `TestDisjoint_{Nesting,Alias,Hardlink}Rejected` |
-| 21 | `OverlappingBoundRootsError` | `confinement.ErrOverlappingBoundRoots` | (above) |
-| 22 | `PermissionPlan` + `JAIL_MONITOR` digest | `confinement.PermissionPlan` | `TestPermissionPlan_DigestStable` |
-| 23 | placement `jail`/`advisory`/`auto` | `confinement.Placement` | `TestPlacement_AutoResolves` |
-| 24 | `ExecutionAuthorityRequired` | `containment.ErrExecutionAuthorityRequired` | `TestNegotiation_RefusesWithoutCapability` |
+Each row is a symbol that must exist in Go for parity; the test column names the
+conformance test that proves it. This is the objective definition of "done."
+
+| # | Python symbol | Go symbol (as built) | Test | Done |
+|---|---|---|---|---|
+| 1 | `ContainmentBackend` | `containment.Backend` (interface) | exercised by every backend test (`fakeBackend`, `landlock`) | ✅ |
+| 2 | `SandboxDenied` | `containment.ErrSandboxDenied` (+ `DeniedExit`/`DenyError`) | `TestDeniedExit_ClassifiesSyscallDenial`, `TestLandlock_DeniedClassified` | ✅ |
+| 3 | `JailNotEstablished` | `containment.ErrJailNotEstablished` | `TestLandlock_ProbeCatchesMisloweredWritable`, `TestLaunchConfined_*` | ✅ |
+| 4 | `landlock_abi` | `landlock.ABI()` | `TestLandlock_ABIDetection` | ✅ |
+| 5 | `_WRITE_ACCESS` (v1 mask) | `landlock.WriteAccessMask` | `TestLandlock_MaskIsV1Compatible` | ✅ |
+| 6 | `landlock_confine` | `landlock.Confine(roots)` | `TestLandlock_ConfineDeniesOutside` | ✅ |
+| 7 | `_run_confined` (sentinel) | `landlock.MaybeRunTrampoline` | `TestLandlock_TrampolineDispatch` | ✅ |
+| 8 | `profile_for` | `(*landlock.Backend).ProfileFor` | `TestLandlock_ProfileForParity` | ✅ |
+| 9 | `probe` (exit-code aware) | `(*landlock.Backend).Probe` | `TestLandlock_ProbePassesForConformant`, `TestLandlock_ProbeCatchesMisloweredWritable`, `TestLandlock_PerBindingDenyClosed` | ✅ |
+| 10 | `launch` | `(*landlock.Backend).Launch` | `TestLandlock_ConfineDeniesOutside`, `TestLaunchConfined_ProbesFirst` | ✅ |
+| 11 | `ConfinementSpec` | `containment.ConfinementSpec` | `TestReadOnlyAndPermissiveSpecs` | ✅ |
+| 12 | `NetworkPolicy` / `NetMode` | `containment.NetworkPolicy` / `NetMode` | `TestResolveSpec_BrokerRefuses` | ✅ |
+| 13 | `_resolve_spec` | `containment.ResolveSpec` | `TestResolveSpec_CanonicalizesRoots` | ✅ |
+| 14 | `launch_confined` | `containment.LaunchConfined` | `TestLaunchConfined_ProbesFirst` | ✅ |
+| 15 | `detect_containment_backend` | `landlock.Detect` (relocated, §16.2 #3) | `TestDetect_MatchesAvailability` | ✅ |
+| 16 | `resolve_may` / `MayResolution` | `confinement.ResolveMay` / `MayResolution` | `TestResolveMay_DefaultPermissive` | ✅ |
+| 17 | `lower_may_to_confinement` | `confinement.LowerMay` | `TestLowerMay_ReadOnlyPermissive` | ✅ |
+| 18 | `UnsupportedMayProfileError` | `confinement.ErrUnsupportedMayProfile` | `TestLowerMay_RefusesUnknown` | ✅ |
+| 19 | `BindingRootGrant` + `lower_grants_to_confinement` | `confinement.BindingRootGrant` / `LowerGrants` | `TestLowerGrants_ReadOnlyContributesNothing` | ✅ |
+| 20 | `validate_disjoint_roots` + alias/nesting guard | `confinement.ValidateDisjointRoots` | `TestValidateDisjointRoots_NestingRejected`, `_AliasRejected`, `_UnicodeAliasRejected` | ✅ |
+| 21 | `OverlappingBoundRootsError` | `confinement.ErrOverlappingBoundRoots` | (row 20) | ✅ |
+| 22 | `PermissionPlan` + `JAIL_MONITOR` digest | `confinement.PermissionPlan` / `Evidence` | `TestPermissionPlan_DigestStable` | ✅ |
+| 23 | placement `jail`/`advisory`/`auto` | `confinement.Placement` | `TestPlacement_AutoResolves` | ✅ |
+| 24 | `ExecutionAuthorityRequired` | `containment.ErrExecutionAuthorityRequired` | `TestNegotiation_RefusesWithoutCapability` | ✅ |
 
 ## 5. Architecture
 
@@ -553,35 +556,43 @@ means the runtime's own test binaries and any in-module example; a host binary
 ## 11. Phase 6 — Test & conformance matrix
 
 Mirrors the Python container tests
-(`tests/container/test_landlock_containment.py`) and adds the layers the original
-draft had no tests for. Build tag `//go:build linux`; several cases require the
-privileged container image (the default seccomp profile blocks syscalls 444-446
-— run via the runtime's container target).
+(`tests/container/test_landlock_containment.py`) and adds the layers above it.
+Build tag `//go:build linux`; several cases are container-gated (the default
+seccomp profile blocks syscalls 444-446). All rows are implemented and pass
+against the development host (Landlock ABI 11).
 
-| Test | Precondition | Action | Expected |
-|---|---|---|---|
-| `TestBackend_ProtocolConformant` | Linux | `Landlock` satisfies `containment.Backend` | name/tier/available OK |
-| `TestLandlock_ABIDetection` | any Linux | `ABI()` | ≥1; clean `ErrUnsupportedKernel` on ENOSYS; EPERM distinguished |
-| `TestLandlock_MaskIsV1Compatible` | any Linux | inspect `WriteAccessMask` | excludes REFER/TRUNCATE/IOCTL_DEV; includes bits 1,4,5,6-12 |
-| `TestLandlock_ProfileForParity` | Linux | `ProfileFor` on 0/1/N roots | byte-identical JSON to Python's |
-| `TestLandlock_ConfineDeniesOutside` | privileged | confined write in/out of root | in OK; out EACCES, no file |
-| `TestLandlock_ReadOnlyDeniesEverywhere` | privileged | `ProfileFor(nil)` | all writes denied |
-| `TestLandlock_PerBindingDenyClosed` | privileged | one RW root + ungranted sibling | RW OK; sibling & unbound denied |
-| `TestLandlock_ProbePassesForConformant` | privileged | probe Permissive + ReadOnly | no error |
-| `TestLandlock_ProbeRefusesNonJailing` | privileged | probe a broken/no-jail profile | `ErrJailNotEstablished` |
-| `TestLandlock_ProbeCatchesMisloweredWritable` | privileged | ReadOnly run handed a writable profile | `ErrJailNotEstablished` (deny-closed canary) |
-| `TestLandlock_TrampolineRoundTrip` | Linux | `MaybeRunTrampoline` sentinel | decodes, confines, execs; rc 3 on confine failure |
-| `TestLaunchConfined_ProbesFirst` | privileged | `LaunchConfined` with non-jailing profile | refuses before running the body |
-| `TestResolveSpec_BrokerRefuses` | any | `ResolveSpec(NetBroker)` | `ErrUnsupportedConfinementSpec` |
-| `TestResolveSpec_CanonicalizesRoots` | any | roots with `..`/symlinks | canonicalized |
-| `TestResolveMay_DefaultPermissive` | any | `ResolveMay(nil)` | resolved Permissive, source `defaulted` |
-| `TestLowerMay_ReadOnlyPermissive` / `_RefusesUnknown` | any | lowering | correct spec / `ErrUnsupportedMayProfile` |
-| `TestLowerGrants_ReadOnlyContributesNothing` | any | mixed grants | only RW roots writable |
-| `TestDisjoint_{Nesting,Alias,Hardlink}Rejected` | any | nested/aliased/hardlinked roots | `ErrOverlappingBoundRoots` |
-| `TestPermissionPlan_DigestStable` | any | plan digest | stable + jail monitor named |
-| `TestPlacement_AutoResolves` | Linux | `auto` with/without backend | jail / advisory |
-| `TestGitSandbox_CapabilitiesHonest` | any | opt-in constructors | `ContainContained` iff jail-capable |
-| `TestNegotiation_RefusesWithoutCapability` | any | exec without capability | `ErrExecutionAuthorityRequired` before body |
+| Done | Test | Precondition | Action | Expected |
+|---|---|---|---|---|
+| ✅ | (interface conformity) | Linux | `fakeBackend` + `landlock` satisfy `containment.Backend` | compiles against the interface; name/tier/available OK |
+| ✅ | `TestLandlock_ABIDetection` | any Linux | `ABI()` | ≥1; clean `ErrUnsupportedKernel` on ENOSYS; EPERM distinguished |
+| ✅ | `TestLandlock_MaskIsV1Compatible` | any Linux | inspect `WriteAccessMask` | excludes bits 0,2,3,13,14,15; includes 1,4,5,6-12 |
+| ✅ | `TestLandlock_ProfileForParity` | Linux | `ProfileFor` on 0/1/N roots | decoded root array matches (profile is backend-private; §16.2 #7) |
+| ✅ | `TestLandlock_ConfineDeniesOutside` | privileged | confined write in/out of root | in OK; out denied, no file |
+| ✅ | `TestLandlock_ReadOnlyDeniesEverywhere` | privileged | `ProfileFor(nil)` | all writes denied |
+| ✅ | `TestLandlock_PerBindingDenyClosed` | privileged | one RW root + ungranted sibling | RW OK; sibling & unbound denied |
+| ✅ | `TestLandlock_ProbePassesForConformant` | privileged | probe Permissive + ReadOnly | no error |
+| ✅ | `TestLandlock_ProbeCatchesMisloweredWritable` | privileged | ReadOnly run handed a writable profile | `ErrJailNotEstablished` (deny-closed canary) |
+| ✅ | `TestLandlock_TrampolineDispatch` | Linux | `MaybeRunTrampoline` sentinel | sentinel handled; rc 3 on missing spec |
+| ✅ | `TestLaunchConfined_ProbesFirst` | privileged | `LaunchConfined` on a live jail | probes then launches; write lands |
+| ✅ | `TestLandlock_DeniedClassified` | privileged | confined write outside the root | `DeniedExit` true from stderr |
+| ✅ | `TestIntegration_GitSandboxJailExec` | privileged | GitSandbox → LaunchConfined → kernel | in-repo write lands; out-of-repo denied + classified |
+| ✅ | `TestResolveSpec_BrokerRefuses` | any | `ResolveSpec(NetBroker)` | `ErrUnsupportedConfinementSpec` |
+| ✅ | `TestResolveSpec_CanonicalizesRoots` | any | roots with `..`/symlinks | canonicalized |
+| ✅ | `TestResolveMay_DefaultPermissive` | any | `ResolveMay("")` | resolved Permissive, source `defaulted` |
+| ✅ | `TestLowerMay_ReadOnlyPermissive` / `_RefusesUnknown` | any | lowering | correct spec / `ErrUnsupportedMayProfile` |
+| ✅ | `TestLowerGrants_ReadOnlyContributesNothing` | any | mixed grants | only RW roots writable |
+| ✅ | `TestValidateDisjointRoots_{Nesting,Alias,UnicodeAlias}Rejected` | any | nested/aliased roots | `ErrOverlappingBoundRoots` |
+| ✅ | `TestPermissionPlan_DigestStable` | any | plan digest | stable + jail monitor named |
+| ✅ | `TestPlacement_AutoResolves` | any | `auto` with/without backend | jail / advisory |
+| ✅ | `TestGitSandbox_CapabilitiesHonest` | any | opt-in constructors | `ContainContained` iff jail-capable |
+| ✅ | `TestGitSandbox_ExecMayLowersAndJails` | any | `ExecMay` over a fake backend | lowers + jails; unknown profile refuses |
+| ✅ | `TestGitSandbox_ExecRecordsAuthorityEvidence` | any | jailed vs advisory run | evidence on jailed; empty on advisory |
+| ✅ | `TestNegotiation_RefusesWithoutCapability` | any | exec without capability | `ErrExecutionAuthorityRequired` before body |
+
+> **Note.** Python's Seatbelt test `..._probe_raises_when_not_jailed` has no
+> Landlock analogue: a Landlock profile is always a ruleset (§8), so a
+> "non-jailing" profile cannot be constructed. The refusal coverage is the
+> mis-lowered-writable canary instead.
 
 ## 12. Parity Comparison: Go Port vs. Python Shepherd
 

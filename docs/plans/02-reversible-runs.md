@@ -86,20 +86,20 @@ recorded-operation boundary + evidence persistence, the dispositions
 
 ## 4. Parity Map (completion checklist)
 
-| # | Python symbol | Go target | Test |
-|---|---|---|---|
-| 1 | `owner.fork(..., ForkHints(isolated=True))` | `run.Reversible` → `ForkIsolated` | `TestReversible_ForkIsolated` |
-| 2 | non-isolated branch (`non_reversible_run`) | `Options.NonReversible` → run on parent, `isolation="ground"` | `TestReversible_NonReversibleOptOut` |
-| 3 | capability minted after fork | `RunContext.Capability` constructed post-fork | `TestReversible_CapabilityAfterFork` |
-| 4 | `require real-execution authority` | `containment.RequireExecutionAuthority` | `TestReversible_RefusesWithoutBackend` |
-| 5 | `prepare_bound` dispatch | `Handler func(ctx, *RunContext) (Result, error)` | `TestReversible_HandlerRunsConfined` |
-| 6 | discard on failure | `mgr.Discard(runScope.ID())` on handler error | `TestReversible_DiscardOnFailure` |
-| 7 | `owner.merge(run_scope, scope)` (default disposition) | isolated: `mgr.Seal` + `SettleSelect` (fallback `SettleApply`) | `TestReversible_MergeDefault` |
-| 8 | `success_disposition == "seal"` | `Options.Disposition = DispositionSeal` → `mgr.Seal` | `TestReversible_SealDisposition` |
-| 9 | `runtime_operation_boundary` | `run` records a run operation (append) | `TestReversible_RecordsRunOperation` |
-| 10 | authority digest recorded | evidence (`confinement.Evidence`) persisted in the run record | `TestReversible_RecordsEvidence` |
-| 11 | `verify_execution_negotiation` under skew | `run` refuses without a capability backend | (row 4) |
-| 12 | `success_disposition == "authority_merge"` | `DispositionAuthorityMerge` — **refuses until Plan 3** | `TestReversible_AuthorityMergeDeferred` |
+| # | Python symbol | Go target | Test | Done |
+|---|---|---|---|---|
+| 1 | `owner.fork(..., ForkHints(isolated=True))` | `run.Reversible` → `ForkIsolated` | `TestReversible_MergeDefault` (asserts isolation) | ✅ |
+| 2 | non-isolated branch (`non_reversible_run`) | `Options.NonReversible` → run on parent, `isolation="ground"` | `TestReversible_NonReversibleOptOut` | ✅ |
+| 3 | capability minted after fork | `RunContext.Capability` constructed post-fork | `TestReversible_MergeDefault` (capability isolation observed in handler) | ✅ |
+| 4 | `require real-execution authority` | `containment.RequireExecutionAuthority` | `TestReversible_RefusesWithoutBackend` | ✅ |
+| 5 | `prepare_bound` dispatch | `Handler func(ctx, *RunContext) (Result, error)` | `TestReversible_HandlerRunsConfined` | ✅ |
+| 6 | discard on failure | `mgr.Discard(runScope.ID())` on handler error | `TestReversible_DiscardOnFailure` | ✅ |
+| 7 | `owner.merge(run_scope, scope)` (default disposition) | isolated: `mgr.Seal` + `SettleSelect` (fallback `SettleApply`) | `TestReversible_MergeDefault` | ✅ |
+| 8 | `success_disposition == "seal"` | `Options.Disposition = DispositionSeal` → `mgr.Seal` | `TestReversible_SealDisposition` | ✅ |
+| 9 | `runtime_operation_boundary` | `run` records `shepherd.run.executed.v1` via `(*Scope).AppendFact` | `TestReversible_RecordsRunOperation` | ✅ |
+| 10 | authority digest recorded | evidence (`confinement.Evidence`) persisted in the run record | `TestReversible_RecordsEvidence` | ✅ |
+| 11 | `verify_execution_negotiation` under skew | `run` refuses without a capability backend | `TestReversible_RefusesWithoutBackend` | ✅ (shape) |
+| 12 | `success_disposition == "authority_merge"` | `DispositionAuthorityMerge` — refuses until Plan 3 | `TestReversible_AuthorityMergeDeferred` | 🚧 deferred |
 
 ## 5. Architecture
 
@@ -269,23 +269,22 @@ trace.TrustedAppendContext, trace.AppendBatch{...})` returning an
 Mirrors the Python PD2 behaviours; runs against the real runtime (+ Landlock where
 a jail is exercised). Build the harness on a git worktree sandbox.
 
-| Test | Action | Expected |
-|---|---|---|
-| `TestReversible_ForkIsolated` | reversible run on a repo | child scope created, `Isolation=="isolated"`, parent's tree untouched |
-| `TestReversible_NonReversibleOptOut` | `NonReversible: true` | runs on parent scope, `Isolation=="ground"`, no fork record |
-| `TestReversible_CapabilityAfterFork` | inspect `RunContext.Capability` | backend bound; factory called only after fork |
-| `TestReversible_RefusesWithoutBackend` | jail placement, nil backend | `ErrExecutionAuthorityRequired` / `ErrJailNotEstablished`; **no scope allocated** |
-| `TestReversible_HandlerRunsConfined` | handler writes in worktree | write lands in child; `ExecResult.AuthorityEvidence` non-empty |
-| `TestReversible_DiscardOnFailure` | handler returns error | `mgr.Discard` called; parent unchanged; worktree destroyed |
-| `TestReversible_MergeDefault` | handler succeeds | child merged into parent; changes land |
-| `TestReversible_MergeDeniedByReviewer` | rejecting `MergeReviewer` | `*SupervisorDeniedError`; parent untouched |
-| `TestReversible_SealDisposition` | `DispositionSeal` | `Outcome.Output` sealed; `Settle(SettleSelect)`/`SettleApply` integrate it |
-| `TestReversible_RecordsRunOperation` | any run | a trace record carries isolation/disposition/exit |
-| `TestReversible_RecordsEvidence` | jailed run | the record carries the permission-plan digest |
-| `TestReversible_AuthorityMergeDeferred` | `DispositionAuthorityMerge` | refuses with `ErrAuthorityMergeUnsupported` |
-| `TestReversible_NonReversibleWithSealRefused` | `NonReversible` + `Seal` | validation error (mirrors `_command_envelope.py:126`) |
-| `TestVerifyHandler_RefusesWithoutCapability` | handler handed a backend-less capability | refuses, never in-process |
-| `TestReversible_Recovers` | run, restart, `RecoverScopes` | run scope + evidence recoverable from the trace |
+| Done | Test | Action | Expected |
+|---|---|---|---|
+| ✅ | `TestReversible_MergeDefault` | reversible run on a repo | child scope, `Isolation=="isolated"`, parent's tree untouched, then merged |
+| ✅ | `TestReversible_NonReversibleOptOut` | `NonReversible: true` | runs on parent scope, `Isolation=="ground"`, write lands directly |
+| ✅ | (capability-after-fork) | inspect `RunContext.Capability` in the handler | capability carries `Isolation=="isolated"` (asserted in `MergeDefault`) |
+| ✅ | `TestReversible_RefusesWithoutBackend` | jail placement, nil backend | `ErrJailNotEstablished`; **no scope allocated** |
+| ✅ | `TestReversible_HandlerRunsConfined` | handler runs a jailed command | jailed run; `Result.Evidence` non-empty |
+| ✅ | `TestReversible_DiscardOnFailure` | handler returns error | `mgr.Discard`; parent unchanged |
+| ✅ | `TestReversible_MergeDeniedByReviewer` | rejecting `MergeReviewer` | `*SupervisorDeniedError`; parent untouched |
+| ✅ | `TestReversible_SealDisposition` | `DispositionSeal` | `Outcome.Output` sealed; caller `Settle(SettleSelect)` integrates it |
+| ✅ | `TestReversible_RecordsRunOperation` | any run | one `shepherd.run.executed.v1` record carries isolation/disposition/exit |
+| ✅ | `TestReversible_RecordsEvidence` | jailed run | the record carries the authority-evidence digest |
+| ✅ | `TestReversible_AuthorityMergeDeferred` | `DispositionAuthorityMerge` | refuses with `ErrAuthorityMergeUnsupported` |
+| ✅ | `TestReversible_NonReversibleWithSealRefused` | `NonReversible` + `Seal` | validation error (mirrors `_command_envelope.py:126`) |
+| 🚧 | `TestVerifyHandler_RefusesWithoutCapability` | handler handed a backend-less capability | refuses, never in-process (Phase 2) |
+| 🚧 | `TestReversible_Recovers` | run, restart, `RecoverScopes` | run scope + evidence recoverable from the trace |
 
 ## 11. Parity Comparison: Reversible Execution
 
@@ -325,18 +324,16 @@ first) → Phase 3 (recorded operation + evidence) → Phase 5 (tests throughout
 - *Heuristic denial (Plan 1 §16.4)* → treat a denied run as failed for
   disposition (discard), unless the caller opts into keeping failed output.
 
-## 13. Open Questions / Decisions
+## 13. Decisions (resolved by the implementation)
 
-1. **Package**: `run` (proposed) vs methods on the root `shepherd` package. The
-   wrap is orchestration; a `run` package keeps the hub lean. *Recommend `run`.*
-2. **Recorded-operation shape**: reuse a runtime fact record vs a new typed
-   record. *Recommend reuse first; add a typed record only if the fidelity
-   demands it.*
-3. **`authority_merge`**: define the signature now and refuse, or omit until
-   Plan 3. *Recommend define-and-refuse so callers compile.*
-4. **Evidence carriage**: on `ExecResult` (Plan 1) already; also on the run
-   operation record (this plan). *Recommend both — the result is the seam, the
-   record is the durable evidence.*
-5. **Handler granularity**: one confined command per wrap vs a multi-command
-   handler. *Recommend a handler may issue several confined calls; the wrap owns
-   the transaction, not the command.*
+1. **Package** — ✅ **`run`** (`github.com/buchenberg/shepherd-runtime-go/run`).
+   Keeps the root hub lean; the wrap is orchestration.
+2. **Recorded-operation shape** — ✅ **runtime-level record, no kernel change**:
+   `shepherd.run.executed.v1` appended via `(*Scope).AppendFact` (schema refs are
+   validated only for non-emptiness).
+3. **`authority_merge`** — ✅ **define-and-refuse**:
+   `DispositionAuthorityMerge` returns `ErrAuthorityMergeUnsupported` until Plan 3.
+4. **Evidence carriage** — ✅ **both**: on `ExecResult` (Plan 1, the seam) and in
+   the run record (Plan 2, the durable evidence).
+5. **Handler granularity** — ✅ **multi-command handler**: a handler may issue
+   several confined calls; the wrap owns the transaction, not the command.
