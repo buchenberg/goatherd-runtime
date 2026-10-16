@@ -3,11 +3,11 @@
 How the Go runtime reaches functional parity with Python Shepherd's execution
 boundary: confinement (Plan 1), reversible execution (Plan 2), authority policy
 (Plan 3), the second enforcement surface (Plan 4), the container tier (Plan 5),
-and the optional syscall filter (Plan 6).
+and the optional syscall filter (Plan 6) and the host integration (Plan 7).
 
 Each plan follows the same discipline: a parity checklist mapping Python symbols
 to Go targets with a covering test, an explicit scope/non-goals section, and a
-test matrix. Plans 1–5 are written (1–3 implemented; 4, 5 partly/scoped).
+test matrix. Plans 1–5 and 7 are written (1–3 implemented; 4, 5, 7 scoped/partial).
 
 > **Vocabulary — "paddock".** The Go code renames Python Shepherd's `jail` to
 > **`paddock`** (an enclosed livestock area — it fits the shepherd/croft theme;
@@ -30,6 +30,7 @@ test matrix. Plans 1–5 are written (1–3 implemented; 4, 5 partly/scoped).
 | **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | [`04-egress-and-seatbelt.md`](04-egress-and-seatbelt.md) | 🚧 Phases 2–3 (Linux) done; 1 (Seatbelt) planned |
 | **5** | Container-tier parity | overlay changes → typed effects, the `copy` carrier, the `clonefile` carrier | [`05-container-tier.md`](05-container-tier.md) | 📝 scoped |
 | **6** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
+| **7** | yaah integration | **retained sub-agents** (the proposal/settlement spine) + Landlock confinement on that one path (orchestrator stays host-normal); placement config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | 📝 scoped |
 
 ## Plan 1 — Linux Landlock containment (done)
 
@@ -136,6 +137,49 @@ object-based paddock. Go can install cBPF via `SECCOMP_SET_MODE_FILTER`, but the
 filter is arch-specific and fiddly; defer until a concrete need (untrusted code
 without containerd) justifies it.
 
+## Plan 7 — yaah integration (retained sub-agents, confined)
+
+**The orchestrating agent runs as normal on the HOST; the shepherd mechanics —
+retained runs, settlement, and Landlock confinement — apply to SUB-AGENTS only.**
+That is the Terminal-Bench-proven model, and the plan does not confine the
+orchestrator.
+
+**The spine: retention first, confinement as an attribute.** Shepherd's unit is
+the **retained run** — a bound world, a sealed proposal, settled once — and the
+jail bounds writes *inside* that world. A jail cannot bound a body that has no
+bound world yet: **isolation precedes confinement.** yaah already owns the
+settlement machine on one lane — `supervised_task` seals a worktree as a retained
+output and settles it with `choose`/`select`/`apply`/`discard` — so the parity
+move is to make that the **default** for every sub-agent (folding
+`spawn_subagent`, which today mutates the host directly), then attach the
+confiner to the one retained launch.
+
+- **Phase 0:** ✅ done — `shepherd-runtime-go v0.17.0` and
+  `sandbox/landlock/v0.1.0` published (the nested module's dev `replace`
+  dropped); yaah ported onto the split modules (kernel v0.17.0 + runtime
+  v0.17.0) — a pure import rewrite across 44 files.
+- **Phase 1:** ✅ done — the confinement seam (PR #337): the trampoline hook,
+  a confiner on `localWorkspace`, and the sub-agent workdir lane attaching it
+  under the new `agents.subagent.containment` (default off — no behavior flip).
+- **Phase 2 (the spine):** ✅ done (PR #338) — every sub-agent dispatch returns
+  a **proposal** (kernel `ForkIsolated` + `Seal` + `Settle*`); a new `proposal`
+  tool settles it (`select`/`apply`/`release`/`discard`); `agents.subagent.mode:
+  retained|shared` (default `retained`). Design:
+  [`07-phase2-retention-spine.md`](07-phase2-retention-spine.md).
+- **Phase 3:** confinement on the unified retained path — the **env redirect**
+  (`HOME`/`TMPDIR`/`GOCACHE` → a scratch inside the worktree, scrubbed before
+  `Seal`) is ✅ in (PR #339), as is doctor's capability check, the runtime `/dev`
+  allowance (PR #4, shipped as `sandbox/landlock v0.1.1`) and recording the
+  resolved placement (PRs #343/#344). **The flip to `auto` is BLOCKED, not
+  pending:** the acceptance (PR #344) found that a retained dispatch works in a
+  **linked** worktree whose git metadata lives outside the jail's writable root,
+  so a confined `git add`/`commit` is refused — and the fix cannot be granting
+  `<repo>/.git`. Confinement stays opt-in until that lane's git-write story is
+  settled.
+- **Mandatory:** `landlock.MaybeRunTrampoline(os.Args)` in `yaah/main.go`.
+- See [`07-yaah-integration.md`](07-yaah-integration.md), incl. §11 (Python
+  parity).
+
 ## Small items
 
 - **Sandbox file IO** — ✅ done: `GitSandbox.ReadFile`/`WriteFile` with
@@ -183,6 +227,7 @@ Plan 1 (landlock, done)
   ├─ Plan 4a (Seatbelt)   Plan 4b (broker)
   └─ Plan 5 (container tier: effects + copy/clonefile carriers)
                               Plan 6 (seccomp, optional)
+Plan 7 (yaah integration) depends on a released runtime (Phase 0) + Plan 4a (macOS)
 ```
 
 ## Decisions & invariants
