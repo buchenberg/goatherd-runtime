@@ -166,14 +166,88 @@ surprising behavior change.
 session. Phase 2 lifts them into a shared **retained-run provisioner** used by
 both the review session and the default dispatch — one code path, two callers.
 
-## 9. Open questions
+## 9. Decisions
 
-- **Read-only roles.** `spawn_subagent` returns the report; in `retained` mode it
-  also returns an (empty-changeset) proposal. Shepherd retains *every* run, so
-  the default is to retain; the envelope simply has `files: []`.
-- **Cost of a worktree per dispatch.** A fork + seal per sub-agent is heavier
-  than a shared exec. Measure against the harness; `mode: shared` remains for
-  pure-recon roles.
-- **The non-review `supervised_task` retry loop.** Keep it as-is in Phase 2
-  (re-dispatch is now `discard` + spawn); unify the supervised retry into the
-  retained primitive in Phase 4 (`oversee`).
+1. **Retain always — including read-only roles.** Every dispatch produces a
+   proposal; a role that writes nothing simply yields an empty-changeset
+   proposal (`files: []`). This is Shepherd's rule (it retains *every* run), and
+   it keeps the surface uniform — the orchestrator always settles, never asks
+   "was this one retained?". The fork's cost is controlled by the **carrier**
+   (§10), not by skipping the fork. `mode: shared` survives as a config-level
+   escape hatch, never as a per-role default.
+2. **The non-review `supervised_task` retry loop stays as-is in Phase 2** —
+   re-dispatch is now `discard` + spawn. **Phase 4 (`oversee`) folds the
+   retry-until-acceptable loop into the retained primitive** as a first-class
+   combination rather than the hand-written loop it is today.
+
+## 10. Cost of isolation: a worktree per dispatch
+
+Pin **1** makes every dispatch fork a bound world, so the cost question is real.
+It is smaller than it looks. A retained dispatch does:
+
+1. capture the basis — `git add -A` (stat-cache-aware → O(changed));
+2. `git worktree add --detach <wt> HEAD` — a full checkout of the tracked tree;
+3. `Apply(forkPoint)` — `reset --hard` + `clean -fd` + `read-tree --reset -u`
+   (a *second* materialization, to seed the fork point);
+4. `runner(...)` — the sub-agent (the actual work);
+5. `Seal` — capture + diff (O(changed));
+6. settle — merge onto the parent, then `git worktree remove` (teardown).
+
+**Measured** on this machine (ext4, **no** CoW; git 2.55), setup + teardown only
+(the sub-agent's runtime is excluded):
+
+| repo | tracked | checkout | `worktree add` | apply step | teardown | **≈ overhead** |
+|---|---|---|---|---|---|---|
+| shepherd-runtime-go | 92 | 1.2 M | 0.02 s | 0.02 s | ~0.01 s | **~0.05 s** |
+| naah | 260 | 1.6 M | 0.02 s | 0.02 s | ~0.01 s | **~0.05 s** |
+| yaah | 688 | 6.2 M | 0.31 s | 0.10 s | 0.01 s | **~0.42 s** |
+| pi | 1902 | 28 M | 0.13 s | 0.32 s | — | ~0.45 s |
+| aider | 691 | 76 M | 0.20 s | 0.39 s | — | ~0.6 s |
+| terminal-bench | 2474 | 170 M | 0.70 s | 0.56 s | — | ~1.3 s |
+| opencode | 8448 | 150 M | 0.51 s | 0.77 s | — | ~1.3 s |
+| hermes | 18302 | 245 M | 1.00 s | 1.41 s | 0.20 s | **~2.6 s** |
+
+**Reading it:** the cost tracks *checkout bytes*, not file count; the object
+store is **shared**, so a worktree duplicates no objects; the delta side
+(capture/diff) is O(changed) and effectively free. For repos to ~18 k files the
+overhead is **~0.05 s – 2.6 s**, against a sub-agent whose run is usually
+seconds-to-minutes. **The exception is `WorktreeBootstrap`** (`npm install`,
+`go mod download`) — a per-dispatch bootstrap is where minutes hide, and it
+dominates everything above.
+
+### It is a carrier choice, not a fixed cost
+
+`ForkIsolated` takes any `sbx.Sandbox`, and Plan 5 defines the carrier family —
+so "a worktree per dispatch" is a *default*, not the mechanism:
+
+| carrier | cost | where |
+|---|---|---|
+| `git worktree` | full checkout ×2 (measured above); shared object store | all platforms (today's default) |
+| `clonefile` | `clonefile(2)` — O(1) metadata, blocks shared until write | macOS APFS |
+| reflink / overlay | O(1) upper over a shared lower | Linux btrfs/XFS (reflink), containerd overlayfs (`croft`) |
+| `copy` | plain recursive copy — O(tree) | universal floor |
+
+On APFS the same dispatch is a metadata clone; on a reflink filesystem, a
+near-free CoW copy. The measured table is the **worst case** (ext4, git
+worktree) — the ceiling, not the floor.
+
+### Mitigations, in priority order
+
+1. **Carrier selection** — the provisioner takes a carrier, not a hardcoded
+   worktree: clonefile (APFS) → reflink/overlay (Linux) → worktree (portable) →
+   copy (floor). This is the main lever, and it is Plan 5's, not new work here.
+2. **Warm reuse for sequential units** — a multi-unit sub-agent (or a supervised
+   session) holds **one** worktree for its lifetime, not one per unit.
+3. **Bootstrap discipline** — cache it, or skip it for read-only roles; it is
+   the single largest term.
+4. **Amortize parallel fan-out** — N branches can share one lower through the
+   overlay carrier.
+5. **Measure in the harness** — add a scenario reporting dispatch overhead and
+   set a budget (e.g., < 1 s for repos under ~5 k files, bootstrap excluded).
+6. **`mode: shared`** stays available as the config-level escape hatch when a
+   session would rather not pay the fork at all.
+
+**Bottom line:** retain-always is affordable because the fork is a *carrier
+choice*. The plan is to pay the worktree cost in Phase 2 (portable, correct) and
+let the cheap carriers land with Plan 5 — the ceiling measured above is the
+number to beat.
