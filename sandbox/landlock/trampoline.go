@@ -10,6 +10,8 @@ const (
 	ExecSentinel = "__landlock_exec__"
 	// ProbeSentinel is argv[1] for a confined write-probe invocation.
 	ProbeSentinel = "__landlock_probe__"
+	// NetProbeSentinel is argv[1] for a confined TCP-connect-probe invocation.
+	NetProbeSentinel = "__landlock_netprobe__"
 	// ConfineFailedRC is returned when confinement could not be established — a
 	// value an ordinary command (and a denied write) does not produce, so "no
 	// paddock" is distinguishable from "write denied".
@@ -34,6 +36,8 @@ func MaybeRunTrampoline(args []string) (int, bool) {
 		return runExecTrampoline(args), true
 	case ProbeSentinel:
 		return runProbeTrampoline(args), true
+	case NetProbeSentinel:
+		return runNetProbeTrampoline(args), true
 	default:
 		return 0, false
 	}

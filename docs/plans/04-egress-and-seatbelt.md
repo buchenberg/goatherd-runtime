@@ -15,9 +15,17 @@
 > pinning on Seatbelt's `(deny network-outbound)`. Linux can pin too — and better
 > than the reference (§8).
 >
-> **Status:** Phase 2 (the portable egress broker) is implemented in
-> [`sandbox/egress`](../../sandbox/egress). Phases 1 (Seatbelt) and 3 (pinning)
-> remain.
+> **Status:** Phase 2 (the portable egress broker, `sandbox/egress`) and Phase
+> 3's **Linux** half (Landlock net pinning in `sandbox/landlock`) are implemented
+> and kernel-verified. Phase 1 (Seatbelt, macOS) and the strong netns/`croft` pin
+> remain — Phase 1 is being built on a Mac.
+>
+> **Contract note (Phase 3).** The `containment.Backend` interface evolved:
+> `ProfileFor(roots []string, network NetworkPolicy) string` (was `(roots,
+> allowNetwork bool)`) and a new `SupportsNetwork(mode NetMode) bool` fail-closed
+> gate. The backend-private profile is now a JSON object
+> (`{"roots":[…],"net":{"mode":…,"port":…}}`). A Seatbelt backend must implement
+> the same contract.
 
 ## 1. Objective & Context
 
@@ -70,8 +78,8 @@ pinning per platform (Linux Landlock v4 / macOS Seatbelt / netns routed to
 | 8 | `SeatbeltContainmentBackend` | `seatbelt.Backend` (nested module, darwin) | `TestSeatbelt_*` |
 | 9 | `lower_to_seatbelt` (SBPL profile) | `seatbelt.ProfileFor` | `TestSeatbelt_ProfileFor` |
 | 10 | jail network pinning (Seatbelt `deny network-outbound`) | `seatbelt` profile + broker port | `TestSeatbelt_Network` |
-| 11 | jail network pinning (Linux) | `landlock` net rules (ABI ≥ 4) | `TestLandlock_Network` |
-| 12 | `broker_grants` → policy lowering | `egress.PolicyFromNetwork` | `TestPolicyFromNetwork` |
+| 11 | jail network pinning (Linux) | `landlock` net rules (ABI ≥ 4) | `TestLandlock_NetworkDenyAll`, `TestLandlock_NetworkPinned` | ✅ |
+| 12 | `broker_grants` → policy lowering | `egress.PolicyFromNetwork` | `TestPolicyFromNetwork` | ✅ |
 
 ## 5. Architecture
 
@@ -133,14 +141,15 @@ New package `sandbox/egress` (root module; stdlib only). A faithful port of
 
 ## 8. Phase 3 — Egress pinning (per platform)
 
-- **Linux — Landlock ≥ ABI 4** (kernel 6.7+): extend the ruleset with
-  `handled_access_net` + `LANDLOCK_ACCESS_NET_{BIND,CONNECT}_TCP` rules
-  (`x/sys v0.19.0` already exposes the constants; this host is ABI 11). Pin
-  egress to the broker's port; deny the rest. Unprivileged. **Port-scoped, not
+- **Linux — Landlock ≥ ABI 4** (kernel 6.7+): **implemented**. The ruleset gains
+  `handled_access_net` + `LANDLOCK_ACCESS_NET_CONNECT_TCP`; a `DenyAll` mode
+  denies every TCP connect, a `Broker` mode pins egress to the broker's port.
+  `SupportsNetwork` gates it (ABI ≥ 4), and the probe validates the pin
+  fail-closed (`TestLandlock_Network*`). Unprivileged. **Port-scoped, not
   address-scoped** — a documented limitation; the reference's Linux jail does no
   networking at all, so this is *ahead* of parity.
 - **macOS — Seatbelt**: `(deny network-outbound)` with the broker's loopback port
-  allowed.
+  allowed (Phase 1, on a Mac).
 - **Strong (address-scoped) — network namespace** (`CLONE_NEWUSER|CLONE_NEWNET`)
   or `croft`/containerd. Out of the unprivileged path; routed to `croft`.
 - **Wiring**: `egress.PolicyFromNetwork(NetworkPolicy)` builds the policy from
@@ -157,10 +166,12 @@ New package `sandbox/egress` (root module; stdlib only). A faithful port of
 | 2 ✅ | `TestAllowHosts` | exact allowlist | allows listed, denies others |
 | 2 ✅ | `TestBroker_AllowsAndDenies` | CONNECT an allowed loopback echo / a denied host | 200 + echo spliced / 403; decisions recorded |
 | 2 ✅ | `TestBroker_BadRequest` | non-CONNECT bytes | 400 |
-| 3 | `TestPolicyFromNetwork` | `NetworkPolicy{BROKER, hosts}` | policy with those grants |
-| 1 | `TestSeatbelt_ProfileFor` | Permissive vs ReadOnly | allow subpath vs deny network-outbound |
-| 1 | `TestSeatbelt_Probe`/`Launch` | macOS | deny/allow as the reference asserts |
-| 3 | `TestLandlock_Network` | ABI ≥ 4; pin a port | connect to other ports denied |
+| 2 ✅ | `TestPolicyFromNetwork` | `NetworkPolicy{BROKER, hosts}` | policy with those grants; non-broker refused |
+| 3 ✅ | `TestLandlock_SupportsNetwork` | probe the capability | reflects the ABI |
+| 3 ✅ | `TestLandlock_NetworkDenyAll` | ABI ≥ 4; deny_all | a connect is denied at the syscall |
+| 3 ✅ | `TestLandlock_NetworkPinned` | ABI ≥ 4; pin a port | the pinned port admits; others denied |
+| 3 ✅ | `TestLandlock_ProbeNetwork` | deny_all / broker profiles | the probe validates the pin fail-closed |
+| 1 | `TestSeatbelt_*` | macOS | deny/allow as the reference asserts (on a Mac) |
 
 ## 10. Parity Comparison: Network & macOS
 
@@ -168,7 +179,7 @@ New package `sandbox/egress` (root module; stdlib only). A faithful port of
 |---|---|---|
 | Egress broker | `_egress_broker.py` (stdlib sockets) | **Parity**: `sandbox/egress` (stdlib) |
 | Policy evaluation order | union, deny-wins, default-deny, escalate→deny-loud | **Parity** |
-| Egress *pinning*, Linux | ❌ (FS-only jail) | **Ahead**: Landlock ≥ ABI 4 net rules (port-scoped) |
+| Egress *pinning*, Linux | ❌ (FS-only jail) | ✅ **Ahead**: Landlock ≥ ABI 4 net rules (port-scoped), kernel-verified |
 | Egress *pinning*, macOS | Seatbelt `(deny network-outbound)` | **Parity**: `sandbox/seatbelt` |
 | macOS jail | `_seatbelt_containment.py` | **Parity**: `sandbox/seatbelt` (nested module) |
 | Strong (address-scoped) pin | — | netns via `croft` |

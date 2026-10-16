@@ -28,7 +28,8 @@ func (f *fakeConfiner) Available() (bool, string) {
 	}
 	return false, "unavailable"
 }
-func (f *fakeConfiner) ProfileFor([]string, bool) string { return "[]" }
+func (f *fakeConfiner) ProfileFor([]string, containment.NetworkPolicy) string { return "{}" }
+func (f *fakeConfiner) SupportsNetwork(containment.NetMode) bool              { return true }
 func (f *fakeConfiner) Probe(string, string, []string) error {
 	f.probed = true
 	return nil

@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 )
 
 // Verdict is a per-connection broker decision.
@@ -128,6 +130,17 @@ func AllowHosts(hosts ...string) EgressPolicy {
 		grants = append(grants, HostGrant{Positive: []HostAtom{{Op: "exact", Value: h}}})
 	}
 	return EgressPolicy{grants: grants}
+}
+
+// PolicyFromNetwork builds the broker policy from a network policy's allowed
+// hosts — the lowering seam from the paddock's NetworkPolicy to the broker's
+// host predicate. It is meaningful only for NetBroker: the paddock pins egress
+// to the broker's port, and the broker decides which hosts.
+func PolicyFromNetwork(np containment.NetworkPolicy) (EgressPolicy, error) {
+	if np.Mode != containment.NetBroker {
+		return EgressPolicy{}, fmt.Errorf("egress: a broker policy requires NetBroker mode, got %q", np.Mode)
+	}
+	return AllowHosts(np.AllowedHosts...), nil
 }
 
 // Decide applies the evaluation-order contract. An unknown host-atom op is an

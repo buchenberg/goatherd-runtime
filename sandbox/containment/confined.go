@@ -14,14 +14,18 @@ func LaunchConfined(b Backend, spec ConfinementSpec, req LaunchRequest) (LaunchR
 			"%w: no paddock-capable backend on this host; real execution refuses rather than running unconfined",
 			ErrPaddockNotEstablished)
 	}
-	roots, allowNetwork, err := ResolveSpec(spec)
+	roots, network, err := ResolveSpec(spec)
 	if err != nil {
 		return LaunchResult{}, err
 	}
 	if ok, why := b.Available(); !ok {
 		return LaunchResult{}, fmt.Errorf("%w: %s", ErrPaddockNotEstablished, why)
 	}
-	profile := b.ProfileFor(roots, allowNetwork)
+	if !b.SupportsNetwork(network.Mode) {
+		return LaunchResult{}, fmt.Errorf("%w: backend %s cannot enforce network mode %q",
+			ErrUnsupportedConfinementSpec, b.Name(), network.Mode)
+	}
+	profile := b.ProfileFor(roots, network)
 	if err := b.Probe(profile, req.WorkingRoot, roots); err != nil {
 		return LaunchResult{}, err
 	}

@@ -2,8 +2,8 @@
 // syscall-deny paddock tier with no container and no root. It is the Go port of
 // vcs-core/_landlock_containment.py:LandlockContainmentBackend.
 //
-// The backend compiles a deny-closed profile (a JSON array of canonical writable
-// roots), proves the paddock is both live and grant-conformant with an
+// The backend compiles a deny-closed profile (canonical writable roots plus the
+// network pin), proves the paddock is both live and grant-conformant with an
 // exit-code-aware probe, and launches commands through a confine-then-exec
 // trampoline in this same binary (see MaybeRunTrampoline).
 //
@@ -17,9 +17,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,14 +61,33 @@ func (b *Backend) Available() (bool, string) {
 	return true, fmt.Sprintf("Landlock ABI %d", version)
 }
 
-// ProfileFor lowers a canonical writable-root set to a backend-private profile:
-// a JSON array of the roots (empty array = ReadOnly). allowNetwork is accepted
-// for contract parity and ignored — Landlock governs filesystem writes only.
-func (b *Backend) ProfileFor(roots []string, allowNetwork bool) string {
-	_ = allowNetwork
-	payload, err := json.Marshal(canonicalAll(roots))
+// SupportsNetwork reports whether this kernel can pin network egress (Landlock
+// ABI >= 4). NetAllowAll is always representable (it applies no rule).
+func (b *Backend) SupportsNetwork(mode containment.NetMode) bool {
+	switch mode {
+	case containment.NetAllowAll, "":
+		return true
+	case containment.NetDenyAll, containment.NetBroker:
+		return supportsNetwork()
+	default:
+		return false
+	}
+}
+
+// ProfileFor lowers canonical writable roots and the network pin to a
+// backend-private profile (a JSON doc: {"roots":[...],"net":{"mode":...,"port":...}}).
+func (b *Backend) ProfileFor(roots []string, network containment.NetworkPolicy) string {
+	mode := string(network.Mode)
+	if mode == "" {
+		mode = string(containment.NetAllowAll)
+	}
+	doc := profileDoc{
+		Roots: canonicalAll(roots),
+		Net:   netDoc{Mode: mode, Port: network.BrokerPort},
+	}
+	payload, err := json.Marshal(doc)
 	if err != nil {
-		return "[]"
+		return `{"roots":[],"net":{"mode":"allow_all"}}`
 	}
 	return string(payload)
 }
@@ -114,7 +135,48 @@ func (b *Backend) Probe(profile, workingRoot string, roots []string) error {
 				containment.ErrPaddockNotEstablished)
 		}
 	}
+
+	// (4) network: a pinned or deny-all egress profile must refuse the connects
+	// it does not admit (fail-closed), and a pinned port must admit its own.
+	switch doc := parseProfile(profile).Net; doc.Mode {
+	case "deny_all":
+		denied, err := b.netDenied(profile, wd, net.JoinHostPort("127.0.0.1", "1"))
+		if err != nil {
+			return err
+		}
+		if !denied {
+			return fmt.Errorf("%w: the deny_all network pin did NOT deny a connect", containment.ErrPaddockNotEstablished)
+		}
+	case "broker":
+		if denied, err := b.netDenied(profile, wd, net.JoinHostPort("127.0.0.1", strconv.Itoa(doc.Port))); err != nil {
+			return err
+		} else if denied {
+			return fmt.Errorf("%w: the pinned egress port %d DENIES connects", containment.ErrPaddockNotEstablished, doc.Port)
+		}
+		other := "1"
+		if doc.Port == 1 {
+			other = "2"
+		}
+		if denied, err := b.netDenied(profile, wd, net.JoinHostPort("127.0.0.1", other)); err != nil {
+			return err
+		} else if !denied {
+			return fmt.Errorf("%w: a non-pinned egress port was PERMITTED — the network pin is not deny-closed", containment.ErrPaddockNotEstablished)
+		}
+	}
 	return nil
+}
+
+// netDenied reports whether a confined TCP connect to target was refused at the
+// syscall (the network pin's signal, EACCES/EPERM).
+func (b *Backend) netDenied(profile, workingRoot, target string) (bool, error) {
+	rc, _, _, err := b.invoke(NetProbeSentinel, profile, workingRoot, []string{target}, nil, nil, 0)
+	if err != nil {
+		return false, err
+	}
+	if rc == ConfineFailedRC {
+		return false, fmt.Errorf("%w: Landlock confinement could not be established", containment.ErrPaddockNotEstablished)
+	}
+	return rc == 1, nil
 }
 
 // probeDenied reports whether a confined write to target was denied. Cleanup is

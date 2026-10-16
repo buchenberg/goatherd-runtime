@@ -48,27 +48,32 @@ func PermissiveFor(workingPath string) ConfinementSpec {
 	}
 }
 
-// ResolveSpec resolves a spec to the paddock's inputs: canonical writable roots and
-// a network flag. Only the network axis can refuse — the paddock is host-blind, so a
-// broker (host-filtered) policy has no faithful paddock lowering.
+// ResolveSpec resolves a spec to the paddock's inputs: canonical writable roots
+// and the network axis. It validates the mode and, for NetBroker, requires the
+// broker port the paddock pins egress to. Whether the *backend* can enforce the
+// mode is checked separately (Backend.SupportsNetwork), fail-closed.
 //
-// Mirrors _resolve_spec in _execution_capability.py:135-158.
-func ResolveSpec(spec ConfinementSpec) (roots []string, allowNetwork bool, err error) {
-	switch spec.Network.Mode {
-	case NetDenyAll:
-		allowNetwork = false
-	case NetAllowAll:
-		allowNetwork = true
+// Mirrors _resolve_spec in _execution_capability.py, extended with the broker
+// port pin (Plan 4).
+func ResolveSpec(spec ConfinementSpec) (roots []string, network NetworkPolicy, err error) {
+	network = spec.Network
+	if network.Mode == "" {
+		network.Mode = NetAllowAll
+	}
+	switch network.Mode {
+	case NetAllowAll, NetDenyAll:
+	case NetBroker:
+		if network.BrokerPort <= 0 {
+			return nil, NetworkPolicy{}, fmt.Errorf("%w: NetBroker requires a broker port to pin egress to", ErrUnsupportedConfinementSpec)
+		}
 	default:
-		return nil, false, fmt.Errorf(
-			"%w: network mode %q has no paddock lowering — host-filtered egress is the broker's job, not the syscall paddock's (representable: deny_all, allow_all)",
-			ErrUnsupportedConfinementSpec, spec.Network.Mode)
+		return nil, NetworkPolicy{}, fmt.Errorf("%w: unknown network mode %q", ErrUnsupportedConfinementSpec, network.Mode)
 	}
 	roots = make([]string, 0, len(spec.WritableRoots))
 	for _, root := range spec.WritableRoots {
 		roots = append(roots, Canonical(root))
 	}
-	return roots, allowNetwork, nil
+	return roots, network, nil
 }
 
 // Canonical resolves a path with symlinks resolved and made absolute, mirroring

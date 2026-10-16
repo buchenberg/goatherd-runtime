@@ -71,10 +71,14 @@ type Backend interface {
 	// Available reports whether the paddock can be established on this host, with a
 	// human-readable reason.
 	Available() (ok bool, why string)
-	// ProfileFor lowers a canonical writable-root set (+ the network axis) to a
-	// backend-private profile string. allowNetwork is accepted for contract
-	// parity; a filesystem-only paddock ignores it.
-	ProfileFor(roots []string, allowNetwork bool) string
+	// SupportsNetwork reports whether the backend can enforce the given network
+	// mode. LaunchConfined refuses a mode the backend cannot represent
+	// (fail-closed), never silently ignoring it — a paddock is host-blind, so
+	// NetBroker can only be pinned by port, and only where the kernel allows it.
+	SupportsNetwork(mode NetMode) bool
+	// ProfileFor lowers canonical writable roots and the network axis to a
+	// backend-private profile string.
+	ProfileFor(roots []string, network NetworkPolicy) string
 	// Probe proves the profile's paddock is BOTH live and grant-conformant before
 	// the body runs; it returns ErrPaddockNotEstablished on any violation.
 	Probe(profile, workingRoot string, roots []string) error

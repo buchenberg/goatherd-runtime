@@ -3,14 +3,23 @@
 package landlock
 
 import (
-	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 )
+
+// allowAll / denyAll are the network policies most tests use.
+func allowAll() containment.NetworkPolicy {
+	return containment.NetworkPolicy{Mode: containment.NetAllowAll}
+}
+func denyAll() containment.NetworkPolicy {
+	return containment.NetworkPolicy{Mode: containment.NetDenyAll}
+}
 
 // TestMain installs the trampoline hook. Every confine-then-exec and confined
 // write-probe re-execs this very test binary, so the hook must run before the
@@ -64,19 +73,26 @@ func TestLandlock_MaskIsV1Compatible(t *testing.T) {
 	}
 }
 
-func TestLandlock_ProfileForParity(t *testing.T) {
+func TestLandlock_ProfileFor(t *testing.T) {
 	b := requireLandlock(t)
 	wd := t.TempDir()
-	got := b.ProfileFor([]string{wd}, true)
-	var roots []string
-	if err := json.Unmarshal([]byte(got), &roots); err != nil {
-		t.Fatalf("profile is not a JSON array: %v (%q)", err, got)
+
+	doc := parseProfile(b.ProfileFor([]string{wd}, allowAll()))
+	if len(doc.Roots) != 1 || doc.Roots[0] != containment.Canonical(wd) {
+		t.Fatalf("profile roots = %v, want [%s]", doc.Roots, containment.Canonical(wd))
 	}
-	if len(roots) != 1 || roots[0] != containment.Canonical(wd) {
-		t.Fatalf("profile roots = %v, want [%s]", roots, containment.Canonical(wd))
+	if doc.Net.Mode != "allow_all" {
+		t.Fatalf("net mode = %q, want allow_all", doc.Net.Mode)
 	}
-	if empty := b.ProfileFor(nil, false); empty != "[]" {
-		t.Fatalf("empty profile = %q, want []", empty)
+
+	empty := parseProfile(b.ProfileFor(nil, denyAll()))
+	if len(empty.Roots) != 0 || empty.Net.Mode != "deny_all" {
+		t.Fatalf("empty profile = %+v", empty)
+	}
+
+	broker := parseProfile(b.ProfileFor([]string{wd}, containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: 8080}))
+	if broker.Net.Mode != "broker" || broker.Net.Port != 8080 {
+		t.Fatalf("broker profile net = %+v", broker.Net)
 	}
 }
 
@@ -84,7 +100,7 @@ func TestLandlock_ConfineDeniesOutside(t *testing.T) {
 	b := requireLandlock(t)
 	touch := requireTouch(t)
 	wd := t.TempDir()
-	profile := b.ProfileFor([]string{wd}, true)
+	profile := b.ProfileFor([]string{wd}, allowAll())
 
 	inside := filepath.Join(wd, "ok.txt")
 	res, err := b.Launch(profile, containment.LaunchRequest{Command: []string{touch, inside}, WorkingRoot: wd})
@@ -116,7 +132,7 @@ func TestLandlock_ReadOnlyDeniesEverywhere(t *testing.T) {
 	b := requireLandlock(t)
 	touch := requireTouch(t)
 	wd := t.TempDir()
-	profile := b.ProfileFor(nil, false)
+	profile := b.ProfileFor(nil, denyAll())
 
 	target := filepath.Join(wd, "nope.txt")
 	res, err := b.Launch(profile, containment.LaunchRequest{Command: []string{touch, target}, WorkingRoot: wd})
@@ -142,7 +158,7 @@ func TestLandlock_PerBindingDenyClosed(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	profile := b.ProfileFor([]string{rw}, false)
+	profile := b.ProfileFor([]string{rw}, denyAll())
 
 	ok := filepath.Join(rw, "candidate.txt")
 	if res, _ := b.Launch(profile, containment.LaunchRequest{Command: []string{touch, ok}, WorkingRoot: wd}); res.ExitCode != 0 {
@@ -173,10 +189,10 @@ func TestLandlock_PerBindingDenyClosed(t *testing.T) {
 func TestLandlock_ProbePassesForConformant(t *testing.T) {
 	b := requireLandlock(t)
 	wd := t.TempDir()
-	if err := b.Probe(b.ProfileFor([]string{wd}, true), wd, []string{wd}); err != nil {
+	if err := b.Probe(b.ProfileFor([]string{wd}, allowAll()), wd, []string{wd}); err != nil {
 		t.Fatalf("permissive probe: %v", err)
 	}
-	if err := b.Probe(b.ProfileFor(nil, false), wd, nil); err != nil {
+	if err := b.Probe(b.ProfileFor(nil, denyAll()), wd, nil); err != nil {
 		t.Fatalf("readonly probe: %v", err)
 	}
 }
@@ -185,7 +201,7 @@ func TestLandlock_ProbeCatchesMisloweredWritable(t *testing.T) {
 	b := requireLandlock(t)
 	wd := t.TempDir()
 	// BUG SIM: a ReadOnly run handed a Permissive-style writable-WORKDIR profile.
-	mislowered := b.ProfileFor([]string{wd}, true)
+	mislowered := b.ProfileFor([]string{wd}, allowAll())
 	if err := b.Probe(mislowered, wd, nil); !errors.Is(err, containment.ErrPaddockNotEstablished) {
 		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
@@ -242,7 +258,7 @@ func TestLandlock_DeniedClassified(t *testing.T) {
 	b := requireLandlock(t)
 	touch := requireTouch(t)
 	wd := t.TempDir()
-	profile := b.ProfileFor([]string{wd}, true)
+	profile := b.ProfileFor([]string{wd}, allowAll())
 	outside := filepath.Join(filepath.Dir(wd), "escape.txt")
 	_ = os.Remove(outside)
 
@@ -255,5 +271,105 @@ func TestLandlock_DeniedClassified(t *testing.T) {
 	}
 	if !containment.DeniedExit(res) {
 		t.Fatalf("denial not classified from stderr=%q", res.Stderr)
+	}
+}
+
+// --- Network pinning (Plan 4 Phase 3) ---
+
+func TestLandlock_SupportsNetwork(t *testing.T) {
+	b := requireLandlock(t)
+	version, err := abi()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := version >= minABINetwork
+	if got := b.SupportsNetwork(containment.NetDenyAll); got != want {
+		t.Fatalf("SupportsNetwork(deny_all) = %v, want %v (ABI %d)", got, want, version)
+	}
+	if !b.SupportsNetwork(containment.NetAllowAll) {
+		t.Fatal("allow_all must always be supported")
+	}
+	if b.SupportsNetwork(containment.NetMode("bogus")) {
+		t.Fatal("an unknown mode must not be supported")
+	}
+}
+
+func TestLandlock_NetworkDenyAll(t *testing.T) {
+	b := requireLandlock(t)
+	if !b.SupportsNetwork(containment.NetDenyAll) {
+		t.Skip("kernel lacks Landlock network control (ABI < 4)")
+	}
+	wd := t.TempDir()
+	profile := b.ProfileFor([]string{wd}, denyAll())
+	denied, err := b.netDenied(profile, wd, net.JoinHostPort("127.0.0.1", "1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !denied {
+		t.Fatal("deny_all must deny a TCP connect at the syscall")
+	}
+}
+
+func TestLandlock_NetworkPinned(t *testing.T) {
+	b := requireLandlock(t)
+	if !b.SupportsNetwork(containment.NetBroker) {
+		t.Skip("kernel lacks Landlock network control (ABI < 4)")
+	}
+	wd := t.TempDir()
+
+	// A loopback listener stands in for the broker.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+
+	profile := b.ProfileFor([]string{wd}, containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: port})
+
+	if denied, err := b.netDenied(profile, wd, net.JoinHostPort("127.0.0.1", strconv.Itoa(port))); err != nil {
+		t.Fatal(err)
+	} else if denied {
+		t.Fatalf("the pinned egress port %d must be admitted", port)
+	}
+
+	other := "1"
+	if port == 1 {
+		other = "2"
+	}
+	if denied, err := b.netDenied(profile, wd, net.JoinHostPort("127.0.0.1", other)); err != nil {
+		t.Fatal(err)
+	} else if !denied {
+		t.Fatalf("the non-pinned port %s must be denied", other)
+	}
+}
+
+func TestLandlock_ProbeNetwork(t *testing.T) {
+	b := requireLandlock(t)
+	if !b.SupportsNetwork(containment.NetDenyAll) {
+		t.Skip("kernel lacks Landlock network control (ABI < 4)")
+	}
+	wd := t.TempDir()
+	if err := b.Probe(b.ProfileFor([]string{wd}, denyAll()), wd, []string{wd}); err != nil {
+		t.Fatalf("deny_all probe: %v", err)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := b.Probe(b.ProfileFor([]string{wd}, containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: port}), wd, []string{wd}); err != nil {
+		t.Fatalf("broker probe: %v", err)
 	}
 }

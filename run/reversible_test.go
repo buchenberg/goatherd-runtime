@@ -271,10 +271,11 @@ func TestReversible_MergeDeniedByReviewer(t *testing.T) {
 // fakeBackend is a containment.Backend double for the confined-run test.
 type fakeBackend struct{ available bool }
 
-func (f *fakeBackend) Name() string                         { return "fake" }
-func (f *fakeBackend) EnforcementTier() string              { return "test" }
-func (f *fakeBackend) ProfileFor([]string, bool) string     { return "[]" }
-func (f *fakeBackend) Probe(string, string, []string) error { return nil }
+func (f *fakeBackend) Name() string                                          { return "fake" }
+func (f *fakeBackend) EnforcementTier() string                               { return "test" }
+func (f *fakeBackend) ProfileFor([]string, containment.NetworkPolicy) string { return "{}" }
+func (f *fakeBackend) SupportsNetwork(containment.NetMode) bool              { return true }
+func (f *fakeBackend) Probe(string, string, []string) error                  { return nil }
 func (f *fakeBackend) Launch(string, containment.LaunchRequest) (containment.LaunchResult, error) {
 	return containment.LaunchResult{ExitCode: 0}, nil
 }

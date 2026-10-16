@@ -110,7 +110,7 @@ conformance test that proves it. This is the objective definition of "done."
 | 5 | `_WRITE_ACCESS` (v1 mask) | `landlock.WriteAccessMask` | `TestLandlock_MaskIsV1Compatible` | ✅ |
 | 6 | `landlock_confine` | `landlock.Confine(roots)` | `TestLandlock_ConfineDeniesOutside` | ✅ |
 | 7 | `_run_confined` (sentinel) | `landlock.MaybeRunTrampoline` | `TestLandlock_TrampolineDispatch` | ✅ |
-| 8 | `profile_for` | `(*landlock.Backend).ProfileFor` | `TestLandlock_ProfileForParity` | ✅ |
+| 8 | `profile_for` | `(*landlock.Backend).ProfileFor(roots, network)` | `TestLandlock_ProfileFor` | ✅ |
 | 9 | `probe` (exit-code aware) | `(*landlock.Backend).Probe` | `TestLandlock_ProbePassesForConformant`, `TestLandlock_ProbeCatchesMisloweredWritable`, `TestLandlock_PerBindingDenyClosed` | ✅ |
 | 10 | `launch` | `(*landlock.Backend).Launch` | `TestLandlock_ConfineDeniesOutside`, `TestLaunchConfined_ProbesFirst` | ✅ |
 | 11 | `ConfinementSpec` | `containment.ConfinementSpec` | `TestReadOnlyAndPermissiveSpecs` | ✅ |
@@ -243,11 +243,18 @@ type Backend interface {
     Name() string                       // "landlock"
     EnforcementTier() string            // "native-syscall-deny"
     Available() (bool, string)          // (ok, why) — ABI probe + platform
-    ProfileFor(roots []string, allowNetwork bool) string
+    SupportsNetwork(mode NetMode) bool  // fail-closed network-capability gate (Plan 4)
+    ProfileFor(roots []string, network NetworkPolicy) string
     Probe(profile string, workingRoot string, roots []string) error
-    Launch(profile string, workingRoot string, command []string, env []string) (LaunchResult, error)
+    Launch(profile string, req LaunchRequest) (LaunchResult, error)
 }
 ```
+
+> **Plan 4 evolution.** `ProfileFor` originally took `allowNetwork bool` and
+> `ResolveSpec` refused `NetBroker` (the paddock was FS-only; see §16.2 #9). Once
+> the Linux paddock gained Landlock ≥ ABI 4 network control, the contract carries
+> the full `NetworkPolicy` and the backend gates enforceability via
+> `SupportsNetwork`.
 
 Spec types (from `_execution_capability.py:74-158`):
 
@@ -273,25 +280,27 @@ type ConfinementSpec struct {
 func ReadOnlySpec() ConfinementSpec
 func PermissiveFor(workingPath string) ConfinementSpec // 1 root + allow-all egress
 
-// ResolveSpec is _resolve_spec: canonicalizes roots, maps the network axis, and
-// refuses a broker (host-filtered) policy — the paddock cannot filter by host.
-func ResolveSpec(spec ConfinementSpec) (roots []string, allowNetwork bool, err error)
+// ResolveSpec is _resolve_spec: canonicalizes roots and validates the network
+// axis. NetBroker requires a broker port; backend enforceability is checked by
+// Backend.SupportsNetwork (Plan 4).
+func ResolveSpec(spec ConfinementSpec) (roots []string, network NetworkPolicy, err error)
 ```
 
 `LaunchConfined` is the single real-execution verb and the fail-closed gate
 (mirrors `_execution_capability.py:183-195`) — **probe first, launch second**:
 
 ```go
-func LaunchConfined(b Backend, spec ConfinementSpec, workingRoot string,
-    command []string, env []string) (LaunchResult, error) {
-
-    roots, allowNet, err := ResolveSpec(spec)
+func LaunchConfined(b Backend, spec ConfinementSpec, req LaunchRequest) (LaunchResult, error) {
+    roots, network, err := ResolveSpec(spec)
     if err != nil { return LaunchResult{}, err }
-    profile := b.ProfileFor(roots, allowNet)
-    if err := b.Probe(profile, workingRoot, roots); err != nil {
+    if !b.SupportsNetwork(network.Mode) {
+        return LaunchResult{}, ErrUnsupportedConfinementSpec // never silently ignore the network axis
+    }
+    profile := b.ProfileFor(roots, network)
+    if err := b.Probe(profile, req.WorkingRoot, roots); err != nil {
         return LaunchResult{}, err // ErrPaddockNotEstablished — never run unconfined
     }
-    return b.Launch(profile, workingRoot, command, env)
+    return b.Launch(profile, req)
 }
 ```
 
@@ -381,10 +390,11 @@ Mirrors `_landlock_containment.py:105-194`. Implements `containment.Backend`.
 
 - **`Available()`** — platform gate + `ABI()`; maps `ENOSYS`/`EPERM` to
   `ErrUnsupportedKernel` with a distinguishing message.
-- **`ProfileFor(roots, allowNetwork)`** — returns `json.Marshal(canonical(roots))`
-  (the backend-private profile). `allowNetwork` is **ignored** (FS-only), accepted
-  for contract parity — byte-for-byte the same JSON as Python
-  (`test_landlock_containment.py:36-43`).
+- **`ProfileFor(roots, network)`** — returns the backend-private profile JSON
+  (`{"roots":[…],"net":{"mode":…,"port":…}}`). The roots are canonical; the
+  network pin carries the mode and, for `broker`, the port. (Plan 4 evolved this
+  from `(roots, allowNetwork bool)` — §16.2 #9.) The FS roots mirror Python's
+  `profile_for`; the net section is Go-only.
 - **`Probe(profile, workingRoot, roots)`** — the fail-closed §6 contract,
   **exit-code aware** (mirrors `_landlock_containment.py:157-194`). Three checks,
   in order:
@@ -566,7 +576,7 @@ against the development host (Landlock ABI 11).
 | ✅ | (interface conformity) | Linux | `fakeBackend` + `landlock` satisfy `containment.Backend` | compiles against the interface; name/tier/available OK |
 | ✅ | `TestLandlock_ABIDetection` | any Linux | `ABI()` | ≥1; clean `ErrUnsupportedKernel` on ENOSYS; EPERM distinguished |
 | ✅ | `TestLandlock_MaskIsV1Compatible` | any Linux | inspect `WriteAccessMask` | excludes bits 0,2,3,13,14,15; includes 1,4,5,6-12 |
-| ✅ | `TestLandlock_ProfileForParity` | Linux | `ProfileFor` on 0/1/N roots | decoded root array matches (profile is backend-private; §16.2 #7) |
+| ✅ | `TestLandlock_ProfileFor` | Linux | `ProfileFor` on 0/1/N roots + net | decoded roots + net mode match (profile is backend-private; §16.2 #7) |
 | ✅ | `TestLandlock_ConfineDeniesOutside` | privileged | confined write in/out of root | in OK; out denied, no file |
 | ✅ | `TestLandlock_ReadOnlyDeniesEverywhere` | privileged | `ProfileFor(nil)` | all writes denied |
 | ✅ | `TestLandlock_PerBindingDenyClosed` | privileged | one RW root + ungranted sibling | RW OK; sibling & unbound denied |
@@ -849,6 +859,13 @@ only `sandbox/landlock` pulls `golang.org/x/sys` directly.
    Because the monitor id is a plan-descriptor field, Go permission-plan digests
    diverge from Python's by construction — the one intentional vocabulary
    divergence; semantics are unchanged. See the roadmap's vocabulary note.
+9. **The `Backend` contract evolved for the network axis (Plan 4).** The interface
+   is now `ProfileFor(roots []string, network NetworkPolicy) string` (was
+   `(roots, allowNetwork bool)`) with a new `SupportsNetwork(mode NetMode) bool`
+   fail-closed gate, and the backend-private profile is a JSON object
+   (`{"roots":[…],"net":{"mode":…,"port":…}}`). Python's `profile_for` stays
+   `(roots, *, allow_network)` because its Linux jail is FS-only; Go needs the
+   full policy to pin egress (Landlock ≥ ABI 4). See Plan 4 §7–8.
 
 ### 16.3 Verification (all green)
 

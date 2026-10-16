@@ -16,6 +16,9 @@ func abi() (int, error) {
 	return 0, fmt.Errorf("%w: Landlock is Linux-only", containment.ErrUnsupportedKernel)
 }
 
-func confine([]string) error {
+// supportsNetwork is always false off Linux.
+func supportsNetwork() bool { return false }
+
+func confine([]string, netPolicy) error {
 	return fmt.Errorf("%w: Landlock is Linux-only", containment.ErrUnsupportedKernel)
 }

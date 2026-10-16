@@ -24,7 +24,8 @@ func (f *fakeBackend) Available() (bool, string) {
 	}
 	return false, "unavailable"
 }
-func (f *fakeBackend) ProfileFor([]string, bool) string { return "[]" }
+func (f *fakeBackend) ProfileFor([]string, NetworkPolicy) string { return "[]" }
+func (f *fakeBackend) SupportsNetwork(NetMode) bool              { return true }
 func (f *fakeBackend) Probe(string, string, []string) error {
 	f.probed = true
 	return f.probeErr
@@ -45,10 +46,15 @@ func TestReadOnlyAndPermissiveSpecs(t *testing.T) {
 	}
 }
 
-func TestResolveSpec_BrokerRefuses(t *testing.T) {
-	_, _, err := ResolveSpec(ConfinementSpec{Network: NetworkPolicy{Mode: NetBroker}})
-	if !errors.Is(err, ErrUnsupportedConfinementSpec) {
-		t.Fatalf("want ErrUnsupportedConfinementSpec, got %v", err)
+func TestResolveSpec_Broker(t *testing.T) {
+	// A broker policy without a port cannot be pinned — refuse.
+	if _, _, err := ResolveSpec(ConfinementSpec{Network: NetworkPolicy{Mode: NetBroker}}); !errors.Is(err, ErrUnsupportedConfinementSpec) {
+		t.Fatalf("broker without a port: want ErrUnsupportedConfinementSpec, got %v", err)
+	}
+	// With a port it resolves; the backend gates enforceability (SupportsNetwork).
+	_, network, err := ResolveSpec(ConfinementSpec{Network: NetworkPolicy{Mode: NetBroker, BrokerPort: 8080}})
+	if err != nil || network.Mode != NetBroker || network.BrokerPort != 8080 {
+		t.Fatalf("broker with a port: %+v, %v", network, err)
 	}
 }
 
@@ -58,15 +64,15 @@ func TestResolveSpec_CanonicalizesRoots(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "a"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	roots, allow, err := ResolveSpec(ConfinementSpec{
+	roots, network, err := ResolveSpec(ConfinementSpec{
 		WritableRoots: []string{unclean},
 		Network:       NetworkPolicy{Mode: NetAllowAll},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !allow {
-		t.Fatal("allow_all must map to allowNetwork=true")
+	if network.Mode != NetAllowAll {
+		t.Fatalf("network mode = %q, want allow_all", network.Mode)
 	}
 	if len(roots) != 1 || roots[0] != Canonical(root) {
 		t.Fatalf("roots = %v, want [%s]", roots, Canonical(root))

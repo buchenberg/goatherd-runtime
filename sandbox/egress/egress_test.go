@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 )
 
 func TestHostAtom_Matches(t *testing.T) {
@@ -170,5 +172,21 @@ func TestBroker_BadRequest(t *testing.T) {
 	}
 	if !strings.Contains(status, "400") {
 		t.Fatalf("bad request = %q", status)
+	}
+}
+
+func TestPolicyFromNetwork(t *testing.T) {
+	p, err := PolicyFromNetwork(containment.NetworkPolicy{Mode: containment.NetBroker, AllowedHosts: []string{"api.example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := p.Decide("api.example.com", 443); d.Verdict != VerdictAllow {
+		t.Fatalf("allowed: %+v", d)
+	}
+	if d, _ := p.Decide("evil.example.com", 443); d.Verdict != VerdictDeny {
+		t.Fatalf("default-deny: %+v", d)
+	}
+	if _, err := PolicyFromNetwork(containment.NetworkPolicy{Mode: containment.NetAllowAll}); err == nil {
+		t.Fatal("a non-broker mode must be refused")
 	}
 }

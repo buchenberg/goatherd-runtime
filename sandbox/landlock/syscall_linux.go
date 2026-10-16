@@ -20,7 +20,17 @@ const (
 
 	createRulesetVersion = 1 // LANDLOCK_CREATE_RULESET_VERSION
 	rulePathBeneath      = 1 // LANDLOCK_RULE_PATH_BENEATH
+	ruleNetPort          = 2 // LANDLOCK_RULE_NET_PORT
 )
+
+// Network access-control bits (handled_access_net), added in Landlock ABI 4.
+const (
+	netConnectTCP = 2 // LANDLOCK_ACCESS_NET_CONNECT_TCP
+)
+
+// minABINetwork is the Landlock ABI that supports network access control
+// (kernel 6.7). Below it, only NetAllowAll is representable.
+const minABINetwork = 4
 
 // WriteAccessMask is the v1-compatible filesystem write-access mask, bit i ==
 // (1 << i):
@@ -51,6 +61,14 @@ type rulesetAttr struct {
 	HandledAccessFS uint64
 }
 
+// rulesetAttrNet mirrors struct landlock_ruleset_attr at ABI >= 4, where the
+// network axis (handled_access_net) is the second u64. Only sent when the ABI
+// supports it (a 16-byte struct is E2BIG below ABI 4).
+type rulesetAttrNet struct {
+	HandledAccessFS  uint64
+	HandledAccessNet uint64
+}
+
 // pathBeneathAttr mirrors struct landlock_path_beneath_attr, which the kernel
 // declares __attribute__((packed)): u64 + s32 = 12 bytes. The trailing pad makes
 // the Go struct 16-byte aligned; the kernel copies only the first 12 bytes, and
@@ -59,6 +77,12 @@ type pathBeneathAttr struct {
 	AllowedAccess uint64
 	ParentFD      int32
 	_             uint32
+}
+
+// netPortAttr mirrors struct landlock_net_port_attr: two u64s (no packing).
+type netPortAttr struct {
+	AllowedAccess uint64
+	Port          uint64
 }
 
 // abi returns the kernel Landlock ABI version (>= 1 when supported), or an error
@@ -80,13 +104,36 @@ func abi() (int, error) {
 	return version, nil
 }
 
+// supportsNetwork reports whether this kernel can pin network egress.
+func supportsNetwork() bool {
+	version, err := abi()
+	return err == nil && version >= minABINetwork
+}
+
 // confine restricts the calling thread — and, through it, its children — so that
-// filesystem writes are permitted only beneath roots. Reads and exec are not
-// governed. Any setup failure returns an error so the caller can fail closed.
-func confine(roots []string) error {
-	attr := rulesetAttr{HandledAccessFS: WriteAccessMask}
-	fd, _, errno := unix.Syscall(sysCreateRuleset,
-		uintptr(unsafe.Pointer(&attr)), unsafe.Sizeof(attr), 0)
+// filesystem writes are permitted only beneath roots and, when net denies or
+// pins, TCP egress is permitted only to net.Port (broker) or nowhere
+// (deny_all). Reads, exec, and — under allow_all — the network are not governed.
+// Any setup failure returns an error so the caller can fail closed.
+func confine(roots []string, net netPolicy) error {
+	handleNet := net.Mode == "deny_all" || net.Mode == "broker"
+
+	var fd uintptr
+	var errno unix.Errno
+	if handleNet {
+		version, err := abi()
+		if err != nil {
+			return err
+		}
+		if version < minABINetwork {
+			return fmt.Errorf("%w: network pinning requires Landlock ABI >= %d (have %d)", containment.ErrUnsupportedKernel, minABINetwork, version)
+		}
+		attr := rulesetAttrNet{HandledAccessFS: WriteAccessMask, HandledAccessNet: netConnectTCP}
+		fd, _, errno = unix.Syscall(sysCreateRuleset, uintptr(unsafe.Pointer(&attr)), unsafe.Sizeof(attr), 0)
+	} else {
+		attr := rulesetAttr{HandledAccessFS: WriteAccessMask}
+		fd, _, errno = unix.Syscall(sysCreateRuleset, uintptr(unsafe.Pointer(&attr)), unsafe.Sizeof(attr), 0)
+	}
 	if errno != 0 {
 		return fmt.Errorf("landlock_create_ruleset: %w", errno)
 	}
@@ -103,6 +150,15 @@ func confine(roots []string) error {
 		_ = unix.Close(dirfd)
 		if addErr != 0 {
 			return fmt.Errorf("landlock_add_rule %q: %w", root, addErr)
+		}
+	}
+
+	if net.Mode == "broker" {
+		rule := netPortAttr{AllowedAccess: netConnectTCP, Port: uint64(net.Port)}
+		_, _, addErr := unix.Syscall6(sysAddRule, fd, ruleNetPort,
+			uintptr(unsafe.Pointer(&rule)), 0, 0, 0)
+		if addErr != 0 {
+			return fmt.Errorf("landlock_add_rule(net port %d): %w", net.Port, addErr)
 		}
 	}
 
