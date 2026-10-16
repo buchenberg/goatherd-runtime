@@ -110,6 +110,25 @@ func supportsNetwork() bool {
 	return err == nil && version >= minABINetwork
 }
 
+// devWriteRoot is the one non-workspace path every profile grants writes to:
+// /dev, for /dev/null, /dev/zero, /dev/tty, and friends. It mirrors Seatbelt's
+// _DEV (_seatbelt_containment.py:25), which appends
+// `(allow file-write* (subpath "/dev"))` to every Python profile.
+//
+// WHY THE WHOLE SUBTREE, not just the device nodes: landlock_add_rule with
+// LANDLOCK_RULE_PATH_BENEATH requires a DIRECTORY — a rule on a device file
+// (/dev/null) is rejected with EINVAL — and Landlock has no deny rules, so a
+// subpath cannot be carved back out. The only way to allow /dev/null (which
+// shells, `go test`, and build tools write constantly) is to grant /dev. The
+// cost is that the world-writable tmpfs mounts /dev/shm and /dev/mqueue come
+// with it — the same trade-off Seatbelt makes; the alternative is denying
+// /dev/null outright.
+//
+// It is granted as an always-present rule (not a "writable root"): it is not
+// part of the spec, never probed, and does not appear in the profile a caller
+// compiles.
+const devWriteRoot = "/dev"
+
 // confine restricts the calling thread — and, through it, its children — so that
 // filesystem writes are permitted only beneath roots and, when net denies or
 // pins, TCP egress is permitted only to net.Port (broker) or nowhere
@@ -151,6 +170,21 @@ func confine(roots []string, net netPolicy) error {
 		if addErr != 0 {
 			return fmt.Errorf("landlock_add_rule %q: %w", root, addErr)
 		}
+	}
+
+	// /dev is granted in every profile, like Seatbelt's _DEV. See devWriteRoot
+	// for why the whole subtree (landlock_add_rule needs a directory, so a
+	// single device file cannot be granted). A failed add is fail-closed.
+	devfd, err := unix.Open(devWriteRoot, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open %q: %w", devWriteRoot, err)
+	}
+	devRule := pathBeneathAttr{AllowedAccess: WriteAccessMask, ParentFD: int32(devfd)}
+	_, _, devErr := unix.Syscall6(sysAddRule, fd, rulePathBeneath,
+		uintptr(unsafe.Pointer(&devRule)), 0, 0, 0)
+	_ = unix.Close(devfd)
+	if devErr != 0 {
+		return fmt.Errorf("landlock_add_rule %q: %w", devWriteRoot, devErr)
 	}
 
 	if net.Mode == "broker" {
