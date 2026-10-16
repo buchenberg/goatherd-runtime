@@ -110,6 +110,17 @@ func supportsNetwork() bool {
 	return err == nil && version >= minABINetwork
 }
 
+// devWriteRoot is the one non-workspace path every profile grants writes to:
+// /dev, for /dev/null, /dev/zero, /dev/tty, and friends. It mirrors Seatbelt's
+// _DEV (_seatbelt_containment.py:25), which every Python profile allows.
+//
+// Landlock governs writes by the paths a ruleset covers, so without this a
+// confined body cannot even run `cmd > /dev/null` — which shells, `go test`,
+// and build tools do constantly. It is granted as an always-present rule (not
+// a "writable root"): it is not part of the spec, never probed, and does not
+// appear in the profile a caller compiles.
+const devWriteRoot = "/dev"
+
 // confine restricts the calling thread — and, through it, its children — so that
 // filesystem writes are permitted only beneath roots and, when net denies or
 // pins, TCP egress is permitted only to net.Port (broker) or nowhere
@@ -150,6 +161,20 @@ func confine(roots []string, net netPolicy) error {
 		_ = unix.Close(dirfd)
 		if addErr != 0 {
 			return fmt.Errorf("landlock_add_rule %q: %w", root, addErr)
+		}
+	}
+
+	// /dev is granted in every profile, like Seatbelt's _DEV: a confined body
+	// opens /dev/null and friends routinely, and Landlock denies any path no
+	// rule covers. The open is best-effort (a missing /dev is not a confine
+	// failure), but a failed add_rule fails closed.
+	if dirfd, err := unix.Open(devWriteRoot, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0); err == nil {
+		rule := pathBeneathAttr{AllowedAccess: WriteAccessMask, ParentFD: int32(dirfd)}
+		_, _, addErr := unix.Syscall6(sysAddRule, fd, rulePathBeneath,
+			uintptr(unsafe.Pointer(&rule)), 0, 0, 0)
+		_ = unix.Close(dirfd)
+		if addErr != 0 {
+			return fmt.Errorf("landlock_add_rule %q: %w", devWriteRoot, addErr)
 		}
 	}
 
