@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	trace "github.com/buchenberg/shepherd-kernel-go"
 	shepherd "github.com/buchenberg/shepherd-runtime-go"
 	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
 	"github.com/buchenberg/shepherd-runtime-go/internal/rttest"
@@ -256,5 +257,72 @@ func TestReversible_HandlerRunsConfined(t *testing.T) {
 	}
 	if out.Result.Evidence == "" {
 		t.Fatal("a jailed run must produce authority evidence")
+	}
+}
+
+func TestReversible_RecordsRunOperation(t *testing.T) {
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
+	repo := gittest.NewTestRepo(t)
+	parent, err := mgr.Create("run:rec-main", git.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:    "run:rec-1",
+		NewSandbox: worktreeFactory(t, repo),
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		return Result{ExitCode: 0}, writeIn(rc, "x.txt", "x")
+	}); err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+
+	recs, err := trace.ScanRecordsBySchema(context.Background(), store, SchemaRunExecuted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("run records = %d, want 1", len(recs))
+	}
+	if recs[0].Payload["isolation"] != "isolated" || recs[0].Payload["disposition"] != "merge" {
+		t.Fatalf("run record payload = %+v", recs[0].Payload)
+	}
+}
+
+func TestReversible_RecordsEvidence(t *testing.T) {
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
+	repo := gittest.NewTestRepo(t)
+	parent, err := mgr.Create("run:ev-main", git.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeBackend{available: true}
+
+	if _, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:   "run:ev-1",
+		Placement: confinement.PlacementJail,
+		Backend:   fake,
+		NewSandbox: func(string) (sandbox.Sandbox, error) {
+			return git.NewWorktreeSandbox(repo, filepath.Join(t.TempDir(), "wt"),
+				git.WithExec(fake, confinement.PlacementJail)), nil
+		},
+	}, func(ctx context.Context, rc *RunContext) (Result, error) {
+		res, err := rc.Scope.Sandbox().Exec(ctx, sandbox.ExecRequest{Command: "true", AuthorityMatch: "m1"})
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Evidence: res.AuthorityEvidence, ExitCode: res.ExitCode, Denied: res.Denied}, nil
+	}); err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+
+	recs, err := trace.ScanRecordsBySchema(context.Background(), store, SchemaRunExecuted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Payload["authority_evidence"] == "" {
+		t.Fatalf("run record must carry the authority-evidence digest: %+v", recs)
 	}
 }

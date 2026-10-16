@@ -93,12 +93,19 @@ type RunContext struct {
 	Capability containment.Capability
 }
 
-// Result is a handler's outcome: its value plus the authority-evidence digest
-// (the jail monitor's permission-plan digest, when a jailed run recorded one).
+// Result is a handler's outcome: its value, the authority-evidence digest (the
+// jail monitor's permission-plan digest, when a jailed run recorded one), and
+// the run's primary execution status.
 type Result struct {
 	Value    map[string]any
 	Evidence string
+	ExitCode int
+	Denied   bool
 }
+
+// SchemaRunExecuted is the runtime record the wrap appends for each run — the
+// durable trail of isolation, disposition, authority evidence, and outcome.
+const SchemaRunExecuted = "shepherd.run.executed.v1"
 
 // Handler runs the run's work in RunContext. It is the structural analogue of a
 // driver's prepare_bound: a handler receives execution authority per call and
@@ -210,11 +217,18 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 	}
 
 	result, runErr := handler(ctx, &RunContext{Scope: runScope, Capability: capability})
+	recordErr := recordRun(ctx, runScope, parent, isolation, disposition, result)
 	if runErr != nil {
 		if !opts.NonReversible {
 			_ = mgr.Discard(runScope.ID())
 		}
 		return Outcome{Scope: runScope, Isolation: isolation, Disposition: disposition}, runErr
+	}
+	if recordErr != nil {
+		if !opts.NonReversible {
+			_ = mgr.Discard(runScope.ID())
+		}
+		return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition}, recordErr
 	}
 
 	if opts.NonReversible {
@@ -268,4 +282,24 @@ func workDirOf(s *shepherd.Scope) string {
 		return ad.Address()
 	}
 	return ""
+}
+
+// recordRun persists the run's execution record on the run scope's owner path:
+// isolation, disposition, the authority-evidence digest, and the outcome. It is
+// the durable half of the authority trail — Plan 1 surfaced the digest on the
+// ExecResult; this writes it into the trace.
+func recordRun(ctx context.Context, runScope, parent *shepherd.Scope, isolation string, disposition Disposition, result Result) error {
+	payload := map[string]any{
+		"owner":              runScope.OwnerID(),
+		"parent_scope":       parent.ID(),
+		"isolation":          isolation,
+		"disposition":        string(disposition),
+		"authority_evidence": result.Evidence,
+		"exit_code":          result.ExitCode,
+		"denied":             result.Denied,
+	}
+	if _, err := runScope.AppendFact(ctx, SchemaRunExecuted, "run:executed", payload); err != nil {
+		return fmt.Errorf("run: record execution: %w", err)
+	}
+	return nil
 }

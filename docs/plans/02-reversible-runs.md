@@ -12,11 +12,13 @@
 > `Seal`, `Settle`, merge gate, recovery). This plan is a *composition* layer that
 > joins those primitives to the Plan-1 confined `Exec` — not new substrate.
 >
-> **Status:** Phase 1 (the reversible-run wrap) is implemented in
-> [`run/reversible.go`](../../run/reversible.go), with 9 passing tests. Phases 2
-> (handler seam), 3 (recorded operation + evidence persistence), and 4
-> (`authority_merge`) remain. Merge propagates physically via `Seal` +
-> `SettleSelect`/`SettleApply` — `CommitMerge` refuses isolated children (§9).
+> **Status:** Phase 1 (the reversible-run wrap) and Phase 3 (the recorded run
+> operation + evidence persistence) are implemented in
+> [`run/reversible.go`](../../run/reversible.go) and
+> [`fact.go`](../../fact.go) — 11 passing tests. Phase 2 (handler/negotiation
+> seam) and Phase 4 (`authority_merge`, pending the compiler) remain. Merge
+> propagates physically via `Seal` + `SettleSelect`/`SettleApply` — `CommitMerge`
+> refuses isolated children (§9).
 
 ## 1. Objective & Context
 
@@ -218,22 +220,28 @@ refuses to run when handed a capability with no backend (never a silent
 in-process fallback). Kept minimal; the driver *binding* machinery is out of
 scope (host integration).
 
-## 8. Phase 3 — Recorded-operation boundary + evidence persistence
+## 8. Phase 3 — Recorded run operation + evidence persistence (implemented)
 
 Python brackets dispatch in `runtime_operation_boundary`, yielding a durable
 operation id the run records. Go's recording is `store.Append(ctx,
-trace.TrustedAppendContext, trace.AppendBatch{...})` returning a receipt. Phase 3
-adds:
+trace.TrustedAppendContext, trace.AppendBatch{...})` returning an
+`AppendReceipt`. As built:
 
-1. **A run operation record** — an append bracketing the handler, capturing:
+1. **The append seam.** [`(*Scope).AppendFact`](../../fact.go) appends a capture
+   record on the scope's owner path — the runtime's general "record on this
+   scope" seam.
+2. **The run record.** `run` appends one `shepherd.run.executed.v1`
+   (`run.SchemaRunExecuted`) record per run, capturing `owner`, `parent_scope`,
    `isolation`, `disposition`, `authority_evidence` (the `confinement.Evidence`
-   digest), the confined `ExecResult.ExitCode`/`Denied`, and the run scope id.
-2. **Evidence persistence** — the digest Plan 1 produced on `ExecResult` is
-   written into that record, closing Plan 1 §16.4's "surfaced but not persisted".
-3. **Schema discipline.** If the run operation needs a new record shape, it
-   follows the kernel's schema rules (canonical JSON, content-addressed ids, law
-   coverage) — same discipline as every other record. Preferred: use an existing
-   record kind (a runtime fact) carrying the fields, avoiding a kernel ABI change.
+   digest), `exit_code`, and `denied`. The wrap records it right after the
+   handler returns, before any discard/disposition, so a failed run is still
+   recorded. Verified by `TestReversible_RecordsRunOperation` and
+   `TestReversible_RecordsEvidence`.
+3. **Evidence persistence** — the digest Plan 1 produced on `ExecResult` is now
+   written into the trace, closing Plan 1 §16.4's "surfaced but not persisted".
+4. **Schema discipline.** `shepherd.run.executed.v1` is a **runtime-level** record
+   — the kernel validates only that a schema ref is non-empty, so this needs no
+   kernel ABI change.
 
 ## 9. Phase 4 — Dispositions + the non-reversible opt-out
 
@@ -291,8 +299,8 @@ a jail is exercised). Build the harness on a git worktree sandbox.
 | **Seal disposition** | `success_disposition="seal"` | **Parity**: `DispositionSeal` + `Settle*` |
 | **authority_merge disposition** | `merge_with_authority` | **Deferred** to Plan 3 (compiler); refuses now |
 | **Loud non-reversible opt-out** | `non_reversible_run` | **Parity** (to build): `Options.NonReversible` + recorded |
-| **Recorded operation bracket** | `runtime_operation_boundary` | **To build** (Phase 3): run operation record |
-| **Authority evidence persisted** | `permission_plan_digest` in the run | **To build** (Phase 3) |
+| **Recorded operation bracket** | `runtime_operation_boundary` | **Parity**: `shepherd.run.executed.v1` run record (`(*Scope).AppendFact`) |
+| **Authority evidence persisted** | `permission_plan_digest` in the run | **Parity**: the digest is written into the run record |
 | **Execution-bound driver protocol** | `ExecutionBoundDriver`/`prepare_bound` | **Adapted**: `run.Handler` + `RunContext`; driver binding out of scope |
 | **Recovery across restart** | trace-projected registry | **Parity/stronger**: `RecoverScopes` |
 | **Review/supervision gate** | `merge:proposed` events | **Parity/stronger**: `Supervisor.ReviewMerge`, `MergeReviewer` |
