@@ -298,8 +298,16 @@ it); the work was moved onto a branch and landed via PR #338.
    boundary. Config: `agents.subagent.containment: auto | off | advisory |
    paddock` (alias `jail`); `network` defaults to `allow_all`. `paddock` fails
    closed.
-2. ⏳ Config `agents.subagent.network: allow_all | deny_all | broker` — only the
-   default is wired.
+2. ✅ Config `agents.subagent.network: allow_all | deny_all | broker` (+
+   `network_hosts`), with `allow_all` the default (yaah PR #348). `broker` starts
+   a session broker, pins egress to its port, routes through it
+   (`HTTP(S)_PROXY`), and admits only the allowlist. A restrictive posture is
+   **refused** when it cannot be applied — no usable jail, `containment: off`, a
+   workdir-less dispatch, or Landlock ABI < 4 — rather than running open, and the
+   tools that reach the network from yaah's own process (`http`, `webfetch`) are
+   omitted from a restrictive host-lane dispatch. Two limits stated rather than
+   implied: the pin is port-scoped (netns needed for loopback-only), and the
+   isolated lane's egress is the container's (see the config reference).
 3. ✅ **The resolved placement is recorded** on the sub-agent's trace
    (`yaah.subagent.confinement.v1`: requested · resolved · backend · tier ·
    writable root), so advisory is never read as jailed. The advisory resolution
@@ -375,8 +383,8 @@ everything below). It found three showstoppers, all invisible to the seam tests:
 All three are pinned by the acceptance: disabling the redirect's shim, or
 re-pinning v0.1.0, fails it.
 
-**Still open (not gating the flip):** the `agents.subagent.network` config beyond
-its default.
+**Remaining on this axis:** a read-only review world (the `oversee` write check
+detects rather than prevents), and the macOS Seatbelt tier (Plan 4a).
 
 #### The writable-root problem — solved by redirecting ✅ (yaah PR #339)
 

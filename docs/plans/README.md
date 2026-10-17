@@ -167,7 +167,9 @@ confiner to the one retained launch.
   tool settles it (`select`/`apply`/`release`/`discard`); `agents.subagent.mode:
   retained|shared` (default `retained`). Design:
   [`07-phase2-retention-spine.md`](07-phase2-retention-spine.md).
-- **Phase 3:** ✅ done — confinement on the unified retained path. The **env
+- **Phase 3:** ✅ done — egress config included (`agents.subagent.network:
+  allow_all | deny_all | broker` + `network_hosts`, PR #348). Confinement on the
+  unified retained path. The **env
   redirect** (`HOME`/`TMPDIR`/`GOCACHE` → a scratch inside the worktree, scrubbed
   before `Seal`) is in (PR #339), as is doctor's capability check, the runtime
   `/dev` allowance (PR #4, shipped as `sandbox/landlock v0.1.1`), recording the
