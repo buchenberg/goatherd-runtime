@@ -31,7 +31,7 @@ test matrix. Plans 1–5 and 7 are written: 1–3 implemented; 4 Linux-side done
 | **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | [`04-egress-and-seatbelt.md`](04-egress-and-seatbelt.md) | 🚧 Phases 2–3 (Linux) done; 1 (Seatbelt) planned |
 | **5** | Container-tier parity | overlay changes → typed effects, the `copy` carrier, the `clonefile` carrier | [`05-container-tier.md`](05-container-tier.md) | 📝 scoped |
 | **6** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
-| **7** | yaah integration | **retained sub-agents** (the proposal/settlement spine) + Landlock confinement on that one path (orchestrator stays host-normal); placement config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | ✅ Phases 0–4 done (defaults on) |
+| **7** | yaah integration | **retained sub-agents** (the proposal/settlement spine) + Landlock confinement on that one path (orchestrator stays host-normal); placement config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | ✅ Phases 0–3 done (defaults on); Phase 4 removed |
 
 ## Plan 1 — Linux Landlock containment (done)
 
@@ -181,10 +181,11 @@ confiner to the one retained launch.
   commits at settlement — and stated in the sub-agent's prompt, the refusal
   message, and the config docs. Granting `<repo>/.git` was rejected: it would let
   a confined sub-agent rewrite the host repository.
-- **Phase 4 (north star):** ✅ done (PR #347) — `oversee(implement)`: retry-until-
-  acceptable as a first-class primitive over the retained proposal (worker →
-  reviewer → settle or discard-and-redispatch), with a token-carrying verdict
-  contract and a checked-for-writes reviewer. Design:
+- **Phase 4 (north star):** ❌ removed — `oversee` (worker → reviewer sub-agent →
+  settle) shipped in PR #347 and was taken out: shepherd's `gate` predicate is a
+  callable on the orchestrator side, not an agent. The retained lane plus
+  `proposal show`/`select`/`apply`/`discard` is that shape, with `discard` +
+  re-dispatch as the retry. Record:
   [`07-phase4-oversee.md`](07-phase4-oversee.md).
 - **Mandatory:** `landlock.MaybeRunTrampoline(os.Args)` in `yaah/main.go`.
 - See [`07-yaah-integration.md`](07-yaah-integration.md), incl. §11 (Python

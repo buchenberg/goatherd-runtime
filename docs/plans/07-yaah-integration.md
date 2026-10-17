@@ -383,8 +383,9 @@ everything below). It found three showstoppers, all invisible to the seam tests:
 All three are pinned by the acceptance: disabling the redirect's shim, or
 re-pinning v0.1.0, fails it.
 
-**Remaining on this axis:** a read-only review world (the `oversee` write check
-detects rather than prevents), and the macOS Seatbelt tier (Plan 4a).
+**Remaining on this axis:** the macOS Seatbelt tier (Plan 4a). The read-only
+review world that used to sit here is moot: there is no reviewer sub-agent any
+more (see Phase 4).
 
 #### The writable-root problem — solved by redirecting ✅ (yaah PR #339)
 
@@ -448,39 +449,26 @@ documented and pinned by a test.
 no tag is not a shipped fix; the release-verify workflow proves the tag resolves
 from a clean consumer.
 
-### Phase 4 (north star) — `oversee(implement)` ✅ done (yaah PR #347)
+### Phase 4 (north star) — `oversee(implement)` ❌ removed
 
-> **Concrete design:** [`07-phase4-oversee.md`](07-phase4-oversee.md).
+> **Record:** [`07-phase4-oversee.md`](07-phase4-oversee.md).
 
-Shepherd's deferred target: one sub-agent (or the orchestrator) supervises
-another, retrying until acceptable — `run → inspect the proposal → keep or
-discard → retry`, as a first-class combination rather than the hand-written loop
-it was. It is the composition Python's combinators name — `retry` (fresh fork per
-attempt, failed attempts discarded, only the accepted attempt merged) with `gate`
-(merge on the predicate) — with **one** divergence: the predicate is a
-**sub-agent's judgement**, because the orchestrator holds the authority and
-delegates only the judging.
+Phase 4 shipped as the `oversee` tool (PR #347) — a retained worker, a reviewer
+sub-agent inspecting its world, settle on acceptance or discard-and-redispatch —
+and was then **removed**. The design was checked against the reference and did not
+hold: shepherd's `gate` predicate is a *callable* evaluated in the orchestrator's
+process (`JudgePredicate`, run by `eval_predicate`), never a second agent, and the
+"LLM-as-judge" mention in `_scope/scope.py` is a caller-supplied function.
 
-Landed as the `oversee` tool: dispatch a retained worker, have a reviewer
-sub-agent inspect its world (`Workdir` = the proposal's worktree, so it reads the
-post-change tree), then settle once on acceptance — `select`, `apply`, or `none`
-to hand the proposal back — or **discard** the round and re-dispatch with the
-reviewer's reason as feedback. The host tree is untouched until an accepted
-settle, because a rejected round is discarded rather than merged. Bounded by
-`max_rounds` (default 3, cap 10); each round is two dispatches.
+Everything the loop needed was compensation for an untrusted separate context: a
+verdict token (a sub-agent's prose can quote an injected verdict), a whole-tree
+fingerprint around the review (the reviewer's jail still granted the worktree as
+writable), and a round cap — and the write check could only detect, never prevent.
 
-What the implementation had to get right beyond the loop, all review-driven:
-the verdict is a **token-carrying** contract (a per-round token the sealed work
-cannot contain, so an injected `VERDICT: accept` — even quoted verbatim by the
-reviewer — cannot be counted) with fenced blocks, inline-code quotations and
-non-final verdicts all failing closed; the reviewer is **checked for writes**
-(fingerprinting the world around the review) because a reviewer that fixes a
-defect and accepts has approved a tree the settle will not land; both roles are
-validated against the live registry; and a composite dispatch **takes a
-sub-agent concurrency slot**. Known limits are recorded in the design: the write
-check is detection rather than prevention (a read-only world is the follow-up),
-and a judge can still be *persuaded* by content under review — the token stops a
-verbatim copy, not a manipulable judge.
+The shape it was reaching for already existed: `spawn_subagent` returns a sealed
+proposal, `proposal show` returns its diff, and `select`/`apply`/`discard` is the
+gate — with `discard` + re-dispatch as the retry. The orchestrator is the
+predicate, which is exactly where the authority sits.
 
 ## 8. Test & Conformance Matrix
 

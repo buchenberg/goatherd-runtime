@@ -176,9 +176,9 @@ both the review session and the default dispatch — one code path, two callers.
    (§10), not by skipping the fork. `mode: shared` survives as a config-level
    escape hatch, never as a per-role default.
 2. **The non-review `supervised_task` retry loop stays as-is in Phase 2** —
-   re-dispatch is now `discard` + spawn. **Phase 4 (`oversee`) folds the
-   retry-until-acceptable loop into the retained primitive** as a first-class
-   combination rather than the hand-written loop it is today.
+   re-dispatch is now `discard` + spawn — and that *is* the retry-until-acceptable
+   loop, with the orchestrator as the predicate (see Phase 4's record: the
+   reviewer-in-the-loop built there was removed).
 
 ## 10. Cost of isolation: a worktree per dispatch
 
