@@ -9,6 +9,10 @@
 //
 // This is a nested module so the root runtime keeps its "kernel + stdlib"
 // dependency footprint: only this module pulls golang.org/x/sys directly.
+//
+// The Windows member of the same family is .../sandbox/winacl; both
+// implement the containment.Backend contract, so a host picks one per
+// platform.
 package landlock
 
 import (
