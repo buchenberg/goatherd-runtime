@@ -3,12 +3,71 @@
 package winacl
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+// lockFilePath returns the path of the cross-process lock that serializes
+// the security-descriptor transactions on path.
+//
+// The lock lives under the system temp directory, never under the guarded
+// path (a lock inside the tree would inherit the grant and be writable by the
+// confined child) and never in the runner's argv. The lowercased path hashes
+// to the name so Windows's case-insensitive spellings map onto one lock.
+func lockFilePath(path string) (string, error) {
+	temp := os.TempDir()
+	if temp == "" {
+		return "", fmt.Errorf("winacl: no temp directory for the grant lock")
+	}
+	digest := sha256.Sum256([]byte(strings.ToLower(path)))
+	return filepath.Join(temp, "shepherd-winacl-locks", fmt.Sprintf("%x.lock", digest[:8])), nil
+}
+
+// withPathLock runs action holding the exclusive lock for path.
+//
+// The whole get-merge-set sequence runs under it: without it, two concurrent
+// grants read the same descriptor and the second write discards the first's
+// ACE — and a grant racing a revoke can restore a capability that was just
+// removed.
+func withPathLock(path string, action func() error) error {
+	lockPath, err := lockFilePath(path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		return fmt.Errorf("winacl: create the grant lock directory: %w", err)
+	}
+	// The lock file is opened WITHOUT delete sharing: a lock that could be
+	// removed and recreated under the holder would let two processes hold it.
+	lockPathUTF16, err := windows.UTF16PtrFromString(lockPath)
+	if err != nil {
+		return fmt.Errorf("winacl: encode the grant lock path: %w", err)
+	}
+	handle, err := windows.CreateFile(lockPathUTF16,
+		windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil, windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return fmt.Errorf("winacl: open the grant lock: %w", err)
+	}
+	defer windows.CloseHandle(handle)
+
+	overlapped := new(windows.Overlapped)
+	if err := windows.LockFileEx(handle, windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, overlapped); err != nil {
+		return fmt.Errorf("winacl: lock %s: %w", lockPath, err)
+	}
+	defer func() {
+		_ = windows.UnlockFileEx(handle, 0, 1, 0, overlapped)
+	}()
+	return action()
+}
 
 // GrantWrite applies the workspace grant to path: the write capability ACE,
 // the ambient-delete deny, and the Low no-write-up mandatory label.
@@ -29,6 +88,11 @@ import (
 // READ_CONTROL and WRITE_DAC. A directory that grants only Modify therefore
 // fails loudly here rather than silently losing the confinement.
 func GrantWrite(path string, writeSID, worldSID, lowSID *windows.SID) error {
+	return withPathLock(path, func() error { return grantWrite(path, writeSID, worldSID, lowSID) })
+}
+
+// grantWrite is the transaction body of GrantWrite, under the path lock.
+func grantWrite(path string, writeSID, worldSID, lowSID *windows.SID) error {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.LABEL_SECURITY_INFORMATION)
 	if err != nil {
@@ -111,6 +175,11 @@ func GrantWrite(path string, writeSID, worldSID, lowSID *windows.SID) error {
 // Low label, which is a standing change to a real directory and is recorded
 // as such.
 func RevokeWrite(path string, writeSID *windows.SID) error {
+	return withPathLock(path, func() error { return revokeWrite(path, writeSID) })
+}
+
+// revokeWrite is the transaction body of RevokeWrite, under the path lock.
+func revokeWrite(path string, writeSID *windows.SID) error {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION)
 	if err != nil {

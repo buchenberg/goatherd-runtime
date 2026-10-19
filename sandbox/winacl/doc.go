@@ -49,6 +49,33 @@
 // "native-access-check-deny" rather than "native-syscall-deny", and why the
 // containment stamp is "contained" rather than "full".
 //
+// # The one path the write restriction does not close
+//
+// The write restriction has a residual path, and it is stated here rather
+// than left for a reader to discover.
+//
+// Everyone is in the restricting list, and it has to be: without it, a body
+// that uses CNG cannot start (BCrypt fails to load), and without the logon
+// session SID, early DLL initialization fails outright. Both requirements are
+// pinned by the test suite.
+//
+// Because Everyone is in the restricting list, the second access check
+// admits a write wherever Everyone holds write. So a directory that grants
+// write to Everyone AND carries a Low integrity label is writable by a
+// confined child even when it is not a granted root: the low-to-low write is
+// not blocked by the integrity check, and Everyone satisfies the second check.
+//
+// A default Windows install does not produce such a directory — Everyone
+// holds no write over the user's trees, and nothing but this mechanism and
+// other sandbox tools stamp a tree Low. A tree another sandbox tool has
+// stamped Low is where the path is reachable. The behaviour is pinned by
+// TestWinACL_EveryoneWritableLowLabeledDirectoryIsNotConfined, so it is a
+// known boundary rather than an assumption.
+//
+// Everything else is closed: with no restricting SIDs at all, every access
+// check is refused, and the write allowlist is entirely the restricting list.
+// TestWinACL_RestrictingListIsTheWholeBasisOfAWrite pins that.
+//
 // # Module boundary
 //
 // This is a nested module so the root runtime keeps its "kernel + stdlib"

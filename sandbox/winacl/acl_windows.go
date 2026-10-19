@@ -32,10 +32,39 @@ const (
 	containerInherit = 0x00000002
 	// fileDeleteChild is FILE_DELETE_CHILD.
 	fileDeleteChild = 0x00000040
-	// grantMask is the write allowlist: create, append, write EA, write
-	// attributes, delete, read control, synchronize. It displays as "Modify".
-	grantMask = 0x000000F2 | 0x00010000 | 0x00020000 | 0x00100000
 )
+
+// The file access rights the capability grants. The values are the SDK's
+// FILE_* constants; they are spelled out rather than folded into a hex
+// literal because the two that are easy to lose are the two that break a
+// build: FILE_APPEND_DATA (FILE_ADD_SUBDIRECTORY on a directory) and
+// FILE_WRITE_ATTRIBUTES. A mask without them refuses a directory creation
+// inside the granted root.
+const (
+	fileReadData        = 0x00000001
+	fileWriteData       = 0x00000002
+	fileAppendData      = 0x00000004
+	fileReadEA          = 0x00000008
+	fileWriteEA         = 0x00000010
+	fileExecute         = 0x00000020
+	fileReadAttributes  = 0x00000080
+	fileWriteAttributes = 0x00000100
+	fileDelete          = 0x00010000
+	fileReadControl     = 0x00020000
+	fileSynchronize     = 0x00100000
+)
+
+// grantMask is the capability's allowlist: the write-class rights plus the
+// delete, read-control, and synchronize rights a body needs to work with the
+// files it creates.
+//
+// The write-class half is what the write-restricted intersection consults.
+// FILE_APPEND_DATA (FILE_ADD_SUBDIRECTORY on a directory) and
+// FILE_WRITE_ATTRIBUTES are part of it: without them a confined body cannot
+// create a directory or set an attribute inside a granted root, which is a
+// routine thing for a build to do.
+const grantMask = fileWriteData | fileAppendData | fileWriteEA | fileWriteAttributes |
+	fileReadAttributes | fileDelete | fileReadControl | fileSynchronize
 
 // aclHeader is the documented on-disk ACL header (8 bytes). The ACL struct
 // x/sys exposes has unexported fields, so the header is read through a byte

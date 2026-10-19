@@ -127,7 +127,7 @@ func probeWrite(profileDoc, workingRoot, target string) (bool, error) {
 	// Cleanup is parent-side: the parent is unconfined, so it is reliable
 	// regardless of the confined outcome.
 	_ = os.Remove(target)
-	rc, _, stderr, err := invoke(ProbeSentinel, profileDoc, workingRoot, []string{target}, 0)
+	rc, _, stderr, err := invoke(ProbeSentinel, profileDoc, workingRoot, []string{target}, nil, nil, 0)
 	_ = os.Remove(target)
 	if err != nil {
 		return false, err
@@ -160,7 +160,7 @@ func launch(profileDoc string, req containment.LaunchRequest) (containment.Launc
 	if req.Cwd != "" {
 		cwd = containment.Canonical(req.Cwd)
 	}
-	rc, stdout, stderr, err := invoke(RunnerSentinel, profileDoc, cwd, req.Command, req.Timeout)
+	rc, stdout, stderr, err := invoke(RunnerSentinel, profileDoc, cwd, req.Command, req.Env, req.Stdin, req.Timeout)
 	if err != nil {
 		return containment.LaunchResult{}, err
 	}
@@ -170,7 +170,12 @@ func launch(profileDoc string, req containment.LaunchRequest) (containment.Launc
 // invoke runs the runner in this binary with argv = [sentinel, profile,
 // extra...]. It returns the exit code and the captured output. A non-nil
 // error means the runner itself could not be started.
-func invoke(sentinel, profileDoc, dir string, extra []string, timeout time.Duration) (int, string, string, error) {
+//
+// The environment and the standard input are the runner's own, which is how
+// they reach the confined child: the runner builds the child's environment
+// block from its own, and the child's stdin is the runner's stdin. A nil
+// environment means the runner inherits its own, which is the caller's.
+func invoke(sentinel, profileDoc, dir string, extra []string, env []string, stdin []byte, timeout time.Duration) (int, string, string, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return -1, "", "", fmt.Errorf("winacl: locate own executable: %w", err)
@@ -188,6 +193,12 @@ func invoke(sentinel, profileDoc, dir string, extra []string, timeout time.Durat
 
 	cmd := exec.CommandContext(ctx, executable, argv...)
 	cmd.Dir = dir
+	if env != nil {
+		cmd.Env = env
+	}
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

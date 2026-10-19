@@ -5,6 +5,7 @@ package winacl
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"unsafe"
 
@@ -40,6 +41,10 @@ const (
 // the distinction the fail-closed probe rests on. A broken restriction must
 // not be able to pass as a working one.
 const ConfineFailedRC = 3
+
+// envProbeVariable is the environment variable the probe child reads when it
+// is asked to report the environment it was given.
+const envProbeVariable = "SHEPHERD_WINACL_TEST_VALUE"
 
 // MaybeRunRunner handles the runner's argv.
 //
@@ -136,9 +141,8 @@ func runConfined(rest []string, probe bool) int {
 		return ConfineFailedRC
 	}
 	// The default DACL names a restricting SID so the objects the child
-	// creates pass the write pass-2 check. The private temp SID is preferred
-	// when there is one; the workspace SID is next; Everyone closes the
-	// read-only case.
+	// creates pass the write pass-2 check. The workspace write SID is named
+	// when the profile has one; Everyone closes the read-only case.
 	defaultTrustee := worldSID
 	if len(writeSIDs) > 0 {
 		defaultTrustee = writeSIDs[0]
@@ -188,6 +192,16 @@ func probeChild(rest []string) int {
 		err = os.Remove(target)
 	case "read":
 		_, err = os.ReadFile(target)
+	case "mkdir":
+		err = os.Mkdir(target, 0o700)
+	case "writeenv":
+		// Writes the value of the named environment variable into the target
+		// file, so a test can prove the environment reached the child.
+		err = os.WriteFile(target, []byte(os.Getenv(envProbeVariable)), 0o600)
+	case "echo":
+		// Writes to standard output, so a test can prove the child's standard
+		// output reached the runner.
+		_, err = os.Stdout.WriteString("winacl-stdout\n")
 	default:
 		return 2
 	}
@@ -199,11 +213,25 @@ func probeChild(rest []string) int {
 
 // spawnAndWait runs argv under the token and returns the child's exit code.
 //
-// The child is assigned to an unnamed Job Object with KILL_ON_JOB_CLOSE, so a
-// runner that dies leaves no orphaned grandchildren behind. The job is
-// defense in depth: the token's restriction already holds on its own.
+// Every failure before the child is running returns ConfineFailedRC, never 1:
+// the probe reads 1 as "the write was denied", so an infrastructure failure
+// reported as 1 would let a broken paddock pass the probe as if it had
+// refused the write.
+//
+// The child is created SUSPENDED, assigned to the kill-on-close job, and only
+// then resumed: a child that runs before the assignment can spawn
+// grandchildren that are not in the job, and those outlive the runner.
+//
+// The runner's standard handles are duplicated as inheritable and handed to
+// the child through the startup info. Without that the child gets no standard
+// handles at all, and a body whose output matters — every body — is mute.
 func spawnAndWait(tok windows.Token, argv []string) int {
 	if len(argv) == 0 {
+		return ConfineFailedRC
+	}
+	executable, err := exec.LookPath(argv[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "winacl-run: resolve the command:", err)
 		return ConfineFailedRC
 	}
 	commandLine, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(argv))
@@ -211,41 +239,115 @@ func spawnAndWait(tok windows.Token, argv []string) int {
 		fmt.Fprintln(os.Stderr, "winacl-run: build the command line:", err)
 		return ConfineFailedRC
 	}
-	application, err := windows.UTF16PtrFromString(argv[0])
+	application, err := windows.UTF16PtrFromString(executable)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "winacl-run: build the application name:", err)
 		return ConfineFailedRC
 	}
 	environment := environmentBlock()
 
-	startup := windows.StartupInfo{}
+	stdin, stdout, stderr, releaseStdio, err := inheritableStdio()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "winacl-run: prepare the standard handles:", err)
+		return ConfineFailedRC
+	}
+	defer releaseStdio()
+
+	startup := windows.StartupInfo{
+		Cb:        uint32(unsafe.Sizeof(windows.StartupInfo{})),
+		Flags:     windows.STARTF_USESTDHANDLES,
+		StdInput:  stdin,
+		StdOutput: stdout,
+		StdErr:    stderr,
+	}
 	process := windows.ProcessInformation{}
-	if err := windows.CreateProcessAsUser(tok, application, commandLine, nil, nil, false,
-		windows.CREATE_UNICODE_ENVIRONMENT, environment, nil, &startup, &process); err != nil {
+	creationFlags := uint32(windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_SUSPENDED)
+	if err := windows.CreateProcessAsUser(tok, application, commandLine, nil, nil, true,
+		creationFlags, environment, nil, &startup, &process); err != nil {
 		fmt.Fprintln(os.Stderr, "winacl-run: CreateProcessAsUser:", err)
-		return 1
+		return ConfineFailedRC
 	}
 	defer windows.CloseHandle(process.Thread)
 	defer windows.CloseHandle(process.Process)
 
-	if job, err := createKillOnCloseJob(); err == nil {
-		defer windows.CloseHandle(job)
-		if err := windows.AssignProcessToJobObject(job, process.Process); err != nil {
-			// The restriction still holds; only the tree-lifetime backstop is
-			// missing, so this is reported rather than fatal.
-			fmt.Fprintln(os.Stderr, "winacl-run: assign the child to the kill-on-close job:", err)
-		}
-	} else {
+	// The job is the tree-lifetime backstop. A child that cannot be contained
+	// by it does not run: the restriction holds on the child itself, but a
+	// tree the job cannot bound is a tree that outlives the runner.
+	job, err := createKillOnCloseJob()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "winacl-run:", err)
+		_ = windows.TerminateProcess(process.Process, ConfineFailedRC)
+		return ConfineFailedRC
+	}
+	defer windows.CloseHandle(job)
+	if err := windows.AssignProcessToJobObject(job, process.Process); err != nil {
+		fmt.Fprintln(os.Stderr, "winacl-run: assign the child to the kill-on-close job:", err)
+		_ = windows.TerminateProcess(process.Process, ConfineFailedRC)
+		return ConfineFailedRC
+	}
+	if _, err := windows.ResumeThread(process.Thread); err != nil {
+		fmt.Fprintln(os.Stderr, "winacl-run: resume the child:", err)
+		_ = windows.TerminateProcess(process.Process, ConfineFailedRC)
+		return ConfineFailedRC
 	}
 
 	_, _ = windows.WaitForSingleObject(process.Process, waitTimeoutMillis)
 	var code uint32
 	if err := windows.GetExitCodeProcess(process.Process, &code); err != nil {
 		fmt.Fprintln(os.Stderr, "winacl-run: read the child's exit code:", err)
-		return 1
+		return ConfineFailedRC
 	}
 	return int(code)
+}
+
+// inheritableStdio duplicates the runner's standard handles as inheritable
+// handles, so the confined child receives them.
+//
+// The runner's own standard handles are not inheritable: they arrived through
+// the parent's handle list, and a handle list exists precisely to keep the
+// child's handles from being inherited further. Passing them on therefore
+// takes a duplicate marked inheritable.
+//
+// The child also inherits any other inheritable handle the runner holds. The
+// runner is this binary and holds none beyond the standard handles, the
+// process and thread handles (which are not inheritable), and the job (also
+// not inheritable), so the exposure is the three standard handles.
+func inheritableStdio() (stdin, stdout, stderr windows.Handle, release func(), err error) {
+	duplicate := func(stdHandle uint32) (windows.Handle, error) {
+		source, err := windows.GetStdHandle(stdHandle)
+		if err != nil {
+			return 0, fmt.Errorf("read the standard handle: %w", err)
+		}
+		if source == 0 || source == windows.InvalidHandle {
+			return 0, fmt.Errorf("the standard handle %d is not set", stdHandle)
+		}
+		var target windows.Handle
+		if err := windows.DuplicateHandle(windows.CurrentProcess(), source,
+			windows.CurrentProcess(), &target, 0, true, windows.DUPLICATE_SAME_ACCESS); err != nil {
+			return 0, fmt.Errorf("duplicate the standard handle: %w", err)
+		}
+		return target, nil
+	}
+	stdin, err = duplicate(windows.STD_INPUT_HANDLE)
+	if err != nil {
+		return 0, 0, 0, func() {}, err
+	}
+	stdout, err = duplicate(windows.STD_OUTPUT_HANDLE)
+	if err != nil {
+		windows.CloseHandle(stdin)
+		return 0, 0, 0, func() {}, err
+	}
+	stderr, err = duplicate(windows.STD_ERROR_HANDLE)
+	if err != nil {
+		windows.CloseHandle(stdin)
+		windows.CloseHandle(stdout)
+		return 0, 0, 0, func() {}, err
+	}
+	return stdin, stdout, stderr, func() {
+		windows.CloseHandle(stdin)
+		windows.CloseHandle(stdout)
+		windows.CloseHandle(stderr)
+	}, nil
 }
 
 // waitTimeoutMillis bounds the wait for the confined child. A body that
@@ -276,8 +378,14 @@ func createKillOnCloseJob() (windows.Handle, error) {
 // environmentBlock builds a double-null-terminated UTF-16 environment block.
 //
 // CreateProcessAsUser does not inherit the caller's environment, so the block
-// is built explicitly. Each entry is NUL-terminated, and the block itself
-// ends with a second NUL.
+// is built explicitly.
+//
+// The terminator handling is normalized rather than assumed: the UTF-16
+// encoding of a string may or may not carry its own trailing NUL (the x/sys
+// helper has changed shape across versions), so any trailing NUL is stripped
+// and exactly one is appended per entry. Appending a second would end the
+// block after its first variable, and every later entry — including PATH —
+// would be dropped.
 func environmentBlock() *uint16 {
 	block := make([]uint16, 0, 1024)
 	for _, entry := range os.Environ() {
@@ -285,9 +393,17 @@ func environmentBlock() *uint16 {
 		if err != nil {
 			continue
 		}
+		for len(encoded) > 0 && encoded[len(encoded)-1] == 0 {
+			encoded = encoded[:len(encoded)-1]
+		}
 		block = append(block, encoded...)
 		block = append(block, 0)
 	}
-	block = append(block, 0)
+	if len(block) == 0 {
+		// An empty environment is still a terminated block.
+		block = append(block, 0, 0)
+	} else {
+		block = append(block, 0)
+	}
 	return &block[0]
 }

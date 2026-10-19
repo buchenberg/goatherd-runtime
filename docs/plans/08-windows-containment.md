@@ -199,6 +199,40 @@ old ACEs as inert residue.
   granted root's hard link grants an external alias. Structurally unavoidable
   for this token shape; it is why the enforcement tier is not "full" (§10.2).
 
+### 5.4 The one path the write restriction does not close
+
+The write restriction has a residual path, and the plan states it rather than
+leaving it to be discovered.
+
+Everyone is in the restricting list, and it has to be:
+
+- without **Everyone**, a body that uses CNG cannot start — BCrypt fails to
+  load (`0x8007045A`); PowerShell, git over HTTPS, and ssh all use it;
+- without the **logon session SID**, early DLL initialization fails outright
+  (`0xC0000142`).
+
+Both requirements are verified, not assumed: they are pinned by
+`TestWinACL_CngBodyNeedsBothKeepAliveSids`.
+
+Because Everyone is in the restricting list, the second access check admits a
+write wherever **Everyone** holds write. So a directory that grants write to
+Everyone **and** carries a Low integrity label is writable by a confined child
+even when it is not a granted root: a low-to-low write is not blocked by the
+integrity check, and Everyone satisfies the second check.
+
+A default Windows install does not produce such a directory — Everyone holds
+no write over the user's trees, and nothing but this mechanism and other
+sandbox tools stamp a tree Low. A tree another sandbox tool has stamped Low
+is where the path is reachable.
+
+The behaviour is **pinned by a test**
+(`TestWinACL_EveryoneWritableLowLabeledDirectoryIsNotConfined`), so it is a
+known boundary rather than an assumption. What *is* closed, and pinned by
+`TestWinACL_RestrictingListIsTheWholeBasisOfAWrite`: with no restricting SIDs
+at all, every access check is refused, so the write allowlist is entirely the
+restricting list — the grant, the label, and the ambient user rights
+authorize nothing on their own.
+
 ## 6. Phase 1 — The contract (no work)
 
 The `containment` and `confinement` packages are reused **unchanged**. The
@@ -238,7 +272,10 @@ the used size (the natural reading of the field) therefore fails on a buffer
 that has exactly enough room — the failure is
 `ERROR_NOT_ENOUGH_MEMORY`, which reads like exhaustion and is not.
 
-### 7.2 Three traps that cost real debugging time
+### 7.2 The traps — none of them obvious from the documentation
+
+Every one of these cost real debugging time. They are recorded here because
+the next person to touch this backend will hit them.
 
 1. **`windows.OpenCurrentProcessToken()` opens with `TOKEN_QUERY` only.**
    `CreateRestrictedToken` requires `TOKEN_DUPLICATE` on the existing token
@@ -250,13 +287,39 @@ that has exactly enough room — the failure is
    tokens: *"If a CreateProcessAsUser call specifies a restricted version of
    the caller's primary token, this privilege is not required."*)
 2. **`AddMandatoryAce` needs a hand-built ACL** whose `AclSize` is the
-   *capacity*. See §7.1.
+   *capacity*. x/sys exposes the `ACL` struct but no `InitializeAcl`/`AddAce`,
+   and the struct's fields are unexported; and `AddAce` refuses with
+   `ERROR_NOT_ENOUGH_MEMORY` when the new ACE would not fit within `AclSize`,
+   which reads like exhaustion and is not.
 3. **`windows.GetNamedSecurityInfo` already frees the descriptor.** It returns
    a **Go-allocated copy** of the security descriptor, so the DACL and SACL
    pointers point into Go memory and the descriptor must **not** be freed
    again. Freeing it a second time corrupts the heap — the symptom is
    `STATUS_HEAP_CORRUPTION` in the *child* process, far from the call that
    caused it.
+4. **`LUA_TOKEN` is `0x4`; `0x2` is `SANDBOX_INERT`.** Asking for `0x2` by
+   mistake is the opposite of a restriction: it tells the system **not** to
+   apply AppLocker rules or software restriction policies to the token, so the
+   confined child would be exempt from the host's application control policy.
+5. **`windows.UTF16FromString` may already carry a terminating NUL.** The
+   helper has changed shape across x/sys versions, so the environment block
+   must normalize it: strip any trailing NUL and append exactly one per
+   entry. Appending a second ends the block after its first variable, and
+   every later entry — including PATH — is dropped.
+6. **A write mask that omits `FILE_APPEND_DATA` refuses a directory
+   creation.** On a directory, `FILE_APPEND_DATA` is `FILE_ADD_SUBDIRECTORY`.
+   A mask without it (and without `FILE_WRITE_ATTRIBUTES`) refuses a
+   `mkdir` inside the granted root — a routine thing for a build to do, and a
+   confusing refusal when it happens.
+7. **`CreateProcessAsUser` does not search PATH** when the application name
+   is given, and it does not connect the child's standard handles unless they
+   are passed through the startup info. Both are needed: an ordinary body
+   launched as `git` or `pwsh` would fail to start, and a body whose output
+   matters would be mute.
+8. **An infrastructure failure must not report the probe's "denied" code.**
+   The fail-closed design rests on "confinement failed" being distinguishable
+   from "write denied"; a spawn failure reported as `1` would let a broken
+   paddock pass the probe as though it had refused the write.
 
 ### 7.3 Token construction
 
@@ -279,13 +342,17 @@ SetTokenInformation(TokenDefaultDacl, merged)                    # + full-access
 - `Authenticated Users` is deliberately **absent** (it closes the `C:\`-root
   tree-creation escape and makes CIM unavailable); `INTERACTIVE`/`LOCAL` are
   absent (the host's Public tree grants write to INTERACTIVE).
-- The **default DACL** must name a restricting SID. A restricted token
-  inherits the user's default DACL, which names no restricting SID, so every
-  object the child creates (anonymous stdio pipes, sync objects) would fail
-  the write pass-2 check at creation — `ERROR_ACCESS_DENIED`, surfacing as
-  `EPERM` on every piped-stdio grandchild spawn. The merge adds a full-access
-  ACE for the *private temp* write SID when one exists, else the workspace
-  write SID, else Everyone (read-only mode).
+- The **default DACL** must name a restricting SID, and it must be a
+  **merge** into the token's existing default DACL, not a replacement. A
+  restricted token inherits the user's default DACL, which names no restricting
+  SID, so every object the child creates (anonymous stdio pipes, sync
+  objects) would fail the write pass-2 check at creation — `ERROR_ACCESS_DENIED`,
+  surfacing as `EPERM` on every piped-stdio grandchild spawn. A *replacement*
+  is just as wrong: it would name only the capability SID, which is in the
+  restricting list but not in the token's normal SID set, so the child could
+  create an object and then fail the *normal* access check when it reopened
+  it. The merge adds a full-access ACE for the workspace write SID when there
+  is one, else Everyone (read-only mode).
 
 ### 7.4 The grant (per root)
 
@@ -491,7 +558,7 @@ The spike also produced §7.2's traps by direct encounter.
 
 ### 11.1 Shipped evidence
 
-The backend ships with its own suite (`sandbox/winacl`, 22 tests, green on a
+The backend ships with its own suite (`sandbox/winacl`, 28 tests, green on a
 Windows 11 host, unelevated). It pins the same claims through the **backend
 interface** rather than the spike's private helpers:
 
@@ -504,12 +571,20 @@ interface** rather than the spike's private helpers:
 | delete outside every root is denied | `TestWinACL_DeleteIsDeniedOutsideEveryRoot` |
 | the read-only lowering denies every write | `TestWinACL_ReadOnlyDeniesEveryWrite` |
 | reads are **not** governed (the documented boundary) | `TestWinACL_ReadIsNotGoverned` |
+| a directory can be created inside a granted root | `TestWinACL_DirectoryCanBeCreatedInsideAGrantedRoot` |
+| the request's environment reaches the child | `TestWinACL_EnvironmentReachesTheChild` |
+| the child's standard output reaches the runner | `TestWinACL_ChildStandardOutputReachesTheRunner` |
+| an ordinary command resolves through PATH | `TestWinACL_CommandIsResolvedThroughPath` |
+| a malformed profile is refused, not crashed on | `TestWinACL_ReadOnlyProfileWithRootsIsRefused` |
 | the probe passes for a conformant profile | `TestWinACL_ProbePassesForAConformantProfile` |
 | the probe catches a mis-lowered profile | `TestWinACL_ProbeCatchesAMisloweredProfile` |
 | a network mode with no enforcement is refused | `TestWinACL_NetworkModeWithoutEnforcementIsRefused` |
 | the grant is idempotent (the exact-ACE skip fires) | `TestWinACL_GrantIsIdempotent` |
 | the revoke removes the capability ACE | `TestWinACL_RevokeRemovesTheCapabilityAce` |
-| the write identity is deterministic and domain-separated | `TestWriteSidForIsDeterministic`, `TestTempWriteSidIsDomainSeparated` |
+| the restricting list is the whole basis of a write | `TestWinACL_RestrictingListIsTheWholeBasisOfAWrite` |
+| a CNG-using body needs **both** keep-alive SIDs | `TestWinACL_CngBodyNeedsBothKeepAliveSids` |
+| the `Everyone` residual is a known boundary, not an assumption | `TestWinACL_EveryoneWritableLowLabeledDirectoryIsNotConfined` |
+| the write identity is deterministic | `TestWriteSidForIsDeterministic` |
 | the profile refuses a mismatched write identity | `TestProfileValidateRefusesAMismatchedIdentity` |
 | the enforcement tier is not `native-syscall-deny` | `TestEnforcementTierIsNotSyscallDeny` |
 
@@ -628,16 +703,17 @@ capability reporting works for Windows with no change to the root module.
 | § | Package / file | Status |
 |---|---|---|
 | 6 | `sandbox/containment`, `sandbox/confinement` | ✅ reused unchanged |
-| 7.1 | `sandbox/winacl/sid.go` | ✅ write identity, domain-separated temp identity |
+| 7.1 | `sandbox/winacl/sid.go` | ✅ write identity |
 | 7.1 | `sandbox/winacl/profile.go` | ✅ profile shape + consistency validation |
-| 7.3 | `sandbox/winacl/token_windows.go` | ✅ restricted token, Low integrity, default DACL |
+| 7.3 | `sandbox/winacl/token_windows.go` | ✅ restricted token, Low integrity, merged default DACL |
 | 7.4 | `sandbox/winacl/acl_windows.go` | ✅ ACE reader, exact-ACE detection, label builder |
-| 7.4 | `sandbox/winacl/grant_windows.go` | ✅ grant / revoke |
-| 7.5 | `sandbox/winacl/runner_windows.go` | ✅ runner, job object, environment block |
+| 7.4 | `sandbox/winacl/grant_windows.go` | ✅ grant / revoke, under a per-path lock |
+| 7.5 | `sandbox/winacl/runner_windows.go` | ✅ runner, job object, environment block, standard handles |
 | 8 | `sandbox/winacl/backend.go` | ✅ the `containment.Backend` implementation |
 | 8 | `sandbox/winacl/mechanism_windows.go` | ✅ availability probe, three-part probe, launch |
 | 8 | `sandbox/winacl/mechanism_other.go` | ✅ off-Windows stubs that refuse |
-| 11.1 | `sandbox/winacl/*_test.go` | ✅ 22 tests |
+| 9 | `sandbox/containment/deny.go` | ✅ the shared denial classifier now recognizes Windows' "Access is denied." |
+| 11.1 | `sandbox/winacl/*_test.go` | ✅ 28 tests |
 
 ### 15.2 Deliberate deviations from the plan text
 
@@ -657,16 +733,51 @@ capability reporting works for Windows with no change to the root module.
    ACE — an audit ACE, say — is preserved, so the apply does not silently
    drop a security policy.
 4. **The runner's probe child takes an operation** (`write`, `delete`,
-   `read`) rather than only a write, so the shipped suite can pin the delete
-   and read boundaries through the same mechanism the probe uses.
+   `read`, `mkdir`, `writeenv`, `echo`) rather than only a write, so the
+   shipped suite can pin the delete, read, directory-creation, environment,
+   and standard-output boundaries through the same mechanism the probe uses.
 5. **The revoke leaves the ambient-delete deny and the Low label standing.**
    The plan left the revoke's scope open. Removing the deny would hand the
    parent-directory delete right back, and removing the label could hand the
    write back to a process still holding the capability. A revoked directory
    therefore keeps a standing Low label — a real change to a real directory,
    and recorded as such.
+6. **There is one identity per root, not a separate temp identity.** The
+   plan sketched a private temp write SID. It has no producer: a root is a
+   workspace or a worktree, and two sessions that share neither are already
+   isolated from each other by their roots' identities. The identity helper
+   and the comment that described an unreachable state are gone.
 
-### 15.3 Still open
+### 15.3 What the review found
+
+The first review pass (Kilo and Copilot) found eight defects in the
+implementation, all of them real and all of them now fixed. They are recorded
+here because the plan is the place a reader looks for what the code does and
+does not do.
+
+| Defect | Consequence | Fix |
+|---|---|---|
+| `LUA_TOKEN` set to `0x2` | `SANDBOX_INERT`: the confined child was **exempt from AppLocker and software restriction policies** | the correct `0x4` |
+| the environment block double-terminated each entry | the child got a **truncated environment** — no PATH, no HOME | normalize the terminator |
+| the write mask omitted `FILE_APPEND_DATA` / `FILE_WRITE_ATTRIBUTES` | **a directory could not be created** inside a granted root | the full write mask, spelled out |
+| the token's default DACL replaced rather than merged | the child could create an object and then fail to reopen it | merge into the existing default DACL |
+| the child's standard handles not passed | a confined body's **output was swallowed** | duplicate the runner's handles as inheritable, pass them through the startup info |
+| the application name not resolved through PATH | `git`, `pwsh` — **ordinary commands failed to start** | `exec.LookPath` in the runner |
+| a spawn failure reported as exit code 1 | the probe read it as **"write denied"**, so a broken paddock could pass | `ConfineFailedRC` for every infrastructure failure |
+| the DACL read-merge-write unsynchronised | concurrent grants **discarded each other's ACEs** | a per-path cross-process lock over the whole transaction |
+
+Two more findings were design points rather than defects, and are now stated
+rather than assumed:
+
+- **The `Everyone` residual (§5.4).** The write restriction does not close
+  the Everyone path, because Everyone must be in the restricting list for a
+  CNG-using body to start. The behaviour is now pinned by a test, and the
+  package doc states it.
+- **The shared denial classifier** did not recognize Windows' "Access is
+  denied.", so a Windows denial was recorded as an ordinary failure rather
+  than a discarded one. The classifier now recognizes it, with a test.
+
+### 15.4 Still open
 
 - **The eager propagation cost is unmeasured.** `SetNamedSecurityInfo` walks
   every descendant of the granted root, and a worktree root is per-session, so
@@ -680,11 +791,3 @@ capability reporting works for Windows with no change to the root module.
 - **The `sandbox/winacl` module is untagged.** It carries a dev-time
   `replace` (the `sandbox/landlock` release discipline), so a release needs
   the `replace` dropped and the module tagged `sandbox/winacl/vX.Y.Z`.
-
-### 15.4 What the implementation changed in this plan
-
-Three findings came out of the implementation and are now recorded in §7.1
-and §7.2: the `AddMandatoryAce` capacity semantics, the double-free of the
-`GetNamedSecurityInfo` descriptor, and — the one that cost the most time —
-`OpenCurrentProcessToken` opening the token without `TOKEN_DUPLICATE`. The
-plan's §7.2 originally listed two traps; there are three.

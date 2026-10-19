@@ -68,6 +68,9 @@ func (p profile) validate() error {
 		if len(p.SIDs) != 0 {
 			return fmt.Errorf("winacl: read-only profile carries %d write SIDs", len(p.SIDs))
 		}
+		if len(p.Roots) != 0 {
+			return fmt.Errorf("winacl: read-only profile carries %d roots", len(p.Roots))
+		}
 	case modeWorkspaceWrite:
 		if len(p.SIDs) != len(p.Roots) {
 			return fmt.Errorf("winacl: profile has %d roots but %d write SIDs", len(p.Roots), len(p.SIDs))

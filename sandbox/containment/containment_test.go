@@ -147,6 +147,9 @@ func TestDeniedExit_ClassifiesSyscallDenial(t *testing.T) {
 		{"clean exit", LaunchResult{ExitCode: 0}, false},
 		{"permission denied", LaunchResult{ExitCode: 1, Stderr: "touch: cannot touch '/x': Permission denied"}, true},
 		{"operation not permitted", LaunchResult{ExitCode: 1, Stderr: "ln: Operation not permitted"}, true},
+		// Windows phrases the same denial differently, and without this the
+		// Windows backend's denials are recorded as ordinary failures.
+		{"access is denied", LaunchResult{ExitCode: 1, Stderr: "open C:\\x: Access is denied."}, true},
 		{"unrelated failure", LaunchResult{ExitCode: 1, Stderr: "boom"}, false},
 	}
 	for _, tc := range cases {

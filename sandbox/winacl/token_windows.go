@@ -16,9 +16,16 @@ var (
 )
 
 // CreateRestrictedToken flags.
+//
+// The values are the SDK's. LUA_TOKEN is 0x4 — 0x2 is SANDBOX_INERT, which
+// is the opposite of a restriction: it tells the system not to apply
+// AppLocker rules or software restriction policies to the token. Asking for
+// it by mistake would exempt the confined child from the host's application
+// control policy.
 const (
 	disableMaxPrivilege = 0x00000001
-	luaToken            = 0x00000002
+	sandboxInert        = 0x00000002
+	luaToken            = 0x00000004
 	writeRestricted     = 0x00000008
 )
 
@@ -107,17 +114,38 @@ func createRestrictedToken(tok windows.Token, writeSIDs []*windows.SID, worldSID
 	for _, sid := range writeSIDs {
 		restricting = append(restricting, windows.SIDAndAttributes{Sid: sid})
 	}
+	return createRestrictedTokenWith(tok, restricting)
+}
+
+// createRestrictedTokenWith mints the write-restricted token from an explicit
+// restricting-SID list, optionally marking SIDs deny-only.
+func createRestrictedTokenWith(tok windows.Token, restricting []windows.SIDAndAttributes) (windows.Token, error) {
+	return createRestrictedTokenFull(tok, nil, restricting)
+}
+
+// createRestrictedTokenFull mints the write-restricted token from explicit
+// deny-only and restricting SID lists.
+func createRestrictedTokenFull(tok windows.Token, disable, restricting []windows.SIDAndAttributes) (windows.Token, error) {
 	var restricted windows.Token
+	var sidPtr uintptr
+	if len(restricting) > 0 {
+		sidPtr = uintptr(unsafe.Pointer(&restricting[0]))
+	}
+	var disablePtr uintptr
+	if len(disable) > 0 {
+		disablePtr = uintptr(unsafe.Pointer(&disable[0]))
+	}
 	rc, _, callErr := procCreateRestrictedToken.Call(
 		uintptr(tok),
 		uintptr(disableMaxPrivilege|luaToken|writeRestricted),
-		0, 0, // no SIDs disabled
+		uintptr(len(disable)), disablePtr,
 		0, 0, // no privileges deleted
 		uintptr(len(restricting)),
-		uintptr(unsafe.Pointer(&restricting[0])),
+		sidPtr,
 		uintptr(unsafe.Pointer(&restricted)),
 	)
 	runtime.KeepAlive(restricting)
+	runtime.KeepAlive(disable)
 	if rc == 0 {
 		return 0, fmt.Errorf("CreateRestrictedToken: %w", callErr)
 	}
@@ -148,11 +176,19 @@ func lowerIntegrity(tok windows.Token, lowSID *windows.SID) error {
 // denies its creation and every piped-stdio grandchild spawn fails with
 // ERROR_ACCESS_DENIED.
 //
-// The merged ACE names the private temp write SID when one exists, else the
-// workspace write SID, else Everyone (read-only mode). Object creation stays
-// gated by the parent object's DACL; only the new object's own DACL passes
-// the second check.
+// The merge is into the token's EXISTING default DACL, not a replacement: a
+// replacement would name only the capability SID, which is in the restricting
+// list but not in the token's normal SID set — so the child could create an
+// object and then fail the *normal* access check when it reopened it.
+//
+// The merged ACE names the workspace write SID when there is one, else
+// Everyone (read-only mode). Object creation stays gated by the parent
+// object's DACL; only the new object's own DACL passes the second check.
 func setDefaultDacl(tok windows.Token, sid *windows.SID) error {
+	existing, err := tokenDefaultDacl(tok)
+	if err != nil {
+		return fmt.Errorf("read the token default DACL: %w", err)
+	}
 	entries := []windows.EXPLICIT_ACCESS{{
 		AccessPermissions: fileAllAccess,
 		AccessMode:        windows.GRANT_ACCESS,
@@ -164,9 +200,9 @@ func setDefaultDacl(tok windows.Token, sid *windows.SID) error {
 			TrusteeValue:             windows.TrusteeValueFromSID(sid),
 		},
 	}}
-	acl, err := windows.ACLFromEntries(entries, nil)
+	acl, err := windows.ACLFromEntries(entries, existing)
 	if err != nil {
-		return fmt.Errorf("build the token default DACL: %w", err)
+		return fmt.Errorf("merge into the token default DACL: %w", err)
 	}
 	if err := windows.SetTokenInformation(tok, windows.TokenDefaultDacl,
 		(*byte)(unsafe.Pointer(&acl)), uint32(unsafe.Sizeof(acl))); err != nil {
@@ -174,4 +210,24 @@ func setDefaultDacl(tok windows.Token, sid *windows.SID) error {
 	}
 	runtime.KeepAlive(acl)
 	return nil
+}
+
+// tokenDefaultDacl returns the token's current default DACL, or nil when it
+// carries none.
+func tokenDefaultDacl(tok windows.Token) (*windows.ACL, error) {
+	var needed uint32
+	if err := windows.GetTokenInformation(tok, windows.TokenDefaultDacl, nil, 0, &needed); err != nil {
+		// The size query is expected to fail with ERROR_INSUFFICIENT_BUFFER.
+		return nil, nil
+	}
+	if needed == 0 {
+		return nil, nil
+	}
+	buffer := make([]byte, needed)
+	if err := windows.GetTokenInformation(tok, windows.TokenDefaultDacl,
+		(*byte)(unsafe.Pointer(&buffer[0])), uint32(len(buffer)), &needed); err != nil {
+		return nil, err
+	}
+	// TOKEN_DEFAULT_DACL is a single PACL; the buffer's first pointer is it.
+	return (*windows.ACL)(unsafe.Pointer(&buffer[0])), nil
 }

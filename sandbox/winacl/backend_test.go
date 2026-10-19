@@ -28,23 +28,6 @@ func TestWriteSidForDistinguishesRoots(t *testing.T) {
 	}
 }
 
-func TestTempWriteSidIsDomainSeparated(t *testing.T) {
-	const dir = `C:\temp\scratch`
-	temp := TempWriteSid(dir)
-	if temp == WriteSidFor(dir) {
-		t.Fatal("the temp identity collides with the workspace identity")
-	}
-	if !strings.HasPrefix(temp, "S-1-4-") {
-		t.Fatalf("the temp identity %q is not in the S-1-4 form", temp)
-	}
-	if TempWriteSid(dir) != temp {
-		t.Fatal("the temp identity is not deterministic")
-	}
-	if TempWriteSid(`C:\temp\other`) == temp {
-		t.Fatal("two temp directories derived the same identity")
-	}
-}
-
 func TestProfileForReadOnly(t *testing.T) {
 	b := New()
 	doc := b.ProfileFor(nil, containment.NetworkPolicy{Mode: containment.NetDenyAll})

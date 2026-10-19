@@ -18,6 +18,12 @@ contain breaking changes, which are called out below.
 - `docs/plans/08-windows-containment.md` — the Windows containment plan, with
   the mechanism's spike evidence preserved under `docs/plans/spikes/winacl/`.
 
+### Changed
+- The shared confinement denial classifier now recognizes Windows'
+  "Access is denied." alongside "permission denied" and "operation not
+  permitted", so a Windows denial is recorded as a discarded run rather than
+  an ordinary failure.
+
 ## [v0.17.0] - 2026-10-16
 
 Initial extraction. The runtime layer moves out of

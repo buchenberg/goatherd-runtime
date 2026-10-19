@@ -30,32 +30,14 @@ const maxSubAuthority = 1<<30 - 1
 //
 // The SID is not a secret. Anyone can derive it; what it confers is the ACEs
 // on the granted roots, and only tokens minted for that root carry it.
-func WriteSidFor(canonicalRoot string) string {
-	return sidFromDigest(sha256.Sum256([]byte(canonicalRoot)), 0)
-}
-
-// TempWriteSid derives the write identity of a private temporary directory.
 //
-// A private temp directory is a different capability from the workspace it
-// sits beside, so it gets a different identity: sharing one would let sibling
-// sessions write one another's temp trees. The fixed leading subauthority
-// domain-separates the result from every workspace SID, and the directory path
-// itself supplies the entropy.
-func TempWriteSid(canonicalDir string) string {
-	digest := sha256.Sum256(append([]byte("temp\x00"), []byte(canonicalDir)...))
-	return sidFromDigest(digest, 1)
-}
-
-// sidFromDigest renders two digest words as an S-1-4-x-y SID. The third
-// argument is the number of leading subauthorities the form carries: 2 for a
-// workspace SID (S-1-4-x-y) and 3 for a domain-separated temp SID
-// (S-1-4-x-y-1).
-func sidFromDigest(digest [32]byte, extraSubAuthorities int) string {
+// There is one identity per root and no separate one for a temporary
+// directory: a root is a workspace or a worktree, and two sessions that
+// share neither are already isolated from each other by their roots'
+// identities.
+func WriteSidFor(canonicalRoot string) string {
+	digest := sha256.Sum256([]byte(canonicalRoot))
 	first := binary.LittleEndian.Uint32(digest[0:4])%maxSubAuthority + 1
 	second := binary.LittleEndian.Uint32(digest[4:8])%maxSubAuthority + 1
-	sid := fmt.Sprintf("S-%d-%d-%d-%d", 1, sidAuthority, first, second)
-	for i := 0; i < extraSubAuthorities; i++ {
-		sid += "-1"
-	}
-	return sid
+	return fmt.Sprintf("S-%d-%d-%d-%d", 1, sidAuthority, first, second)
 }

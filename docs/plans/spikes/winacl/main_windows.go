@@ -45,7 +45,7 @@ var (
 // Win32 constants x/sys does not export.
 const (
 	disableMaxPrivilege = 0x00000001
-	luaToken            = 0x00000002
+	luaToken            = 0x00000004 // 0x2 is SANDBOX_INERT, which is permissive
 	writeRestricted     = 0x00000008
 
 	aclRevision             = 2
@@ -53,7 +53,11 @@ const (
 	seGroupLogonID          = 0xC0000000
 	seGroupIntegrity        = 0x00000020
 
-	grantMask = 0x000000F2 | // FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES
+	grantMask = 0x00000002 | // FILE_WRITE_DATA (FILE_ADD_FILE on a directory)
+		0x00000004 | // FILE_APPEND_DATA (FILE_ADD_SUBDIRECTORY on a directory)
+		0x00000010 | // FILE_WRITE_EA
+		0x00000100 | // FILE_WRITE_ATTRIBUTES
+		0x00000080 | // FILE_READ_ATTRIBUTES
 		0x00010000 | // DELETE
 		0x00020000 | // READ_CONTROL
 		0x00100000 // SYNCHRONIZE
@@ -485,6 +489,12 @@ func runChild(token windows.Token, cwd, op, target string) error {
 }
 
 // envBlock builds a double-null-terminated UTF-16 environment block.
+//
+// The terminator handling is normalized rather than assumed: the UTF-16
+// encoding of a string may or may not carry its own trailing NUL, so any
+// trailing NUL is stripped and exactly one is appended per entry. Appending a
+// second would end the block after its first variable, and every later
+// entry — including PATH — would be dropped.
 func envBlock() *uint16 {
 	buf := make([]uint16, 0, 2048)
 	for _, kv := range os.Environ() {
@@ -492,8 +502,16 @@ func envBlock() *uint16 {
 		if err != nil {
 			continue
 		}
+		for len(u) > 0 && u[len(u)-1] == 0 {
+			u = u[:len(u)-1]
+		}
 		buf = append(buf, u...)
+		buf = append(buf, 0)
 	}
-	buf = append(buf, 0, 0)
+	if len(buf) == 0 {
+		buf = append(buf, 0, 0)
+	} else {
+		buf = append(buf, 0)
+	}
 	return &buf[0]
 }
