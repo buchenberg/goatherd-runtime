@@ -1,5 +1,6 @@
 # Binaries
 /shepherd-runtime-go
+*.exe
 
 # Test binary
 *.test
