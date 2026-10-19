@@ -114,6 +114,14 @@ func livenessTarget(wd string, roots []string, tag string) string {
 	return filepath.Join(dir, tag+"-liveness")
 }
 
+// probeTimeout bounds one probe invocation.
+//
+// A probe that hangs is a probe that never concludes, and the probe runs
+// before every body — so it is bounded like anything else the backend
+// waits on. A timeout fails closed: the runner is killed and the probe
+// reports an error, so no body runs on an unproven restriction.
+const probeTimeout = 2 * time.Minute
+
 // probeWrite runs a confined write to target and reports whether it was
 // denied.
 //
@@ -127,7 +135,7 @@ func probeWrite(profileDoc, workingRoot, target string) (bool, error) {
 	// Cleanup is parent-side: the parent is unconfined, so it is reliable
 	// regardless of the confined outcome.
 	_ = os.Remove(target)
-	rc, _, stderr, err := invoke(ProbeSentinel, profileDoc, workingRoot, []string{target}, nil, nil, 0)
+	rc, _, stderr, err := invoke(ProbeSentinel, profileDoc, workingRoot, []string{target}, nil, nil, probeTimeout)
 	_ = os.Remove(target)
 	if err != nil {
 		return false, err

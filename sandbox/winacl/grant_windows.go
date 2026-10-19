@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -36,6 +37,12 @@ func lockFilePath(path string) (string, error) {
 // grants read the same descriptor and the second write discards the first's
 // ACE — and a grant racing a revoke can restore a capability that was just
 // removed.
+//
+// The wait is BOUNDED. The lock file's path is predictable and any
+// same-user process can hold the lock, so an unbounded wait would let a
+// process that holds it stall every confined launch on this host. The lock
+// is therefore taken with LOCKFILE_FAIL_IMMEDIATELY and retried until a
+// deadline, after which the transaction refuses rather than hanging.
 func withPathLock(path string, action func() error) error {
 	lockPath, err := lockFilePath(path)
 	if err != nil {
@@ -60,14 +67,28 @@ func withPathLock(path string, action func() error) error {
 	defer windows.CloseHandle(handle)
 
 	overlapped := new(windows.Overlapped)
-	if err := windows.LockFileEx(handle, windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, overlapped); err != nil {
-		return fmt.Errorf("winacl: lock %s: %w", lockPath, err)
+	deadline := time.Now().Add(lockTimeout)
+	for {
+		err := windows.LockFileEx(handle, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, overlapped)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("winacl: the grant lock on %s is held by another process (%w)", path, err)
+		}
+		time.Sleep(lockRetryInterval)
 	}
 	defer func() {
 		_ = windows.UnlockFileEx(handle, 0, 1, 0, overlapped)
 	}()
 	return action()
 }
+
+// The grant lock's wait bounds.
+const (
+	lockTimeout       = 30 * time.Second
+	lockRetryInterval = 50 * time.Millisecond
+)
 
 // GrantWrite applies the workspace grant to path: the write capability ACE,
 // the ambient-delete deny, and the Low no-write-up mandatory label.

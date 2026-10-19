@@ -148,9 +148,65 @@ func TestWinACL_ReadOnlyProfileWithRootsIsRefused(t *testing.T) {
 	}
 }
 
-// TestWinACL_RestrictingListIsTheWholeBasisOfAWrite pins what the
-// restricting list actually decides.
+// TestWinACL_DefaultDaclIsMergedNotReplaced proves the token's default DACL
+// keeps the trustees it already had.
 //
+// A replacement would name only the capability SID — a SID that is in the
+// restricting list but NOT in the token's normal SID set — so the child could
+// create an object and then fail the normal access check when it reopened it.
+// The merge has to preserve the original ACL and add to it.
+//
+// This is also the test that catches a mis-read of the TOKEN_DEFAULT_DACL
+// structure: the buffer holds a pointer to the ACL, not the ACL, so reading
+// the buffer's own bytes as an ACL header yields a descriptor made of the
+// pointer's bytes, and the merge silently becomes a replacement.
+func TestWinACL_DefaultDaclIsMergedNotReplaced(t *testing.T) {
+	current, err := openProcessToken()
+	if err != nil {
+		t.Fatalf("open the process token: %v", err)
+	}
+	defer current.Close()
+	world, err := windows.CreateWellKnownSid(windows.WinWorldSid)
+	if err != nil {
+		t.Fatalf("the world SID: %v", err)
+	}
+	before, err := tokenDefaultDacl(current)
+	if err != nil {
+		t.Fatalf("read the token default DACL: %v", err)
+	}
+	if before == nil {
+		t.Skip("the process token carries no default DACL to merge into")
+	}
+	beforeAces := countAces(aclView(before))
+
+	// Merge an ACE for the world SID into it.
+	if err := setDefaultDacl(current, world); err != nil {
+		t.Fatalf("merge into the token default DACL: %v", err)
+	}
+	after, err := tokenDefaultDacl(current)
+	if err != nil {
+		t.Fatalf("read the merged token default DACL: %v", err)
+	}
+	if after == nil {
+		t.Fatal("the merged default DACL is gone")
+	}
+	afterAces := countAces(aclView(after))
+	if afterAces <= beforeAces {
+		t.Fatalf("the default DACL has %d ACEs after the merge and %d before — it was replaced, not merged",
+			afterAces, beforeAces)
+	}
+}
+
+// countAces counts the ACEs in an ACL view.
+func countAces(view []byte) int {
+	count := 0
+	forEachACE(view, func(aceType, aceFlags byte, mask uint32, aceStart int) bool {
+		count++
+		return true
+	})
+	return count
+}
+
 // With no restricting SIDs at all, every access check is refused: the child
 // starts, but it cannot open a file, so nothing is writable. The write
 // allowlist is therefore entirely the restricting list — nothing about the
@@ -181,7 +237,9 @@ func TestWinACL_RestrictingListIsTheWholeBasisOfAWrite(t *testing.T) {
 	}
 
 	// writeIntoRoot runs a confined write into the granted root and reports
-	// whether it landed.
+	// whether it landed. Only a genuine denial (exit 1) counts as "denied" —
+	// the confine-failed code is an infrastructure failure, and treating it
+	// as a denial would let a broken harness satisfy the assertion.
 	writeIntoRoot := func(restricting []windows.SIDAndAttributes) bool {
 		t.Helper()
 		token, err := createRestrictedTokenWith(current, restricting)
@@ -196,12 +254,16 @@ func TestWinACL_RestrictingListIsTheWholeBasisOfAWrite(t *testing.T) {
 			t.Fatalf("set the default DACL: %v", err)
 		}
 		target := filepath.Join(tr.rootA, "probe-"+fmt.Sprint(len(restricting))+".txt")
-		rc := spawnAndWait(token, []string{executable, ProbeChildSentinel, "write", target})
-		if rc != 0 {
+		switch rc := spawnAndWait(token, []string{executable, ProbeChildSentinel, "write", target}); rc {
+		case 0:
+			_, statErr := os.Stat(target)
+			return statErr == nil
+		case 1:
+			return false
+		default:
+			t.Fatalf("the confined write exited %d, which is not a denial", rc)
 			return false
 		}
-		_, statErr := os.Stat(target)
-		return statErr == nil
 	}
 
 	if !writeIntoRoot([]windows.SIDAndAttributes{{Sid: logon}, {Sid: worldSID}, {Sid: writeSID}}) {

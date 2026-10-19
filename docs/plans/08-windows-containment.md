@@ -319,7 +319,22 @@ the next person to touch this backend will hit them.
 8. **An infrastructure failure must not report the probe's "denied" code.**
    The fail-closed design rests on "confinement failed" being distinguishable
    from "write denied"; a spawn failure reported as `1` would let a broken
-   paddock pass the probe as though it had refused the write.
+   paddock pass the probe as though it had refused the write. The same holds
+   for the *tests*: a non-zero exit that is not `1` is a harness failure, and
+   treating it as a denial lets a broken harness satisfy a negative assertion.
+9. **`TOKEN_DEFAULT_DACL` holds a pointer, not the ACL.** The buffer returned
+   by `GetTokenInformation(TokenDefaultDacl)` starts with a `PACL`; reading
+   the buffer's own bytes as an ACL header hands the merge a descriptor made
+   of the pointer's bytes, and the merge silently becomes a *replacement* (or
+   fails with `ERROR_INVALID_PARAMETER`). The pointer has to be followed. The
+   size query's error must also be distinguished from the expected
+   `ERROR_INSUFFICIENT_BUFFER`, or a real failure reads as "no default DACL"
+   and the merge quietly becomes a replacement too.
+10. **A lock that is not bounded is a denial of service.** The grant lock's
+    path is predictable and any same-user process can hold it, so the wait
+    must be bounded (`LOCKFILE_FAIL_IMMEDIATELY` plus a retry deadline) and
+    the probe must have a timeout of its own — a probe that hangs is a probe
+    that never concludes, and it runs before every body.
 
 ### 7.3 Token construction
 
@@ -558,7 +573,7 @@ The spike also produced §7.2's traps by direct encounter.
 
 ### 11.1 Shipped evidence
 
-The backend ships with its own suite (`sandbox/winacl`, 28 tests, green on a
+The backend ships with its own suite (`sandbox/winacl`, 29 tests, green on a
 Windows 11 host, unelevated). It pins the same claims through the **backend
 interface** rather than the spike's private helpers:
 
@@ -586,6 +601,7 @@ interface** rather than the spike's private helpers:
 | the `Everyone` residual is a known boundary, not an assumption | `TestWinACL_EveryoneWritableLowLabeledDirectoryIsNotConfined` |
 | the write identity is deterministic | `TestWriteSidForIsDeterministic` |
 | the profile refuses a mismatched write identity | `TestProfileValidateRefusesAMismatchedIdentity` |
+| the token's default DACL is merged, not replaced | `TestWinACL_DefaultDaclIsMergedNotReplaced` |
 | the enforcement tier is not `native-syscall-deny` | `TestEnforcementTierIsNotSyscallDeny` |
 
 ## 12. Sequencing, dependencies, Risks
@@ -713,7 +729,7 @@ capability reporting works for Windows with no change to the root module.
 | 8 | `sandbox/winacl/mechanism_windows.go` | ✅ availability probe, three-part probe, launch |
 | 8 | `sandbox/winacl/mechanism_other.go` | ✅ off-Windows stubs that refuse |
 | 9 | `sandbox/containment/deny.go` | ✅ the shared denial classifier now recognizes Windows' "Access is denied." |
-| 11.1 | `sandbox/winacl/*_test.go` | ✅ 28 tests |
+| 11.1 | `sandbox/winacl/*_test.go` | ✅ 29 tests |
 
 ### 15.2 Deliberate deviations from the plan text
 
@@ -766,6 +782,15 @@ does not do.
 | a spawn failure reported as exit code 1 | the probe read it as **"write denied"**, so a broken paddock could pass | `ConfineFailedRC` for every infrastructure failure |
 | the DACL read-merge-write unsynchronised | concurrent grants **discarded each other's ACEs** | a per-path cross-process lock over the whole transaction |
 
+The second pass found four more, all of them in the code the first round
+added — which is the usual shape of a second review:
+
+| Defect | Consequence | Fix |
+|---|---|---|
+| `TOKEN_DEFAULT_DACL`'s pointer not followed | the merge was **silently a replacement** — the fix did not fix | follow the pointer, and distinguish the size query's error from the expected one |
+| the grant lock's wait unbounded | a same-user process holding the lock could **stall every confined launch** | `LOCKFILE_FAIL_IMMEDIATELY` plus a retry deadline, and a timeout on the probe |
+| a non-zero exit treated as a denial in the tests | a **harness failure could satisfy a negative assertion** | only exit code `1` is a denial; anything else fails the test |
+
 Two more findings were design points rather than defects, and are now stated
 rather than assumed:
 
@@ -791,3 +816,4 @@ rather than assumed:
 - **The `sandbox/winacl` module is untagged.** It carries a dev-time
   `replace` (the `sandbox/landlock` release discipline), so a release needs
   the `replace` dropped and the module tagged `sandbox/winacl/vX.Y.Z`.
+

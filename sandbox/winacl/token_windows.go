@@ -212,13 +212,27 @@ func setDefaultDacl(tok windows.Token, sid *windows.SID) error {
 	return nil
 }
 
+// tokenDefaultDaclHolder is the TOKEN_DEFAULT_DACL structure: a single PACL.
+type tokenDefaultDaclHolder struct {
+	Dacl *windows.ACL
+}
+
 // tokenDefaultDacl returns the token's current default DACL, or nil when it
 // carries none.
+//
+// TOKEN_DEFAULT_DACL is a single PACL: the buffer holds a POINTER to the
+// ACL, not the ACL body, so the pointer has to be followed. Reading the
+// buffer's own bytes as an ACL header would hand the merge a descriptor made
+// of the pointer's bytes — and the merge would silently become a
+// replacement.
+//
+// The ACL itself belongs to the token and stays valid as long as the token
+// does; it is not freed here.
 func tokenDefaultDacl(tok windows.Token) (*windows.ACL, error) {
 	var needed uint32
-	if err := windows.GetTokenInformation(tok, windows.TokenDefaultDacl, nil, 0, &needed); err != nil {
-		// The size query is expected to fail with ERROR_INSUFFICIENT_BUFFER.
-		return nil, nil
+	err := windows.GetTokenInformation(tok, windows.TokenDefaultDacl, nil, 0, &needed)
+	if err != nil && err != windows.ERROR_INSUFFICIENT_BUFFER {
+		return nil, fmt.Errorf("query the token default DACL: %w", err)
 	}
 	if needed == 0 {
 		return nil, nil
@@ -226,8 +240,11 @@ func tokenDefaultDacl(tok windows.Token) (*windows.ACL, error) {
 	buffer := make([]byte, needed)
 	if err := windows.GetTokenInformation(tok, windows.TokenDefaultDacl,
 		(*byte)(unsafe.Pointer(&buffer[0])), uint32(len(buffer)), &needed); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read the token default DACL: %w", err)
 	}
-	// TOKEN_DEFAULT_DACL is a single PACL; the buffer's first pointer is it.
-	return (*windows.ACL)(unsafe.Pointer(&buffer[0])), nil
+	if len(buffer) < int(unsafe.Sizeof(tokenDefaultDaclHolder{})) {
+		return nil, fmt.Errorf("the token default DACL buffer is %d bytes, too small to hold a pointer", len(buffer))
+	}
+	holder := (*tokenDefaultDaclHolder)(unsafe.Pointer(&buffer[0]))
+	return holder.Dacl, nil
 }
