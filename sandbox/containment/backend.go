@@ -5,9 +5,17 @@
 //
 // Parity reference: Python Shepherd's vcs-core `_containment.py` (the
 // ContainmentBackend protocol and its error taxonomy) and the spec half of
-// `_execution_capability.py`. The Linux member (Landlock) lives in the nested
-// module .../sandbox/landlock; this package is deliberately stdlib-only so the
-// root runtime keeps its "kernel + stdlib" dependency footprint.
+// `_execution_capability.py`.
+//
+// The family has two members, each a nested module so the root runtime keeps
+// its "kernel + stdlib" dependency footprint:
+//
+//   - .../sandbox/landlock — the Linux member (an unprivileged kernel LSM).
+//   - .../sandbox/winacl — the Windows member (a write-restricted token, per
+//     root capability SIDs, a Low integrity level, and a mandatory label).
+//
+// This package is deliberately stdlib-only: it is the contract both members
+// implement and neither imports.
 package containment
 
 import (
@@ -64,7 +72,7 @@ type LaunchResult struct {
 // a writable-root set and the network axis to a profile, probes it fail-closed,
 // then launches a command confined by it.
 type Backend interface {
-	// Name is the backend identifier ("landlock").
+	// Name is the backend identifier ("landlock", "winacl").
 	Name() string
 	// EnforcementTier is the coarse tier label ("native-syscall-deny").
 	EnforcementTier() string

@@ -18,6 +18,23 @@ It composes [`github.com/buchenberg/shepherd-kernel-go`](https://github.com/buch
 | `task` | the task runtime — `StartTask`/`StartTaskSync`, `Run`, `TaskControl`, the task `Registry`, `ChildHandle` |
 | `supervisor` | the rules engine — `Supervisor`, `SupervisionRule`, the built-in rules (`DestructiveToolRule`, `HighErrorRateRule`, `StuckDetectionRule`, `DestructiveToolGuard`) |
 
+## Containment backends
+
+The execution boundary is enforced by **containment backends**: each lowers a set of writable roots to an OS-specific profile, probes it fail-closed, and launches a command confined by it. Each lives in its own nested module, so the root runtime keeps its "kernel + stdlib" dependency footprint.
+
+| Module | Platform | Mechanism | Enforcement tier |
+|---|---|---|---|
+| `sandbox/landlock` | Linux | an unprivileged kernel LSM (Landlock): self-restrict, then exec | `native-syscall-deny` |
+| `sandbox/winacl` | Windows | a write-restricted token, per-root capability SIDs, a Low integrity level, and a mandatory label | `native-access-check-deny` |
+
+Both implement the same `containment.Backend` contract, so a host picks a backend per platform and passes it to the sandbox constructor — the root module does not change:
+
+```go
+sb := git.NewLocalGitSandbox(repoPath, git.WithExec(backend, confinement.PlacementPaddock))
+```
+
+A backend that cannot enforce the requested network mode refuses it rather than running with the axis silently ignored. Each backend's own package documentation states what it does *not* confine.
+
 ## Dependency
 
 The runtime requires the kernel for the trace store, the record vocabulary, and the shared public `testkit` package:
