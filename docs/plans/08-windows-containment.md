@@ -334,7 +334,17 @@ the next person to touch this backend will hit them.
     path is predictable and any same-user process can hold it, so the wait
     must be bounded (`LOCKFILE_FAIL_IMMEDIATELY` plus a retry deadline) and
     the probe must have a timeout of its own — a probe that hangs is a probe
-    that never concludes, and it runs before every body.
+    that never concludes, and it runs before every body. Only a *held* lock
+    is worth retrying: any other failure is permanent, and retrying it for
+    the whole deadline would stall every grant on the host and misreport the
+    cause.
+
+11. **The default DACL the information class returns points into the caller's
+    buffer.** The ACL is valid only while that buffer is reachable, so the
+    read has to hand back a way to keep it alive — and a caller that mutates
+    the *process's own* primary token's default DACL makes a process-wide,
+    irreversible change that every later object and derived token inherits.
+    A test that does that makes the suite order-dependent.
 
 ### 7.3 Token construction
 
@@ -790,6 +800,14 @@ added — which is the usual shape of a second review:
 | `TOKEN_DEFAULT_DACL`'s pointer not followed | the merge was **silently a replacement** — the fix did not fix | follow the pointer, and distinguish the size query's error from the expected one |
 | the grant lock's wait unbounded | a same-user process holding the lock could **stall every confined launch** | `LOCKFILE_FAIL_IMMEDIATELY` plus a retry deadline, and a timeout on the probe |
 | a non-zero exit treated as a denial in the tests | a **harness failure could satisfy a negative assertion** | only exit code `1` is a denial; anything else fails the test |
+
+The third pass found three more, none of them critical:
+
+| Defect | Consequence | Fix |
+|---|---|---|
+| the returned default DACL's ownership was described wrongly | the comment claimed token ownership; the ACL points into the **caller's buffer** | the read returns a keepalive, and the comment says so |
+| the lock retried on *any* error | a permanent failure stalled every grant for 30 s and was **misreported** as a held lock | only `ERROR_LOCK_VIOLATION` is retried |
+| the merge test mutated the process's own primary token | a **process-wide, irreversible** change that made the suite order-dependent | the test mints and mutates a token it owns |
 
 Two more findings were design points rather than defects, and are now stated
 rather than assumed:

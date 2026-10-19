@@ -160,33 +160,50 @@ func TestWinACL_ReadOnlyProfileWithRootsIsRefused(t *testing.T) {
 // structure: the buffer holds a pointer to the ACL, not the ACL, so reading
 // the buffer's own bytes as an ACL header yields a descriptor made of the
 // pointer's bytes, and the merge silently becomes a replacement.
+//
+// The token it mutates is one the test OWNS — a restricted child token. The
+// process's own primary token is not touched: setting a default DACL on it
+// would be a process-wide, irreversible change that every later object and
+// derived token would inherit, making the suite order-dependent.
 func TestWinACL_DefaultDaclIsMergedNotReplaced(t *testing.T) {
 	current, err := openProcessToken()
 	if err != nil {
 		t.Fatalf("open the process token: %v", err)
 	}
 	defer current.Close()
+	logon, err := logonSID(current)
+	if err != nil {
+		t.Fatalf("the logon SID: %v", err)
+	}
 	world, err := windows.CreateWellKnownSid(windows.WinWorldSid)
 	if err != nil {
 		t.Fatalf("the world SID: %v", err)
 	}
-	before, err := tokenDefaultDacl(current)
+	owned, err := createRestrictedTokenWith(current, []windows.SIDAndAttributes{{Sid: logon}, {Sid: world}})
+	if err != nil {
+		t.Fatalf("mint a restricted token: %v", err)
+	}
+	defer owned.Close()
+
+	before, keepBefore, err := tokenDefaultDacl(owned)
 	if err != nil {
 		t.Fatalf("read the token default DACL: %v", err)
 	}
+	defer keepBefore()
 	if before == nil {
-		t.Skip("the process token carries no default DACL to merge into")
+		t.Skip("the token carries no default DACL to merge into")
 	}
 	beforeAces := countAces(aclView(before))
 
 	// Merge an ACE for the world SID into it.
-	if err := setDefaultDacl(current, world); err != nil {
+	if err := setDefaultDacl(owned, world); err != nil {
 		t.Fatalf("merge into the token default DACL: %v", err)
 	}
-	after, err := tokenDefaultDacl(current)
+	after, keepAfter, err := tokenDefaultDacl(owned)
 	if err != nil {
 		t.Fatalf("read the merged token default DACL: %v", err)
 	}
+	defer keepAfter()
 	if after == nil {
 		t.Fatal("the merged default DACL is gone")
 	}

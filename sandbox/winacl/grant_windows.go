@@ -73,6 +73,13 @@ func withPathLock(path string, action func() error) error {
 		if err == nil {
 			break
 		}
+		// Only a held lock is worth waiting for. Any other failure is
+		// permanent — no byte-range lock support, an invalid handle — and
+		// retrying it for the whole deadline would stall every grant on the
+		// host and misreport the cause.
+		if err != windows.ERROR_LOCK_VIOLATION {
+			return fmt.Errorf("winacl: lock %s: %w", lockPath, err)
+		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("winacl: the grant lock on %s is held by another process (%w)", path, err)
 		}

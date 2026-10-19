@@ -185,10 +185,13 @@ func lowerIntegrity(tok windows.Token, lowSID *windows.SID) error {
 // Everyone (read-only mode). Object creation stays gated by the parent
 // object's DACL; only the new object's own DACL passes the second check.
 func setDefaultDacl(tok windows.Token, sid *windows.SID) error {
-	existing, err := tokenDefaultDacl(tok)
+	existing, keepAlive, err := tokenDefaultDacl(tok)
 	if err != nil {
 		return fmt.Errorf("read the token default DACL: %w", err)
 	}
+	// The ACL points into the buffer the read allocated; keep that buffer
+	// alive until the merge has consumed it.
+	defer keepAlive()
 	entries := []windows.EXPLICIT_ACCESS{{
 		AccessPermissions: fileAllAccess,
 		AccessMode:        windows.GRANT_ACCESS,
@@ -218,33 +221,41 @@ type tokenDefaultDaclHolder struct {
 }
 
 // tokenDefaultDacl returns the token's current default DACL, or nil when it
-// carries none.
+// carries none, together with a function that keeps the ACL's backing memory
+// alive.
 //
-// TOKEN_DEFAULT_DACL is a single PACL: the buffer holds a POINTER to the
-// ACL, not the ACL body, so the pointer has to be followed. Reading the
+// TOKEN_DEFAULT_DACL is a single PACL: the buffer starts with a POINTER to
+// the ACL, not the ACL body, so the pointer has to be followed. Reading the
 // buffer's own bytes as an ACL header would hand the merge a descriptor made
-// of the pointer's bytes — and the merge would silently become a
-// replacement.
+// of the pointer's bytes — and the merge would silently become a replacement.
 //
-// The ACL itself belongs to the token and stays valid as long as the token
-// does; it is not freed here.
-func tokenDefaultDacl(tok windows.Token) (*windows.ACL, error) {
+// The information class copies the default DACL out of the token, and the
+// PACL points into that copy — which lives in the buffer this function
+// allocates. The ACL is therefore only valid while that buffer is reachable,
+// so the caller must keep it alive until the last use of the ACL; the
+// returned keepalive does exactly that.
+func tokenDefaultDacl(tok windows.Token) (*windows.ACL, func(), error) {
+	noKeepAlive := func() {}
 	var needed uint32
 	err := windows.GetTokenInformation(tok, windows.TokenDefaultDacl, nil, 0, &needed)
 	if err != nil && err != windows.ERROR_INSUFFICIENT_BUFFER {
-		return nil, fmt.Errorf("query the token default DACL: %w", err)
+		return nil, noKeepAlive, fmt.Errorf("query the token default DACL: %w", err)
 	}
 	if needed == 0 {
-		return nil, nil
+		return nil, noKeepAlive, nil
 	}
 	buffer := make([]byte, needed)
 	if err := windows.GetTokenInformation(tok, windows.TokenDefaultDacl,
 		(*byte)(unsafe.Pointer(&buffer[0])), uint32(len(buffer)), &needed); err != nil {
-		return nil, fmt.Errorf("read the token default DACL: %w", err)
+		return nil, noKeepAlive, fmt.Errorf("read the token default DACL: %w", err)
 	}
 	if len(buffer) < int(unsafe.Sizeof(tokenDefaultDaclHolder{})) {
-		return nil, fmt.Errorf("the token default DACL buffer is %d bytes, too small to hold a pointer", len(buffer))
+		return nil, noKeepAlive, fmt.Errorf("the token default DACL buffer is %d bytes, too small to hold a pointer", len(buffer))
 	}
 	holder := (*tokenDefaultDaclHolder)(unsafe.Pointer(&buffer[0]))
-	return holder.Dacl, nil
+	if holder.Dacl == nil {
+		return nil, noKeepAlive, nil
+	}
+	keepAlive := func() { runtime.KeepAlive(buffer) }
+	return holder.Dacl, keepAlive, nil
 }
