@@ -7,8 +7,9 @@ and the optional syscall filter (Plan 6) and the host integration (Plan 7).
 
 Each plan follows the same discipline: a parity checklist mapping Python symbols
 to Go targets with a covering test, an explicit scope/non-goals section, and a
-test matrix. Plans 1–5 and 7 are written: 1–3 implemented; 4 Linux-side done
-(Seatbelt planned); 5 scoped; 7 phases 0–4 done.
+test matrix. Plans 1–5, 7, and 8 are written: 1–3 implemented; 4 Linux-side done
+(Seatbelt planned); 5 scoped; 7 phases 0–4 done; 8 planned with the mechanism
+spike-validated on a real non-elevated Windows host.
 
 > **Vocabulary — "paddock".** The Go code renames Python Shepherd's `jail` to
 > **`paddock`** (an enclosed livestock area — it fits the shepherd/croft theme;
@@ -32,6 +33,7 @@ test matrix. Plans 1–5 and 7 are written: 1–3 implemented; 4 Linux-side done
 | **5** | Container-tier parity | overlay changes → typed effects, the `copy` carrier, the `clonefile` carrier | [`05-container-tier.md`](05-container-tier.md) | 📝 scoped |
 | **6** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
 | **7** | yaah integration | **retained sub-agents** (the proposal/settlement spine) + Landlock confinement on that one path (orchestrator stays host-normal); placement config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | ✅ Phases 0–3 done (defaults on); Phase 4 removed |
+| **8** | Windows containment | native Windows tier: write-restricted token + per-root capability SIDs + Low integrity label; contract parity with the Landlock member | [`08-windows-containment.md`](08-windows-containment.md) | 📝 planned (mechanism spike-validated) |
 
 ## Plan 1 — Linux Landlock containment (done)
 
@@ -191,6 +193,54 @@ confiner to the one retained launch.
 - See [`07-yaah-integration.md`](07-yaah-integration.md), incl. §11 (Python
   parity).
 
+## Plan 8 — Windows containment (native tier)
+
+**The gap:** Windows has no containment. `landlock.Detect()` returns `nil`
+off Linux, so `sandbox/git`'s opt-in `Exec` resolves to the advisory tier —
+a retained sub-agent dispatch on Windows is directory-isolated but not
+OS-confined. The Python reference has no Windows backend either, so this is a
+**family extension**, not a parity gap: the *contract* is parity with the
+Landlock member; the *mechanism* is a different Windows primitive.
+
+**The mechanism.** Windows has no unprivileged, per-process, path-scoped
+"deny writes below X" primitive — Landlock is a kernel LSM and there is no
+equivalent. The Windows member therefore composes four kernel-enforced layers
+to reach the same observable property:
+
+1. a **write-restricted token** (`CreateRestrictedToken` + `WRITE_RESTRICTED`),
+   so the access check runs twice and a write must satisfy both passes;
+2. **per-root capability SIDs** as the restricting SIDs, each derived
+   deterministically from its root's canonical path (`sha256` → `S-1-4-x-y`);
+3. **Low integrity + a Low no-write-up mandatory label** on the granted roots
+   — the layer that actually denies a write to an *ungranted* directory;
+4. an **ambient-delete deny** (`FILE_DELETE_CHILD` for Everyone), closing the
+   parent-directory delete right that `WRITE_RESTRICTED` does not intersect.
+
+The grant is read-merge-write under a per-path lock, with an exact-ACE skip so
+a re-provision is O(1) instead of re-propagating the tree. The runner re-execs
+the host binary under the restricted token and wraps the child in a
+kill-on-close Job Object. Because the token is a restricted version of the
+caller's own primary token, `CreateProcessAsUser` needs **no**
+`SE_ASSIGNPRIMARYTOKEN_NAME` privilege — the mechanism is **elevation-free**.
+
+**Status.** The mechanism is **spike-validated** on a real, non-elevated
+Windows host: write inside a granted root allowed, write outside denied,
+delete outside denied, read outside allowed (the Landlock-parity read
+boundary), the three-part probe conformant, the read-only lowering
+denying every write, and the unconfined host unaffected. No code has landed
+yet; the plan fixes the surface, the two `x/sys` gaps, the two traps, and the
+honest capability reporting.
+
+**Two things it deliberately does not do.** The network axis is **narrower**:
+the mechanism has no egress control, so only `allow_all` is representable and
+`deny_all`/`broker` **refuse** (fail-closed — never silently ignored; this
+interacts with the `ConfinementSpec` zero value, which defaults to
+`deny_all`). And the enforcement tier is **`native-access-check-deny`**, not
+`native-syscall-deny`, with the containment stamp `contained` — the hard-link
+boundary means it cannot govern every file effect.
+
+- See [`08-windows-containment.md`](08-windows-containment.md).
+
 ## Small items
 
 - **Sandbox file IO** — ✅ done: `GitSandbox.ReadFile`/`WriteFile` with
@@ -223,12 +273,13 @@ confiner to the one retained launch.
 | ExecutionBoundDriver / negotiation | ✅ | Plan 2 (adapted) |
 | Sandbox file IO | ✅ | implemented (symlink-safe) |
 | Seatbelt (macOS) | ❌ | Plan 4a |
+| **Windows containment (native tier)** | ❌ | **Plan 8** (mechanism spike-validated) |
 | Egress broker | ✅ | Plan 4b (`sandbox/egress`) |
 | Egress pinning (Linux) | ✅ (ahead of ref) | Plan 4c |
 | seccomp | ➖ not a gap | Plan 6 (optional) |
 | Container effects (overlay → typed) | ❌ | Plan 5a |
 | `copy` / `clonefile` carriers | ❌ | Plan 5b/5c |
-| Container / VM / AppContainer | ➖ | `croft` (container); VM/AppContainer signposted in both |
+| Container / VM / AppContainer | ➖ | `croft` (container); VM tier signposted; **AppContainer backend rejected for the native tier** (Plan 8 §3.1) |
 
 ## Dependency graph
 
@@ -237,8 +288,9 @@ Plan 1 (landlock, done)
   ├─ Plan 2 (reversible runs) ── Plan 3 (authority + plan compiler)
   │                                   └─ Plan 4c (egress pinning / network lowering)
   ├─ Plan 4a (Seatbelt)   Plan 4b (broker)
-  └─ Plan 5 (container tier: effects + copy/clonefile carriers)
-                              Plan 6 (seccomp, optional)
+  ├─ Plan 5 (container tier: effects + copy/clonefile carriers)
+  │                               Plan 6 (seccomp, optional)
+  └─ Plan 8 (Windows native tier) — reuses the Plan 1 contract as-is
 Plan 7 (yaah integration) depends on a released runtime (Phase 0) + Plan 4a (macOS)
 ```
 
@@ -256,5 +308,8 @@ Plan 7 (yaah integration) depends on a released runtime (Phase 0) + Plan 4a (mac
   to `paddock` (see the roadmap's vocabulary note). Wire values changed too
   (`syscall_paddock`, placement `paddock`), so Go permission-plan digests diverge
   from Python's by construction. Semantics unchanged.
-- **Non-goals (unchanged):** Windows containment; VM / AppContainer tiers
-  (signposted in both implementations); host-wiring `yaah`.
+- **Non-goals (unchanged):** VM / AppContainer tiers (signposted in both
+  implementations); host-wiring `yaah`. **Windows containment was a non-goal
+  and is now Plan 8** — a family extension, not a parity gap: the contract is
+  parity with the Landlock member, the mechanism is a different Windows
+  primitive.

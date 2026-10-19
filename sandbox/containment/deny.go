@@ -14,6 +14,11 @@ import (
 // vocabulary without ever raising it; this classifier is what makes the §9.4
 // mapping ("denied → discarded, Failed run") real in Go.
 //
+// The Windows backend denies the same way, and Windows phrases it
+// differently: the message is "Access is denied.", not "Permission denied".
+// Without that phrase the classifier reports a Windows denial as an ordinary
+// failure, and the run is recorded as failed rather than discarded.
+//
 // A command that exits non-zero for unrelated reasons but mentions permission in
 // its stderr can be misclassified; callers needing exactness should use a
 // command with a known exit code. The fail-closed probe, not this heuristic, is
@@ -24,7 +29,8 @@ func DeniedExit(res LaunchResult) bool {
 	}
 	stderr := strings.ToLower(res.Stderr)
 	return strings.Contains(stderr, "permission denied") ||
-		strings.Contains(stderr, "operation not permitted")
+		strings.Contains(stderr, "operation not permitted") ||
+		strings.Contains(stderr, "access is denied")
 }
 
 // DenyError returns an ErrSandboxDenied-wrapped error when res reads as a denial,
