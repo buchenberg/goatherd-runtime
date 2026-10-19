@@ -4,7 +4,7 @@ Notable changes to `shepherd-runtime-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
-## [Unreleased]
+## [v0.18.0] - 2026-10-19
 
 ### Added
 - `sandbox/winacl` — a **nested module** carrying the Windows containment
@@ -15,6 +15,8 @@ contain breaking changes, which are called out below.
   constructor — nothing in the root module changes. Unprivileged: no
   elevation, no container, no hypervisor. See
   [`docs/plans/08-windows-containment.md`](docs/plans/08-windows-containment.md).
+  The module carries its own version stream (`sandbox/winacl/vX.Y.Z`), like
+  `sandbox/landlock`.
 - `docs/plans/08-windows-containment.md` — the Windows containment plan, with
   the mechanism's spike evidence preserved under `docs/plans/spikes/winacl/`.
 
