@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1140,5 +1141,35 @@ func TestWorktreeSandbox_DestroyRefusesRepositoryRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, "tracked-baseline.txt")); err != nil {
 		t.Fatalf("Destroy removed the repository root: %v", err)
+	}
+}
+
+// TestGitWorktreeRegisteredMatchesPathWithNewline pins the registry parsing:
+// with --porcelain -z every attribute is NUL-terminated and paths arrive
+// verbatim — a worktree path containing a literal newline must still match.
+// Without the -z format the same path is C-quoted and newline-split, which
+// the ownership gate would read as unregistered and refuse a legitimate
+// fallback. Skipped on Windows: MSYS mangles newline bytes in argv, so the
+// fixture cannot be built there.
+func TestGitWorktreeRegisteredMatchesPathWithNewline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("MSYS argv mangling makes a newline path fixture unreliable on Windows")
+	}
+	repo := newTestRepo(t)
+
+	wtPath := filepath.Join(t.TempDir(), "line\nbreak")
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if out, err := gittest.Run(t, repo, "worktree", "add", "--detach", wtPath, "HEAD"); err != nil {
+		t.Fatalf("worktree add %q: %v (out: %s)", wtPath, err, out)
+	}
+
+	registered, err := gitWorktreeRegistered(context.Background(), &gitRunner{dir: repo}, wtPath)
+	if err != nil {
+		t.Fatalf("gitWorktreeRegistered: %v", err)
+	}
+	if !registered {
+		t.Errorf("a registered worktree with a newline in its path must be recognized")
 	}
 }

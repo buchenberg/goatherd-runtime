@@ -498,23 +498,21 @@ func (g *GitSandbox) Destroy(ctx context.Context) error {
 
 // gitWorktreeRegistered reports whether the repository registers the exact
 // path as one of its worktrees. The registry is read with --porcelain -z:
-// paths come back unquoted and verbatim, so a worktree whose name needs git's
-// C-style quoting (control or non-ASCII characters) still compares — with the
-// newline format, a quoted path would never match and a legitimate fallback
-// would be refused. Records are NUL-separated; attribute lines within a
-// record are newline-separated. The compare itself is path-cleaning then
-// best-effort symlink evaluation, which is how worktree paths travel
+// every attribute — including the `worktree <path>` entry — is terminated by
+// NUL, and paths come back verbatim and unquoted. A git C-style-quoted name
+// (control or non-ASCII characters) therefore compares, and so does a path
+// containing a literal newline, which arrives inside its element — so the
+// element must not be split on newlines. The compare itself is path-cleaning
+// then best-effort symlink evaluation, which is how worktree paths travel
 // (t.TempDir on macOS is itself a symlink; git reports real paths).
 func gitWorktreeRegistered(ctx context.Context, repo *gitRunner, worktreePath string) (bool, error) {
 	out, err := repo.run(ctx, "worktree", "list", "--porcelain", "-z")
 	if err != nil {
 		return false, fmt.Errorf("git worktree list: %w", err)
 	}
-	for _, record := range strings.Split(out, "\x00") {
-		for _, line := range strings.Split(record, "\n") {
-			if wt, ok := strings.CutPrefix(line, "worktree "); ok && sameDirPath(wt, worktreePath) {
-				return true, nil
-			}
+	for _, el := range strings.Split(out, "\x00") {
+		if wt, ok := strings.CutPrefix(el, "worktree "); ok && sameDirPath(wt, worktreePath) {
+			return true, nil
 		}
 	}
 	return false, nil
