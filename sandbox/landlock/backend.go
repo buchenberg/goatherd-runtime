@@ -36,6 +36,14 @@ import (
 // Backend is the Linux Landlock containment backend.
 type Backend struct{}
 
+// execCeiling bounds a single invoke whose launch request carries no timeout,
+// so a caller with no cancellation cannot hang indefinitely on a confined
+// command (the ceiling the Sandbox contract calls for; mirrors the git
+// backend's advisory-tier ceiling). An explicitly requested Timeout is the
+// caller's contract and is honored as given — the ceiling protects the
+// unspecified case.
+var execCeiling = 10 * time.Minute
+
 // New returns a Landlock backend.
 func New() *Backend { return &Backend{} }
 
@@ -227,6 +235,13 @@ func (b *Backend) Launch(profile string, req containment.LaunchRequest) (contain
 // invoke runs the trampoline in this binary with argv = [sentinel, profile, extra...].
 // It returns the process exit code and captured output. A non-nil error means the
 // trampoline itself could not be started.
+//
+// The confined command always runs under a deadline: an explicit request
+// Timeout, or execCeiling when the request carries none — matching the
+// GitSandbox advisory tier and the Sandbox contract that a caller passing
+// no cancellation must not be able to hang indefinitely. A run the deadline
+// kills surfaces as the context error, not as a silently "executed" result
+// at an impossible exit code.
 func (b *Backend) invoke(sentinel, profile, dir string, extra, env []string, stdin []byte, timeout time.Duration) (int, string, string, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -236,12 +251,12 @@ func (b *Backend) invoke(sentinel, profile, dir string, extra, env []string, std
 	argv = append(argv, sentinel, profile)
 	argv = append(argv, extra...)
 
-	ctx := context.Background()
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
+	ceiling := timeout
+	if ceiling <= 0 {
+		ceiling = execCeiling
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), ceiling)
+	defer cancel()
 
 	cmd := exec.CommandContext(ctx, exe, argv...)
 	cmd.Dir = dir
@@ -257,6 +272,9 @@ func (b *Backend) invoke(sentinel, profile, dir string, extra, env []string, std
 
 	runErr := cmd.Run()
 	if runErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return -1, stdout.String(), stderr.String(), fmt.Errorf("landlock: run trampoline: %w", ctxErr)
+		}
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {
 			return exitErr.ExitCode(), stdout.String(), stderr.String(), nil

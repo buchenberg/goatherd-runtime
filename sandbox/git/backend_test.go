@@ -1070,3 +1070,56 @@ func TestGitSandbox_AddressIsNormalizedAbsolute(t *testing.T) {
 		t.Errorf("worktree address = %q, want the given absolute %q", got, abs)
 	}
 }
+
+// TestWorktreeSandbox_DestroyRefusesForeignDirectory pins the Destroy
+// contract's ownership half: the Windows RemoveAll fallback must never fire on
+// a path the repository does not register as one of its worktrees. The
+// mis_configuration under test is NewWorktreeSandbox pointed at an existing
+// foreign directory that Create was never (successfully) called for — before
+// the ownership gate, any `git worktree remove` failure plus a present path
+// deleted the directory outright.
+func TestWorktreeSandbox_DestroyRefusesForeignDirectory(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestRepo(t)
+	foreign := t.TempDir()
+	gittest.WriteFile(t, foreign, "valuable.txt", "do not delete")
+
+	sb := NewWorktreeSandbox(repo, foreign)
+	if err := sb.Destroy(ctx); err != nil {
+		t.Fatalf("Destroy on a foreign path must stay idempotent, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(foreign, "valuable.txt")); err != nil {
+		t.Fatalf("Destroy removed a directory it did not provision: %v", err)
+	}
+}
+
+// TestWorktreeSandbox_DestroyWithoutCreate pins the idempotent half: Destroy
+// on a never-provisioned missing path is a quiet success, not a warning.
+func TestWorktreeSandbox_DestroyWithoutCreate(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestRepo(t)
+	sb := NewWorktreeSandbox(repo, filepath.Join(t.TempDir(), "never-created"))
+	if err := sb.Destroy(ctx); err != nil {
+		t.Fatalf("Destroy without Create must be a no-op, got: %v", err)
+	}
+}
+
+// TestWorktreeSandbox_DestroyIsIdempotent pins the second-Destroy case on a
+// worktree that WAS provisioned: the admin entry is gone after the first
+// Destroy, so the second must take the already-gone path, not the fallback.
+func TestWorktreeSandbox_DestroyIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestRepo(t)
+	wtPath := filepath.Join(t.TempDir(), "wt")
+
+	sb := NewWorktreeSandbox(repo, wtPath)
+	if err := sb.Create(ctx, sbx.SandboxSpec{}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := sb.Destroy(ctx); err != nil {
+		t.Fatalf("first Destroy: %v", err)
+	}
+	if err := sb.Destroy(ctx); err != nil {
+		t.Fatalf("second Destroy must stay a no-op, got: %v", err)
+	}
+}

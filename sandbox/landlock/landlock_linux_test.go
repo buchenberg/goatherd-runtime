@@ -3,12 +3,15 @@
 package landlock
 
 import (
+	"context"
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 )
@@ -385,5 +388,31 @@ func TestLandlock_ProbeNetwork(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	if err := b.Probe(b.ProfileFor([]string{wd}, containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: port}), wd, []string{wd}); err != nil {
 		t.Fatalf("broker probe: %v", err)
+	}
+}
+
+// TestLandlock_InvokeBoundedByDefaultCeiling pins the invoke ceiling: a
+// Launch whose request carries no timeout must not hang indefinitely. The
+// ceiling is shrunk for the test and the killed run surfaces as the context
+// deadline error rather than a bogus exit code.
+func TestLandlock_InvokeBoundedByDefaultCeiling(t *testing.T) {
+	b := requireLandlock(t)
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skipf("sleep unavailable: %v", err)
+	}
+	wd := t.TempDir()
+	profile := b.ProfileFor([]string{wd}, allowAll())
+
+	old := execCeiling
+	execCeiling = 300 * time.Millisecond
+	t.Cleanup(func() { execCeiling = old })
+
+	_, err = b.Launch(profile, containment.LaunchRequest{Command: []string{sleep, "5"}, WorkingRoot: wd})
+	if err == nil {
+		t.Fatal("an unbounded launch must be bounded by the default ceiling")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
 	}
 }

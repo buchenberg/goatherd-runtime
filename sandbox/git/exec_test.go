@@ -3,7 +3,9 @@ package git
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	trace "github.com/buchenberg/shepherd-kernel-go"
 	sbx "github.com/buchenberg/shepherd-runtime-go/sandbox"
@@ -151,5 +153,70 @@ func TestGitSandbox_ExecDeniedClassified(t *testing.T) {
 	}
 	if res.AuthorityEvidence == "" {
 		t.Fatal("a denied run must still cite its authority evidence")
+	}
+}
+
+// advisorySandbox returns an in-place sandbox whose confinement backend
+// reports unavailable at the named advisory placement, so Exec falls through
+// to the unconfined advisory tier — the only tier that runs real subprocesses
+// in this package's tests without a confinement backend.
+func advisorySandbox(t *testing.T) *GitSandbox {
+	t.Helper()
+	return NewLocalGitSandbox(newTestRepo(t), WithExec(&fakeConfiner{available: false}, confinement.PlacementAdvisory))
+}
+
+// TestGitSandbox_ExecAdvisoryBoundedByDefaultCeiling pins the Sandbox
+// contract's ceiling half: an Exec whose request carries no Timeout must not
+// be able to hang indefinitely when the caller passes context.Background().
+// The default ceiling is shrunk for the test; the deadline kill surfaces as
+// the context error, not as a result with an impossible exit code.
+func TestGitSandbox_ExecAdvisoryBoundedByDefaultCeiling(t *testing.T) {
+	sb := advisorySandbox(t)
+
+	old := execCeiling
+	execCeiling = 300 * time.Millisecond
+	t.Cleanup(func() { execCeiling = old })
+
+	start := time.Now()
+	_, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "sleep", Args: []string{"5"}})
+	if err == nil {
+		t.Fatal("an unbounded Exec must be bounded by the default ceiling")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("takeover too long: %v — the ceiling did not stop the run", time.Since(start))
+	}
+}
+
+// TestGitSandbox_ExecExplicitTimeoutHonored pins the explicit half: a request
+// Timeout turns an overrun run into the deadline error — the same distinction
+// the default ceiling makes, at the caller's own deadline.
+func TestGitSandbox_ExecExplicitTimeoutHonored(t *testing.T) {
+	sb := advisorySandbox(t)
+	_, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "sleep", Args: []string{"2"}, Timeout: 250 * time.Millisecond})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+// TestGitSandbox_ExecExplicitTimeoutNotClamped pins the side of the contract
+// that protects explicit callers: a Timeout above the test-shrunk ceiling is
+// honored as given instead of clamped — the ceiling protects unspecified
+// requests, not callers who chose a bound.
+func TestGitSandbox_ExecExplicitTimeoutNotClamped(t *testing.T) {
+	sb := advisorySandbox(t)
+
+	old := execCeiling
+	execCeiling = 200 * time.Millisecond
+	t.Cleanup(func() { execCeiling = old })
+
+	res, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "echo", Args: []string{"unclamped"}, Timeout: 30 * time.Second})
+	if err != nil {
+		t.Fatalf("explicit long timeout must not be clamped: %v", err)
+	}
+	if res.ExitCode != 0 || strings.TrimSpace(res.Stdout) != "unclamped" {
+		t.Fatalf("result = %+v", res)
 	}
 }

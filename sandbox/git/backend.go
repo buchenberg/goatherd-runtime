@@ -31,6 +31,16 @@ import (
 // indefinitely, even when the caller passes context.Background().
 const gitTimeout = 30 * time.Second
 
+// execCeiling bounds a single Exec whose request carries no Timeout, so a
+// caller passing context.Background() cannot hang indefinitely on an agent
+// command (the ceiling the Sandbox contract calls for). An explicitly
+// requested Timeout is the caller's contract and is honored as given — the
+// ceiling protects the unspecified case, the way gitTimeout protects the git
+// plumbing. Either way the command runs under a real deadline, so a timed-out
+// run surfaces as the context deadline error rather than as a silently
+// executed result with a kill exit code (see advisoryExec).
+var execCeiling = 10 * time.Minute
+
 // gitRunner executes git commands in a directory with a bounded timeout and
 // terminal prompts disabled, returning trimmed stdout.
 type gitRunner struct {
@@ -407,9 +417,16 @@ func (g *GitSandbox) Create(ctx context.Context, spec sbx.SandboxSpec) error {
 // Destroy removes the worktree this sandbox allocated. In-place mode is a no-op
 // so a scope can never delete the user's repository.
 //
+// The os.RemoveAll fallback is gated on the repository actually registering
+// this path as one of its worktrees: the Sandbox contract is that Destroy must
+// never destroy resources the backend did not create (sandbox.Sandbox), so a
+// misconfigured or failed-Create worktree path pointing at a directory someone
+// else owns is never removed.
+//
 // On Windows a leftover handle (editor, shell, indexer, antivirus) can make
-// `git worktree remove` fail; the directory is then removed directly and the
-// administrative entry pruned so the worktree does not become unusable.
+// `git worktree remove` fail; for a path the repository registers as one of
+// its worktrees, the directory is then removed directly and the administrative
+// entry pruned so the worktree does not become unusable.
 func (g *GitSandbox) Destroy(ctx context.Context) error {
 	if !g.isWorktree() {
 		return nil
@@ -421,19 +438,30 @@ func (g *GitSandbox) Destroy(ctx context.Context) error {
 		// never created or is already gone, and os.RemoveAll is a no-op
 		// then — an idempotent Destroy must not warn about it. Only skip
 		// on the path-not-exist condition; any other stat failure (say
-		// EACCES on the parent) must fall through to the removal attempt
+		// EACCES on the parent) must fall through to the registry check
 		// rather than silently reporting success over a leftover tree.
 		if _, statErr := os.Lstat(g.worktreePath); !os.IsNotExist(statErr) {
-			if rmErr := os.RemoveAll(g.worktreePath); rmErr != nil {
-				return fmt.Errorf("git sandbox: remove worktree %s: %w (git worktree remove also failed: %v)",
-					g.worktreePath, rmErr, err)
+			registered, regErr := g.isRegisteredWorktree(ctx)
+			if regErr == nil && registered {
+				if rmErr := os.RemoveAll(g.worktreePath); rmErr != nil {
+					return fmt.Errorf("git sandbox: remove worktree %s: %w (git worktree remove also failed: %v)",
+						g.worktreePath, rmErr, err)
+				}
+				if statErr != nil {
+					return fmt.Errorf("git sandbox: inspect worktree %s: %w (git worktree remove failed: %v)",
+						g.worktreePath, statErr, err)
+				}
+				slog.Warn("git sandbox: git worktree remove failed, removed with os.RemoveAll fallback",
+					"worktree", g.worktreePath, "err", err)
+			} else {
+				// Not provably ours (unregistered path, or the registry
+				// check itself failed): refuse the fallback. Fail-closed
+				// like the rest of the backend — losing a leftover
+				// directory is recoverable; deleting a directory the
+				// backend never provisioned is not.
+				slog.Warn("git sandbox: refusing RemoveAll fallback — path is not a provably registered worktree (Destroy only removes what the backend provisioned)",
+					"worktree", g.worktreePath, "gitErr", err, "regErr", regErr)
 			}
-			if statErr != nil {
-				return fmt.Errorf("git sandbox: inspect worktree %s: %w (git worktree remove failed: %v)",
-					g.worktreePath, statErr, err)
-			}
-			slog.Warn("git sandbox: git worktree remove failed, removed with os.RemoveAll fallback",
-				"worktree", g.worktreePath, "err", err)
 		}
 	}
 
@@ -443,6 +471,50 @@ func (g *GitSandbox) Destroy(ctx context.Context) error {
 		return fmt.Errorf("git sandbox: prune after remove: %w", err)
 	}
 	return nil
+}
+
+// gitWorktreeRegistered reports whether the repository registers the exact
+// path as one of its worktrees. The compare is path-cleaning then
+// best-effort symlink evaluation, which is how worktree paths travel
+// (t.TempDir on macOS is itself a symlink; git reports real paths).
+func gitWorktreeRegistered(ctx context.Context, repo *gitRunner, worktreePath string) (bool, error) {
+	out, err := repo.run(ctx, "worktree", "list", "--porcelain")
+	if err != nil {
+		return false, fmt.Errorf("git worktree list: %w", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if wt, ok := strings.CutPrefix(line, "worktree "); ok && sameDirPath(wt, worktreePath) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// isRegisteredWorktree is gitWorktreeRegistered for this sandbox's worktree
+// path. A relative configured path is resolved against the repository, which
+// is where the backend's git subprocesses resolve it too (repo.run sets
+// cmd.Dir to the repo).
+func (g *GitSandbox) isRegisteredWorktree(ctx context.Context) (bool, error) {
+	p := g.worktreePath
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(g.repoPath, p)
+	}
+	return gitWorktreeRegistered(ctx, g.repo(), p)
+}
+
+// sameDirPath compares two directory paths after cleaning and best-effort
+// symlink evaluation. Evaluation is per-side: a path that cannot be evaluated
+// (not a symlink, no ancestor error) still compares on the cleaned lexical form.
+func sameDirPath(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	if ea, err := filepath.EvalSymlinks(a); err == nil {
+		if eb, err := filepath.EvalSymlinks(b); err == nil {
+			return filepath.Clean(ea) == filepath.Clean(eb)
+		}
+	}
+	return false
 }
 
 // Capture records the current workspace state as a reusable trace.WorkspaceState.
@@ -723,13 +795,19 @@ func (g *GitSandbox) ExecGrants(ctx context.Context, req sbx.ExecRequest, grants
 
 // advisoryExec runs launchReq with no confinement — the advisory tier: no paddock on
 // this host, and the placement permits proceeding unconfined.
+//
+// The command always runs under a deadline: an explicit request Timeout, or
+// execCeiling when the request carries none. A run the deadline kills
+// surfaces as a context-deadline error, not as a result with a negative
+// exit code — "-1 with no error" would read as an executed process at an
+// impossible code rather than as infrastructure failure.
 func (g *GitSandbox) advisoryExec(ctx context.Context, req containment.LaunchRequest, start time.Time) (sbx.ExecResult, error) {
-	cmdCtx := ctx
-	if req.Timeout > 0 {
-		var cancel context.CancelFunc
-		cmdCtx, cancel = context.WithTimeout(ctx, req.Timeout)
-		defer cancel()
+	ceiling := req.Timeout
+	if ceiling <= 0 {
+		ceiling = execCeiling
 	}
+	cmdCtx, cancel := context.WithTimeout(ctx, ceiling)
+	defer cancel()
 	cmd := exec.CommandContext(cmdCtx, req.Command[0], req.Command[1:]...)
 	cmd.Dir = req.Cwd
 	if req.Env != nil {
@@ -743,17 +821,23 @@ func (g *GitSandbox) advisoryExec(ctx context.Context, req containment.LaunchReq
 	cmd.Stderr = &stderr
 
 	runErr := cmd.Run()
-	code := 0
 	if runErr != nil {
+		if err := cmdCtx.Err(); err != nil {
+			return sbx.ExecResult{}, fmt.Errorf("git sandbox: exec %s: %w", req.Command[0], err)
+		}
 		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
-			code = exitErr.ExitCode()
-		} else {
+		if !errors.As(runErr, &exitErr) {
 			return sbx.ExecResult{}, fmt.Errorf("git sandbox: exec %s: %w", req.Command[0], runErr)
 		}
+		return sbx.ExecResult{
+			ExitCode: exitErr.ExitCode(),
+			Stdout:   stdout.String(),
+			Stderr:   stderr.String(),
+			Duration: time.Since(start),
+		}, nil
 	}
 	return sbx.ExecResult{
-		ExitCode: code,
+		ExitCode: 0,
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
 		Duration: time.Since(start),
