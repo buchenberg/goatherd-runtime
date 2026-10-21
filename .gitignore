@@ -17,8 +17,10 @@ go.work.sum
 Thumbs.db
 
 # Beads / Dolt files (added by bd init)
-.dolt/
-*.db
-.beads-credential-key
-.beads/proxieddb/
-*.gate.lock*
+# Anchored — an unanchored *.db would match everywhere in the tree; the
+# per-directory runtime artifacts under .beads/ are ignored by .beads/.gitignore.
+/.dolt/
+/.beads-credential-key
+/.beads/*.db
+/.beads/*.gate.lock*
+/.beads.gate.lock

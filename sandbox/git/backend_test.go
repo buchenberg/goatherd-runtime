@@ -1123,3 +1123,22 @@ func TestWorktreeSandbox_DestroyIsIdempotent(t *testing.T) {
 		t.Fatalf("second Destroy must stay a no-op, got: %v", err)
 	}
 }
+
+// TestWorktreeSandbox_DestroyRefusesRepositoryRoot pins the sharpest edge of
+// the ownership gate: the repository's main worktree is always a registered
+// worktree, so registry membership alone cannot authorize the fallback —
+// a Destroy on the worktree==repo pairing (which Create rejects, but Destroy
+// is callable without a Create) must leave the repository untouched.
+func TestWorktreeSandbox_DestroyRefusesRepositoryRoot(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestRepo(t)
+	gittest.WriteFile(t, repo, "tracked-baseline.txt", "repository content")
+
+	sb := NewWorktreeSandbox(repo, repo)
+	if err := sb.Destroy(ctx); err != nil {
+		t.Fatalf("Destroy must refuse the repository root idempotently, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "tracked-baseline.txt")); err != nil {
+		t.Fatalf("Destroy removed the repository root: %v", err)
+	}
+}

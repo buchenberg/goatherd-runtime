@@ -176,6 +176,14 @@ type Sandbox interface {
 	Diff(ctx context.Context, ws trace.WorkspaceState, maxLines int) (diff string, files []string, err error)
 
 	// Exec runs a command in the sandbox and returns its result.
+	//
+	// The command always runs under a deadline: the request's Timeout when
+	// one is given, or a backend default ceiling when it carries none, so a
+	// caller passing context.Background() cannot hang indefinitely. The
+	// git and landlock backends use a 10-minute default; an explicit
+	// Timeout above the ceiling is honored as the caller's contract, not
+	// clamped. A run the deadline kills surfaces as a context-deadline
+	// error, never as a result with a negative exit code.
 	Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 
 	// ReadFile reads a file inside the sandbox workspace.

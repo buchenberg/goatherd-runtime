@@ -39,9 +39,13 @@ type Backend struct{}
 // execCeiling bounds a single invoke whose launch request carries no timeout,
 // so a caller with no cancellation cannot hang indefinitely on a confined
 // command (the ceiling the Sandbox contract calls for; mirrors the git
-// backend's advisory-tier ceiling). An explicitly requested Timeout is the
-// caller's contract and is honored as given — the ceiling protects the
-// unspecified case.
+// backend's advisory-tier ceiling — see sandbox.Sandbox.Exec, which records
+// this default). An explicitly requested Timeout is the caller's contract
+// and is honored as given — the ceiling protects the unspecified case.
+//
+// This value is deliberately mirrored from the git backend (this nested
+// module cannot consume a new root symbol until the runtime is re-tagged);
+// keep the two in sync and the Sandbox.Exec contract doc authoritative.
 var execCeiling = 10 * time.Minute
 
 // New returns a Landlock backend.

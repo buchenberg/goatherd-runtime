@@ -3,7 +3,7 @@ package git
 import (
 	"context"
 	"errors"
-	"strings"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -173,12 +173,17 @@ func advisorySandbox(t *testing.T) *GitSandbox {
 func TestGitSandbox_ExecAdvisoryBoundedByDefaultCeiling(t *testing.T) {
 	sb := advisorySandbox(t)
 
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skipf("sleep unavailable: %v", err)
+	}
+
 	old := execCeiling
 	execCeiling = 300 * time.Millisecond
 	t.Cleanup(func() { execCeiling = old })
 
 	start := time.Now()
-	_, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "sleep", Args: []string{"5"}})
+	_, err = sb.Exec(context.Background(), sbx.ExecRequest{Command: sleep, Args: []string{"5"}})
 	if err == nil {
 		t.Fatal("an unbounded Exec must be bounded by the default ceiling")
 	}
@@ -195,7 +200,13 @@ func TestGitSandbox_ExecAdvisoryBoundedByDefaultCeiling(t *testing.T) {
 // the default ceiling makes, at the caller's own deadline.
 func TestGitSandbox_ExecExplicitTimeoutHonored(t *testing.T) {
 	sb := advisorySandbox(t)
-	_, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "sleep", Args: []string{"2"}, Timeout: 250 * time.Millisecond})
+
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skipf("sleep unavailable: %v", err)
+	}
+
+	_, err = sb.Exec(context.Background(), sbx.ExecRequest{Command: sleep, Args: []string{"2"}, Timeout: 250 * time.Millisecond})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
 	}
@@ -204,7 +215,8 @@ func TestGitSandbox_ExecExplicitTimeoutHonored(t *testing.T) {
 // TestGitSandbox_ExecExplicitTimeoutNotClamped pins the side of the contract
 // that protects explicit callers: a Timeout above the test-shrunk ceiling is
 // honored as given instead of clamped — the ceiling protects unspecified
-// requests, not callers who chose a bound.
+// requests, not callers who chose a bound. The command is git (the suite
+// already requires it) so the test is portable across CI platforms.
 func TestGitSandbox_ExecExplicitTimeoutNotClamped(t *testing.T) {
 	sb := advisorySandbox(t)
 
@@ -212,11 +224,11 @@ func TestGitSandbox_ExecExplicitTimeoutNotClamped(t *testing.T) {
 	execCeiling = 200 * time.Millisecond
 	t.Cleanup(func() { execCeiling = old })
 
-	res, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "echo", Args: []string{"unclamped"}, Timeout: 30 * time.Second})
+	res, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "git", Args: []string{"--version"}, Timeout: 30 * time.Second})
 	if err != nil {
 		t.Fatalf("explicit long timeout must not be clamped: %v", err)
 	}
-	if res.ExitCode != 0 || strings.TrimSpace(res.Stdout) != "unclamped" {
+	if res.ExitCode != 0 || res.Stdout == "" {
 		t.Fatalf("result = %+v", res)
 	}
 }
