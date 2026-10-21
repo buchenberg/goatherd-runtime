@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "shepherd_runtime_go",
+  "project_id": "522ce7fd-cb20-49a0-a3d8-a002dc04c6a5"
+}

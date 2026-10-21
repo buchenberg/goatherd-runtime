@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1068,5 +1069,107 @@ func TestGitSandbox_AddressIsNormalizedAbsolute(t *testing.T) {
 	abs := filepath.Join(t.TempDir(), "abs-wt")
 	if got := NewWorktreeSandbox(repo, abs).Address(); got != abs {
 		t.Errorf("worktree address = %q, want the given absolute %q", got, abs)
+	}
+}
+
+// TestWorktreeSandbox_DestroyRefusesForeignDirectory pins the Destroy
+// contract's ownership half: the Windows RemoveAll fallback must never fire on
+// a path the repository does not register as one of its worktrees. The
+// mis_configuration under test is NewWorktreeSandbox pointed at an existing
+// foreign directory that Create was never (successfully) called for — before
+// the ownership gate, any `git worktree remove` failure plus a present path
+// deleted the directory outright.
+func TestWorktreeSandbox_DestroyRefusesForeignDirectory(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestRepo(t)
+	foreign := t.TempDir()
+	gittest.WriteFile(t, foreign, "valuable.txt", "do not delete")
+
+	sb := NewWorktreeSandbox(repo, foreign)
+	if err := sb.Destroy(ctx); err != nil {
+		t.Fatalf("Destroy on a foreign path must stay idempotent, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(foreign, "valuable.txt")); err != nil {
+		t.Fatalf("Destroy removed a directory it did not provision: %v", err)
+	}
+}
+
+// TestWorktreeSandbox_DestroyWithoutCreate pins the idempotent half: Destroy
+// on a never-provisioned missing path is a quiet success, not a warning.
+func TestWorktreeSandbox_DestroyWithoutCreate(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestRepo(t)
+	sb := NewWorktreeSandbox(repo, filepath.Join(t.TempDir(), "never-created"))
+	if err := sb.Destroy(ctx); err != nil {
+		t.Fatalf("Destroy without Create must be a no-op, got: %v", err)
+	}
+}
+
+// TestWorktreeSandbox_DestroyIsIdempotent pins the second-Destroy case on a
+// worktree that WAS provisioned: the admin entry is gone after the first
+// Destroy, so the second must take the already-gone path, not the fallback.
+func TestWorktreeSandbox_DestroyIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestRepo(t)
+	wtPath := filepath.Join(t.TempDir(), "wt")
+
+	sb := NewWorktreeSandbox(repo, wtPath)
+	if err := sb.Create(ctx, sbx.SandboxSpec{}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := sb.Destroy(ctx); err != nil {
+		t.Fatalf("first Destroy: %v", err)
+	}
+	if err := sb.Destroy(ctx); err != nil {
+		t.Fatalf("second Destroy must stay a no-op, got: %v", err)
+	}
+}
+
+// TestWorktreeSandbox_DestroyRefusesRepositoryRoot pins the sharpest edge of
+// the ownership gate: the repository's main worktree is always a registered
+// worktree, so registry membership alone cannot authorize the fallback —
+// a Destroy on the worktree==repo pairing (which Create rejects, but Destroy
+// is callable without a Create) must leave the repository untouched.
+func TestWorktreeSandbox_DestroyRefusesRepositoryRoot(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestRepo(t)
+	gittest.WriteFile(t, repo, "tracked-baseline.txt", "repository content")
+
+	sb := NewWorktreeSandbox(repo, repo)
+	if err := sb.Destroy(ctx); err != nil {
+		t.Fatalf("Destroy must refuse the repository root idempotently, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "tracked-baseline.txt")); err != nil {
+		t.Fatalf("Destroy removed the repository root: %v", err)
+	}
+}
+
+// TestGitWorktreeRegisteredMatchesPathWithNewline pins the registry parsing:
+// with --porcelain -z every attribute is NUL-terminated and paths arrive
+// verbatim — a worktree path containing a literal newline must still match.
+// Without the -z format the same path is C-quoted and newline-split, which
+// the ownership gate would read as unregistered and refuse a legitimate
+// fallback. Skipped on Windows: MSYS mangles newline bytes in argv, so the
+// fixture cannot be built there.
+func TestGitWorktreeRegisteredMatchesPathWithNewline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("MSYS argv mangling makes a newline path fixture unreliable on Windows")
+	}
+	repo := newTestRepo(t)
+
+	wtPath := filepath.Join(t.TempDir(), "line\nbreak")
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if out, err := gittest.Run(t, repo, "worktree", "add", "--detach", wtPath, "HEAD"); err != nil {
+		t.Fatalf("worktree add %q: %v (out: %s)", wtPath, err, out)
+	}
+
+	registered, err := gitWorktreeRegistered(context.Background(), &gitRunner{dir: repo}, wtPath)
+	if err != nil {
+		t.Fatalf("gitWorktreeRegistered: %v", err)
+	}
+	if !registered {
+		t.Errorf("a registered worktree with a newline in its path must be recognized")
 	}
 }
