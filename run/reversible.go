@@ -62,11 +62,11 @@ type Options struct {
 	// Disposition defaults to DispositionMerge.
 	Disposition Disposition
 	// Placement defaults to PlacementAuto.
-	Placement confinement.Placement
+	Placement containment.Placement
 	// Confinement is the caller's authority lowering; nil asks the backend for
 	// its default. Plan 1's confinement lowerers produce it. Mutually exclusive
 	// with Plan.
-	Confinement *containment.ConfinementSpec
+	Confinement *confinement.ConfinementSpec
 	// Plan is the compiled permission plan (confinement.Install) driving this
 	// run: it supplies the confinement spec (the jail monitor's) and the plan
 	// digest / descriptor recorded as authority evidence. Mutually exclusive
@@ -100,7 +100,7 @@ type Options struct {
 type RunContext struct {
 	Scope       *goatherd.Scope
 	Capability  containment.Capability
-	Confinement containment.ConfinementSpec
+	Confinement confinement.ConfinementSpec
 }
 
 // Exec runs a command confined by the capability: resolve → profile → probe →
@@ -193,7 +193,7 @@ func Reversible(ctx context.Context, mgr *goatherd.ScopeManager, parent *goather
 
 	// Resolve a plan's jail spec before allocating anything: a plan with no jail
 	// clause (carrier-only) refuses without leaving an orphan scope.
-	var planSpec *containment.ConfinementSpec
+	var planSpec *confinement.ConfinementSpec
 	if opts.Plan != nil {
 		s, err := opts.Plan.Confinement()
 		if err != nil {
@@ -204,7 +204,7 @@ func Reversible(ctx context.Context, mgr *goatherd.ScopeManager, parent *goather
 
 	placement := opts.Placement
 	if placement == "" {
-		placement = confinement.PlacementAuto
+		placement = containment.PlacementAuto
 	}
 
 	// Resolve the paddock BEFORE allocating anything: a paddock placement on a
@@ -215,7 +215,7 @@ func Reversible(ctx context.Context, mgr *goatherd.ScopeManager, parent *goather
 			available = true
 		}
 	}
-	confined, err := confinement.ResolvePlacement(placement, available)
+	confined, err := containment.ResolvePlacement(placement, available)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -340,11 +340,11 @@ func Reversible(ctx context.Context, mgr *goatherd.ScopeManager, parent *goather
 
 // defaultSpec resolves the confinement a handler's RunContext carries: the
 // caller's lowering, or a Permissive default over the run's working root.
-func defaultSpec(opts Options, workDir string) containment.ConfinementSpec {
+func defaultSpec(opts Options, workDir string) confinement.ConfinementSpec {
 	if opts.Confinement != nil {
 		return *opts.Confinement
 	}
-	return containment.PermissiveFor(workDir)
+	return confinement.PermissiveFor(workDir)
 }
 
 // VerifyHandler is the negotiation conformance probe for a host-supplied

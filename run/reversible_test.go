@@ -149,7 +149,7 @@ func TestReversible_RefusesWithoutBackend(t *testing.T) {
 
 	_, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:    "run:paddock-1",
-		Placement:  confinement.PlacementPaddock,
+		Placement:  containment.PlacementPaddock,
 		NewSandbox: worktreeFactory(t, repo),
 	}, func(_ context.Context, _ *RunContext) (Result, error) {
 		return Result{}, nil
@@ -287,8 +287,8 @@ type fakeBackend struct{ available bool }
 
 func (f *fakeBackend) Name() string                                          { return "fake" }
 func (f *fakeBackend) EnforcementTier() string                               { return "test" }
-func (f *fakeBackend) ProfileFor([]string, containment.NetworkPolicy) string { return "{}" }
-func (f *fakeBackend) SupportsNetwork(containment.NetMode) bool              { return true }
+func (f *fakeBackend) ProfileFor([]string, confinement.NetworkPolicy) string { return "{}" }
+func (f *fakeBackend) SupportsNetwork(confinement.NetMode) bool              { return true }
 func (f *fakeBackend) Probe(string, string, []string) error                  { return nil }
 func (f *fakeBackend) Launch(string, containment.LaunchRequest) (containment.LaunchResult, error) {
 	return containment.LaunchResult{ExitCode: 0}, nil
@@ -307,11 +307,11 @@ func TestReversible_HandlerRunsConfined(t *testing.T) {
 
 	out, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:   "run:conf-1",
-		Placement: confinement.PlacementPaddock,
+		Placement: containment.PlacementPaddock,
 		Backend:   fake,
 		NewSandbox: func(string) (sandbox.Sandbox, error) {
 			return git.NewWorktreeSandbox(repo, filepath.Join(t.TempDir(), "wt"),
-				git.WithExec(fake, confinement.PlacementPaddock)), nil
+				git.WithExec(fake, containment.PlacementPaddock)), nil
 		},
 	}, func(ctx context.Context, rc *RunContext) (Result, error) {
 		res, err := rc.Scope.Sandbox().Exec(ctx, sandbox.ExecRequest{Command: "true", AuthorityMatch: "m1"})
@@ -370,11 +370,11 @@ func TestReversible_RecordsEvidence(t *testing.T) {
 
 	if _, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:   "run:ev-1",
-		Placement: confinement.PlacementPaddock,
+		Placement: containment.PlacementPaddock,
 		Backend:   fake,
 		NewSandbox: func(string) (sandbox.Sandbox, error) {
 			return git.NewWorktreeSandbox(repo, filepath.Join(t.TempDir(), "wt"),
-				git.WithExec(fake, confinement.PlacementPaddock)), nil
+				git.WithExec(fake, containment.PlacementPaddock)), nil
 		},
 	}, func(ctx context.Context, rc *RunContext) (Result, error) {
 		res, err := rc.Scope.Sandbox().Exec(ctx, sandbox.ExecRequest{Command: "true", AuthorityMatch: "m1"})
@@ -396,7 +396,7 @@ func TestReversible_RecordsEvidence(t *testing.T) {
 }
 
 func TestRunContext_ExecRefusesWithoutBackend(t *testing.T) {
-	rc := &RunContext{Capability: containment.Capability{}, Confinement: containment.ReadOnlySpec()}
+	rc := &RunContext{Capability: containment.Capability{}, Confinement: confinement.ReadOnlySpec()}
 	if _, err := rc.Exec(containment.LaunchRequest{Command: []string{"true"}}); !errors.Is(err, containment.ErrPaddockNotEstablished) {
 		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
@@ -406,7 +406,7 @@ func TestRunContext_ExecConfined(t *testing.T) {
 	fake := &fakeBackend{available: true}
 	rc := &RunContext{
 		Capability:  containment.Capability{Backend: fake, WorkingRoot: t.TempDir()},
-		Confinement: containment.ReadOnlySpec(),
+		Confinement: confinement.ReadOnlySpec(),
 	}
 	res, err := rc.Exec(containment.LaunchRequest{Command: []string{"true"}})
 	if err != nil {
@@ -452,7 +452,7 @@ func TestReversible_PlanDrivesConfinement(t *testing.T) {
 		t.Fatalf("Install: %v", err)
 	}
 
-	var got containment.ConfinementSpec
+	var got confinement.ConfinementSpec
 	if _, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:    "run:plan-1",
 		Plan:       &plan,
@@ -463,7 +463,7 @@ func TestReversible_PlanDrivesConfinement(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Reversible: %v", err)
 	}
-	if len(got.WritableRoots) != 0 || got.Network.Mode != containment.NetDenyAll {
+	if len(got.WritableRoots) != 0 || got.Network.Mode != confinement.NetDenyAll {
 		t.Fatalf("the plan must drive the run's confinement; got %+v", got)
 	}
 }
@@ -532,7 +532,7 @@ func TestReversible_PlanMutuallyExclusive(t *testing.T) {
 	mgr := newManager(t)
 	parent, _ := newParent(t, mgr, "run:mx-main")
 	plan := confinement.InstallCarrierCheck(confinement.CarrierCheckAuthority{})
-	spec := containment.ReadOnlySpec()
+	spec := confinement.ReadOnlySpec()
 
 	_, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:     "run:mx-1",

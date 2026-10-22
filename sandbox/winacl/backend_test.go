@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
@@ -30,7 +31,7 @@ func TestWriteSidForDistinguishesRoots(t *testing.T) {
 
 func TestProfileForReadOnly(t *testing.T) {
 	b := New()
-	doc := b.ProfileFor(nil, containment.NetworkPolicy{Mode: containment.NetDenyAll})
+	doc := b.ProfileFor(nil, confinement.NetworkPolicy{Mode: confinement.NetDenyAll})
 	prof, err := decodeProfile(doc)
 	if err != nil {
 		t.Fatalf("decode the profile: %v", err)
@@ -49,7 +50,7 @@ func TestProfileForReadOnly(t *testing.T) {
 func TestProfileForWorkspaceWrite(t *testing.T) {
 	b := New()
 	roots := []string{`C:\work\a`, `C:\work\b`}
-	doc := b.ProfileFor(roots, containment.NetworkPolicy{Mode: containment.NetAllowAll})
+	doc := b.ProfileFor(roots, confinement.NetworkPolicy{Mode: confinement.NetAllowAll})
 	prof, err := decodeProfile(doc)
 	if err != nil {
 		t.Fatalf("decode the profile: %v", err)
@@ -89,10 +90,10 @@ func TestProfileValidateRefusesAnUnknownMode(t *testing.T) {
 
 func TestSupportsNetworkOnlyAllowsAllowAll(t *testing.T) {
 	b := New()
-	if !b.SupportsNetwork(containment.NetAllowAll) {
+	if !b.SupportsNetwork(confinement.NetAllowAll) {
 		t.Fatal("allow_all must be representable")
 	}
-	for _, mode := range []containment.NetMode{containment.NetDenyAll, containment.NetBroker, ""} {
+	for _, mode := range []confinement.NetMode{confinement.NetDenyAll, confinement.NetBroker, ""} {
 		if b.SupportsNetwork(mode) {
 			t.Fatalf("the mechanism has no egress control, so %q must not be representable", mode)
 		}

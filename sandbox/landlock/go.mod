@@ -8,7 +8,6 @@ require (
 	golang.org/x/sys v0.19.0
 )
 
-replace github.com/buchenberg/goatherd-runtime => ../..
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

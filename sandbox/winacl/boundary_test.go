@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 	"golang.org/x/sys/windows"
 	"unsafe"
@@ -24,9 +25,9 @@ import (
 // happens.
 func TestWinACL_DirectoryCanBeCreatedInsideAGrantedRoot(t *testing.T) {
 	tr := newTree(t)
-	spec := containment.ConfinementSpec{
+	spec := confinement.ConfinementSpec{
 		WritableRoots: []string{tr.rootA},
-		Network:       containment.NetworkPolicy{Mode: containment.NetAllowAll},
+		Network:       confinement.NetworkPolicy{Mode: confinement.NetAllowAll},
 	}
 	// Two levels, because a nested creation needs the intermediate directory
 	// to exist first.
@@ -59,9 +60,9 @@ func TestWinACL_DirectoryCanBeCreatedInsideAGrantedRoot(t *testing.T) {
 func TestWinACL_EnvironmentReachesTheChild(t *testing.T) {
 	tr := newTree(t)
 	target := filepath.Join(tr.rootA, "env.txt")
-	spec := containment.ConfinementSpec{
+	spec := confinement.ConfinementSpec{
 		WritableRoots: []string{tr.rootA},
-		Network:       containment.NetworkPolicy{Mode: containment.NetAllowAll},
+		Network:       confinement.NetworkPolicy{Mode: confinement.NetAllowAll},
 	}
 	env := append(os.Environ(), envProbeVariable+"=carried-through")
 	result, err := containment.LaunchConfined(New(), spec, containment.LaunchRequest{
@@ -92,9 +93,9 @@ func TestWinACL_EnvironmentReachesTheChild(t *testing.T) {
 // the runtime would record an empty result for a body that worked.
 func TestWinACL_ChildStandardOutputReachesTheRunner(t *testing.T) {
 	tr := newTree(t)
-	spec := containment.ConfinementSpec{
+	spec := confinement.ConfinementSpec{
 		WritableRoots: []string{tr.rootA},
-		Network:       containment.NetworkPolicy{Mode: containment.NetAllowAll},
+		Network:       confinement.NetworkPolicy{Mode: confinement.NetAllowAll},
 	}
 	result, err := containment.LaunchConfined(New(), spec, containment.LaunchRequest{
 		Command:     effectCommand(t, "echo", ""),
@@ -119,9 +120,9 @@ func TestWinACL_CommandIsResolvedThroughPath(t *testing.T) {
 		t.Skip("cmd.exe is not on PATH")
 	}
 	tr := newTree(t)
-	spec := containment.ConfinementSpec{
+	spec := confinement.ConfinementSpec{
 		WritableRoots: []string{tr.rootA},
-		Network:       containment.NetworkPolicy{Mode: containment.NetAllowAll},
+		Network:       confinement.NetworkPolicy{Mode: confinement.NetAllowAll},
 	}
 	result, err := containment.LaunchConfined(New(), spec, containment.LaunchRequest{
 		Command:     []string{"cmd.exe", "/c", "exit 0"},
@@ -379,9 +380,9 @@ func TestWinACL_EveryoneWritableLowLabeledDirectoryIsNotConfined(t *testing.T) {
 	}
 
 	target := filepath.Join(adversarial, "not-confined.txt")
-	spec := containment.ConfinementSpec{
+	spec := confinement.ConfinementSpec{
 		WritableRoots: []string{tr.rootA},
-		Network:       containment.NetworkPolicy{Mode: containment.NetAllowAll},
+		Network:       confinement.NetworkPolicy{Mode: confinement.NetAllowAll},
 	}
 	result, err := containment.LaunchConfined(New(), spec, containment.LaunchRequest{
 		Command:     effectCommand(t, "write", target),

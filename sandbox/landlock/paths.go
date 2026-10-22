@@ -2,8 +2,7 @@ package landlock
 
 import (
 	"encoding/json"
-
-	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 )
 
 // netPolicy is the backend-private network pin within a profile.
@@ -32,7 +31,7 @@ type profileDoc struct {
 func canonicalAll(paths []string) []string {
 	out := make([]string, 0, len(paths))
 	for _, p := range paths {
-		out = append(out, containment.Canonical(p))
+		out = append(out, confinement.Canonical(p))
 	}
 	return out
 }

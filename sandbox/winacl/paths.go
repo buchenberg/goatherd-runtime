@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 )
 
 // canonicalAll canonicalizes every root, dropping empties. Canonicalization
@@ -18,7 +18,7 @@ func canonicalAll(roots []string) []string {
 		if root == "" {
 			continue
 		}
-		out = append(out, containment.Canonical(root))
+		out = append(out, confinement.Canonical(root))
 	}
 	return out
 }

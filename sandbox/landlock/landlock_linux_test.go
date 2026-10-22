@@ -13,15 +13,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // allowAll / denyAll are the network policies most tests use.
-func allowAll() containment.NetworkPolicy {
-	return containment.NetworkPolicy{Mode: containment.NetAllowAll}
+func allowAll() confinement.NetworkPolicy {
+	return confinement.NetworkPolicy{Mode: confinement.NetAllowAll}
 }
-func denyAll() containment.NetworkPolicy {
-	return containment.NetworkPolicy{Mode: containment.NetDenyAll}
+func denyAll() confinement.NetworkPolicy {
+	return confinement.NetworkPolicy{Mode: confinement.NetDenyAll}
 }
 
 // TestMain installs the trampoline hook. Every confine-then-exec, confined
@@ -95,8 +96,8 @@ func TestLandlock_ProfileFor(t *testing.T) {
 	wd := t.TempDir()
 
 	doc := parseProfile(b.ProfileFor([]string{wd}, allowAll()))
-	if len(doc.Roots) != 1 || doc.Roots[0] != containment.Canonical(wd) {
-		t.Fatalf("profile roots = %v, want [%s]", doc.Roots, containment.Canonical(wd))
+	if len(doc.Roots) != 1 || doc.Roots[0] != confinement.Canonical(wd) {
+		t.Fatalf("profile roots = %v, want [%s]", doc.Roots, confinement.Canonical(wd))
 	}
 	if doc.Net.Mode != "allow_all" {
 		t.Fatalf("net mode = %q, want allow_all", doc.Net.Mode)
@@ -107,7 +108,7 @@ func TestLandlock_ProfileFor(t *testing.T) {
 		t.Fatalf("empty profile = %+v", empty)
 	}
 
-	broker := parseProfile(b.ProfileFor([]string{wd}, containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: 8080}))
+	broker := parseProfile(b.ProfileFor([]string{wd}, confinement.NetworkPolicy{Mode: confinement.NetBroker, BrokerPort: 8080}))
 	if broker.Net.Mode != "broker" || broker.Net.Port != 8080 {
 		t.Fatalf("broker profile net = %+v", broker.Net)
 	}
@@ -244,7 +245,7 @@ func TestLaunchConfined_ProbesFirst(t *testing.T) {
 	b := requireLandlock(t)
 	touch := requireTouch(t)
 	wd := t.TempDir()
-	res, err := containment.LaunchConfined(b, containment.PermissiveFor(wd),
+	res, err := containment.LaunchConfined(b, confinement.PermissiveFor(wd),
 		containment.LaunchRequest{Command: []string{touch, filepath.Join(wd, "ok.txt")}, WorkingRoot: wd})
 	if err != nil {
 		t.Fatalf("LaunchConfined: %v", err)
@@ -300,20 +301,20 @@ func TestLandlock_SupportsNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := version >= minABINetwork
-	if got := b.SupportsNetwork(containment.NetDenyAll); got != want {
+	if got := b.SupportsNetwork(confinement.NetDenyAll); got != want {
 		t.Fatalf("SupportsNetwork(deny_all) = %v, want %v (ABI %d)", got, want, version)
 	}
-	if !b.SupportsNetwork(containment.NetAllowAll) {
+	if !b.SupportsNetwork(confinement.NetAllowAll) {
 		t.Fatal("allow_all must always be supported")
 	}
-	if b.SupportsNetwork(containment.NetMode("bogus")) {
+	if b.SupportsNetwork(confinement.NetMode("bogus")) {
 		t.Fatal("an unknown mode must not be supported")
 	}
 }
 
 func TestLandlock_NetworkDenyAll(t *testing.T) {
 	b := requireLandlock(t)
-	if !b.SupportsNetwork(containment.NetDenyAll) {
+	if !b.SupportsNetwork(confinement.NetDenyAll) {
 		t.Skip("kernel lacks Landlock network control (ABI < 4)")
 	}
 	wd := t.TempDir()
@@ -329,7 +330,7 @@ func TestLandlock_NetworkDenyAll(t *testing.T) {
 
 func TestLandlock_NetworkPinned(t *testing.T) {
 	b := requireLandlock(t)
-	if !b.SupportsNetwork(containment.NetBroker) {
+	if !b.SupportsNetwork(confinement.NetBroker) {
 		t.Skip("kernel lacks Landlock network control (ABI < 4)")
 	}
 	wd := t.TempDir()
@@ -351,7 +352,7 @@ func TestLandlock_NetworkPinned(t *testing.T) {
 		}
 	}()
 
-	profile := b.ProfileFor([]string{wd}, containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: port})
+	profile := b.ProfileFor([]string{wd}, confinement.NetworkPolicy{Mode: confinement.NetBroker, BrokerPort: port})
 
 	if denied, err := b.netDenied(profile, wd, net.JoinHostPort("127.0.0.1", strconv.Itoa(port))); err != nil {
 		t.Fatal(err)
@@ -372,7 +373,7 @@ func TestLandlock_NetworkPinned(t *testing.T) {
 
 func TestLandlock_ProbeNetwork(t *testing.T) {
 	b := requireLandlock(t)
-	if !b.SupportsNetwork(containment.NetDenyAll) {
+	if !b.SupportsNetwork(confinement.NetDenyAll) {
 		t.Skip("kernel lacks Landlock network control (ABI < 4)")
 	}
 	wd := t.TempDir()
@@ -386,7 +387,7 @@ func TestLandlock_ProbeNetwork(t *testing.T) {
 	}
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port
-	if err := b.Probe(b.ProfileFor([]string{wd}, containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: port}), wd, []string{wd}); err != nil {
+	if err := b.Probe(b.ProfileFor([]string{wd}, confinement.NetworkPolicy{Mode: confinement.NetBroker, BrokerPort: port}), wd, []string{wd}); err != nil {
 		t.Fatalf("broker probe: %v", err)
 	}
 }

@@ -2,7 +2,6 @@ module github.com/buchenberg/goatherd-runtime/sandbox/winacl
 
 go 1.21
 
-replace github.com/buchenberg/goatherd-runtime => ../..
 
 require (
 	github.com/buchenberg/goatherd-runtime v0.19.0

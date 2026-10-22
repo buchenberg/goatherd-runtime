@@ -38,7 +38,7 @@ const (
 // network pin, which admits only the broker's port.
 func TestE2E_ReversibleBrokerEgress(t *testing.T) {
 	b := requireLandlock(t)
-	if !b.SupportsNetwork(containment.NetBroker) {
+	if !b.SupportsNetwork(confinement.NetBroker) {
 		t.Skip("kernel lacks Landlock network control (ABI < 4)")
 	}
 	if _, err := os.Executable(); err != nil {
@@ -87,9 +87,9 @@ func TestE2E_ReversibleBrokerEgress(t *testing.T) {
 	}
 
 	worktree := filepath.Join(t.TempDir(), "wt")
-	spec := containment.ConfinementSpec{
+	spec := confinement.ConfinementSpec{
 		WritableRoots: []string{worktree},
-		Network:       containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: brokerPort},
+		Network:       confinement.NetworkPolicy{Mode: confinement.NetBroker, BrokerPort: brokerPort},
 	}
 	proxy := net.JoinHostPort("127.0.0.1", strconv.Itoa(brokerPort))
 	echoAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(echoPort))
@@ -97,11 +97,11 @@ func TestE2E_ReversibleBrokerEgress(t *testing.T) {
 	var brokerCode, directCode int
 	_, err = run.Reversible(context.Background(), mgr, parent, run.Options{
 		OwnerID:     "e2e:run",
-		Placement:   confinement.PlacementPaddock,
+		Placement:   containment.PlacementPaddock,
 		Backend:     b,
 		Confinement: &spec,
 		NewSandbox: func(string) (sandbox.Sandbox, error) {
-			return git.NewWorktreeSandbox(repo, worktree, git.WithExec(b, confinement.PlacementPaddock)), nil
+			return git.NewWorktreeSandbox(repo, worktree, git.WithExec(b, containment.PlacementPaddock)), nil
 		},
 	}, func(_ context.Context, rc *run.RunContext) (run.Result, error) {
 		// (a) Through the broker: admitted by the pin, allowed by the broker.

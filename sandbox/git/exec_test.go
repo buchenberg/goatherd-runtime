@@ -30,8 +30,8 @@ func (f *fakeConfiner) Available() (bool, string) {
 	}
 	return false, "unavailable"
 }
-func (f *fakeConfiner) ProfileFor([]string, containment.NetworkPolicy) string { return "{}" }
-func (f *fakeConfiner) SupportsNetwork(containment.NetMode) bool              { return true }
+func (f *fakeConfiner) ProfileFor([]string, confinement.NetworkPolicy) string { return "{}" }
+func (f *fakeConfiner) SupportsNetwork(confinement.NetMode) bool              { return true }
 func (f *fakeConfiner) Probe(string, string, []string) error {
 	f.probed = true
 	return nil
@@ -50,7 +50,7 @@ func TestGitSandbox_ExecRequiresBackend(t *testing.T) {
 
 func TestGitSandbox_ExecConfined(t *testing.T) {
 	fake := &fakeConfiner{available: true, result: containment.LaunchResult{ExitCode: 7, Stdout: "hi"}}
-	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementPaddock))
+	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, containment.PlacementPaddock))
 
 	res, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "echo", Args: []string{"hi"}})
 	if err != nil {
@@ -66,7 +66,7 @@ func TestGitSandbox_ExecConfined(t *testing.T) {
 
 func TestGitSandbox_ExecPaddockRefusesWithoutBackend(t *testing.T) {
 	fake := &fakeConfiner{available: false}
-	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementPaddock))
+	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, containment.PlacementPaddock))
 
 	if _, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "true"}); !errors.Is(err, containment.ErrPaddockNotEstablished) {
 		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
@@ -87,17 +87,17 @@ func TestGitSandbox_CapabilitiesHonest(t *testing.T) {
 		t.Fatalf("default containment = %q, want uncontained", def.Containment)
 	}
 
-	confined := NewLocalGitSandbox(repo, WithExec(&fakeConfiner{available: true}, confinement.PlacementPaddock)).Capabilities()
+	confined := NewLocalGitSandbox(repo, WithExec(&fakeConfiner{available: true}, containment.PlacementPaddock)).Capabilities()
 	if !confined.Exec || confined.Containment != trace.ContainContained {
 		t.Fatalf("confined capabilities = %+v", confined)
 	}
 
-	advisory := NewLocalGitSandbox(repo, WithExec(&fakeConfiner{available: true}, confinement.PlacementAdvisory)).Capabilities()
+	advisory := NewLocalGitSandbox(repo, WithExec(&fakeConfiner{available: true}, containment.PlacementAdvisory)).Capabilities()
 	if !advisory.Exec || advisory.Containment != trace.ContainUncontained {
 		t.Fatalf("advisory capabilities = %+v", advisory)
 	}
 
-	unavailable := NewLocalGitSandbox(repo, WithExec(&fakeConfiner{available: false}, confinement.PlacementAuto)).Capabilities()
+	unavailable := NewLocalGitSandbox(repo, WithExec(&fakeConfiner{available: false}, containment.PlacementAuto)).Capabilities()
 	if !unavailable.Exec || unavailable.Containment != trace.ContainUncontained {
 		t.Fatalf("unavailable-backend capabilities = %+v", unavailable)
 	}
@@ -105,7 +105,7 @@ func TestGitSandbox_CapabilitiesHonest(t *testing.T) {
 
 func TestGitSandbox_ExecRecordsAuthorityEvidence(t *testing.T) {
 	fake := &fakeConfiner{available: true, result: containment.LaunchResult{ExitCode: 0}}
-	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementPaddock))
+	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, containment.PlacementPaddock))
 
 	res, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "true", AuthorityMatch: "match-1"})
 	if err != nil {
@@ -115,7 +115,7 @@ func TestGitSandbox_ExecRecordsAuthorityEvidence(t *testing.T) {
 		t.Fatal("a confined run must carry authority evidence")
 	}
 
-	advisory := NewLocalGitSandbox(newTestRepo(t), WithExec(&fakeConfiner{available: true}, confinement.PlacementAdvisory))
+	advisory := NewLocalGitSandbox(newTestRepo(t), WithExec(&fakeConfiner{available: true}, containment.PlacementAdvisory))
 	adv, err := advisory.Exec(context.Background(), sbx.ExecRequest{Command: "true", AuthorityMatch: "match-1"})
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestGitSandbox_ExecRecordsAuthorityEvidence(t *testing.T) {
 
 func TestGitSandbox_ExecMayLowersAndConfines(t *testing.T) {
 	fake := &fakeConfiner{available: true, result: containment.LaunchResult{ExitCode: 0}}
-	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementPaddock))
+	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, containment.PlacementPaddock))
 
 	if _, err := sb.ExecMay(context.Background(), sbx.ExecRequest{Command: "true"}, "ReadOnly", "m"); err != nil {
 		t.Fatalf("ExecMay(ReadOnly): %v", err)
@@ -142,7 +142,7 @@ func TestGitSandbox_ExecMayLowersAndConfines(t *testing.T) {
 
 func TestGitSandbox_ExecDeniedClassified(t *testing.T) {
 	fake := &fakeConfiner{available: true, result: containment.LaunchResult{ExitCode: 1, Stderr: "touch: cannot touch '/x': Permission denied"}}
-	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, confinement.PlacementPaddock))
+	sb := NewLocalGitSandbox(newTestRepo(t), WithExec(fake, containment.PlacementPaddock))
 
 	res, err := sb.Exec(context.Background(), sbx.ExecRequest{Command: "touch"})
 	if err != nil {
@@ -162,7 +162,7 @@ func TestGitSandbox_ExecDeniedClassified(t *testing.T) {
 // in this package's tests without a confinement backend.
 func advisorySandbox(t *testing.T) *GitSandbox {
 	t.Helper()
-	return NewLocalGitSandbox(newTestRepo(t), WithExec(&fakeConfiner{available: false}, confinement.PlacementAdvisory))
+	return NewLocalGitSandbox(newTestRepo(t), WithExec(&fakeConfiner{available: false}, containment.PlacementAdvisory))
 }
 
 // TestGitSandbox_ExecAdvisoryBoundedByDefaultCeiling pins the Sandbox

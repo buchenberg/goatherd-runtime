@@ -4,13 +4,13 @@ package landlock
 
 import (
 	"context"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
 	sbx "github.com/buchenberg/goatherd-runtime/sandbox"
-	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"github.com/buchenberg/goatherd-runtime/sandbox/git"
 )
 
@@ -27,7 +27,7 @@ func TestIntegration_GitSandboxPaddockExec(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init", "-q")
 
-	sb := git.NewLocalGitSandbox(repo, git.WithExec(b, confinement.PlacementPaddock))
+	sb := git.NewLocalGitSandbox(repo, git.WithExec(b, containment.PlacementPaddock))
 	if !sb.Capabilities().Exec {
 		t.Fatal("sandbox with WithExec must report Exec")
 	}

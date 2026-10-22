@@ -15,7 +15,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 )
 
 // Verdict is a per-connection broker decision.
@@ -142,8 +142,8 @@ func AllowHosts(hosts ...string) EgressPolicy {
 // hosts — the lowering seam from the paddock's NetworkPolicy to the broker's
 // host predicate. It is meaningful only for NetBroker: the paddock pins egress
 // to the broker's port, and the broker decides which hosts.
-func PolicyFromNetwork(np containment.NetworkPolicy) (EgressPolicy, error) {
-	if np.Mode != containment.NetBroker {
+func PolicyFromNetwork(np confinement.NetworkPolicy) (EgressPolicy, error) {
+	if np.Mode != confinement.NetBroker {
 		return EgressPolicy{}, fmt.Errorf("egress: a broker policy requires NetBroker mode, got %q", np.Mode)
 	}
 	return AllowHosts(np.AllowedHosts...), nil

@@ -88,10 +88,10 @@ type ExecRequest struct {
 	// value asks the backend for its default (Permissive over the workspace for
 	// the git backend). It carries the writable-root set, not raw roots, so the
 	// authority layer (package confinement) is the only producer of roots.
-	Confinement *containment.ConfinementSpec
+	Confinement *confinement.ConfinementSpec
 	// Placement selects where authority is enforced (paddock | advisory | auto).
 	// An empty value asks the backend for its configured default.
-	Placement confinement.Placement
+	Placement containment.Placement
 	// AuthorityMatch is the authority-surface digest the caller is enforcing
 	// (optional). It is folded into the run's authority evidence when confined.
 	AuthorityMatch string

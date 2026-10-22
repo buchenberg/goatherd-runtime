@@ -1,6 +1,10 @@
 package containment
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+)
 
 // LaunchConfined is the only real-execution verb on a backend: resolve → profile
 // → probe (fail-closed) → launch. The probe runs first and refuses when the paddock
@@ -8,13 +12,13 @@ import "fmt"
 //
 // Mirrors ExecutionCapability.launch_confined (_execution_capability.py:183-195):
 // real execution implies a paddock-capable host, or it refuses.
-func LaunchConfined(b Backend, spec ConfinementSpec, req LaunchRequest) (LaunchResult, error) {
+func LaunchConfined(b Backend, spec confinement.ConfinementSpec, req LaunchRequest) (LaunchResult, error) {
 	if b == nil {
 		return LaunchResult{}, fmt.Errorf(
 			"%w: no paddock-capable backend on this host; real execution refuses rather than running unconfined",
 			ErrPaddockNotEstablished)
 	}
-	roots, network, err := ResolveSpec(spec)
+	roots, network, err := confinement.ResolveSpec(spec)
 	if err != nil {
 		return LaunchResult{}, err
 	}
@@ -23,7 +27,7 @@ func LaunchConfined(b Backend, spec ConfinementSpec, req LaunchRequest) (LaunchR
 	}
 	if !b.SupportsNetwork(network.Mode) {
 		return LaunchResult{}, fmt.Errorf("%w: backend %s cannot enforce network mode %q",
-			ErrUnsupportedConfinementSpec, b.Name(), network.Mode)
+			confinement.ErrUnsupportedConfinementSpec, b.Name(), network.Mode)
 	}
 	profile := b.ProfileFor(roots, network)
 	if err := b.Probe(profile, req.WorkingRoot, roots); err != nil {
@@ -42,7 +46,7 @@ type Capability struct {
 }
 
 // LaunchConfined runs req under spec, or refuses when no backend is bound.
-func (c Capability) LaunchConfined(spec ConfinementSpec, req LaunchRequest) (LaunchResult, error) {
+func (c Capability) LaunchConfined(spec confinement.ConfinementSpec, req LaunchRequest) (LaunchResult, error) {
 	if req.WorkingRoot == "" {
 		req.WorkingRoot = c.WorkingRoot
 	}

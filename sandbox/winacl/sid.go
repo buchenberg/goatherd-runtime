@@ -16,7 +16,7 @@ const maxSubAuthority = 1<<30 - 1
 
 // WriteSidFor derives the deterministic write identity of a root.
 //
-// The input MUST be the canonical root path (containment.Canonical): the
+// The input MUST be the canonical root path (confinement.Canonical): the
 // derivation is over the path text, so two spellings of one root would
 // otherwise mint two identities and grant the same directory twice under
 // different SIDs. Canonicalization converges case and alias spellings, so one

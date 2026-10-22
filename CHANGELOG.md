@@ -16,6 +16,14 @@ contain breaking changes, which are called out below.
   repo root so in-repo builds resolve the runtime locally; `replace`
   directives of dependencies are ignored, so external consumers (yaah) are
   unaffected and pin the published versions.
+- **Confinement/containment seam** (was: two near-synonym packages split by a
+  private distinction): the spec vocabulary — `ConfinementSpec`, `NetworkPolicy`,
+  `NetMode`, `ReadOnlySpec`, `PermissiveFor`, `ResolveSpec`, `Canonical`,
+  `ErrUnsupportedConfinementSpec` — moves from `containment` to `confinement`
+  (where the lowering lives), and the placement tiers (`Placement`,
+  `ResolvePlacement`) move from `confinement` to `containment` (where the
+  enforcement lives). The dependency arrow now runs containment ->
+  confinement, with no cycle.
 - **Go-native record vocabulary renamed**: `shepherd.{scope,merge,workspace,
   checkpoint,supervisor,run_output}.*` schema refs are now `goatherd.*`. The
   cross-language surface is untouched: `shepherd2.*` refs and
