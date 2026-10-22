@@ -1,6 +1,6 @@
 # shepherd-runtime-go
 
-The runtime layer of the [Goatherd](https://github.com/buchenberg/goatherd-kernel) kernel: the execution scope tree, the merge gate, settlement and recovery, the sandbox backends, the substrate/materialize layer, the task runtime, and the supervision rules engine.
+The runtime layer of the Shepherd kernel: the execution scope tree, the merge gate, settlement and recovery, the sandbox backends, the substrate/materialize layer, the task runtime, and the supervision rules engine.
 
 It composes [`github.com/buchenberg/shepherd-kernel-go`](https://github.com/buchenberg/shepherd-kernel-go) — the trace kernel (record model, canonical JSON, SQLite store, effect bus, projections) — and adds the primitives that *use* a trace: branching execution, workspace capture/restore, reversible settlement, and supervised task handles.
 
