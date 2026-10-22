@@ -177,7 +177,7 @@ type PermissionPlan struct {
 func (p PermissionPlan) Monitor(name string) (MonitorAssignment, bool)
 func (p PermissionPlan) Confinement() (containment.ConfinementSpec, error) // paddock's spec
 func (p PermissionPlan) Digest() string
-func (p PermissionPlan) Descriptor() map[string]any // schema "shepherd.permission-plan.v1"
+func (p PermissionPlan) Descriptor() map[string]any // schema "goatherd.permission-plan.v1"
 
 type CarrierCheckAuthority struct {
     EffectiveMatchDigest      string
@@ -217,7 +217,7 @@ A Go-shaped analogue of `merge_with_authority`:
 
 ```go
 // DecisionProvider judges a run's proposed changes before integration.
-type DecisionProvider func(ctx context.Context, proposal shepherd.MergeProposal) error
+type DecisionProvider func(ctx context.Context, proposal goatherd.MergeProposal) error
 
 // Options gains:
 Decision DecisionProvider // required for DispositionAuthorityMerge

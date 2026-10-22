@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 )
 
 // Monitor identifiers. The set is open by design — a transmit gate or egress
@@ -44,13 +42,13 @@ type Evidence struct {
 //
 // Mirrors dialect/permission_plan.py:MonitorAssignment.
 type MonitorAssignment struct {
-	Monitor           string                       `json:"monitor"`
-	Timing            string                       `json:"timing"`
-	CompletenessBasis string                       `json:"completeness_basis"`
-	TamperBasis       string                       `json:"tamper_basis"`
-	Confinement       *containment.ConfinementSpec `json:"confinement,omitempty"`
-	Route             string                       `json:"route,omitempty"`
-	Evidence          []Evidence                   `json:"evidence,omitempty"`
+	Monitor           string           `json:"monitor"`
+	Timing            string           `json:"timing"`
+	CompletenessBasis string           `json:"completeness_basis"`
+	TamperBasis       string           `json:"tamper_basis"`
+	Confinement       *ConfinementSpec `json:"confinement,omitempty"`
+	Route             string           `json:"route,omitempty"`
+	Evidence          []Evidence       `json:"evidence,omitempty"`
 }
 
 // PermissionPlan is the installed monitor assignment for one authority
@@ -91,7 +89,7 @@ type CarrierCheckAuthority struct {
 // authority-surface provenance a settlement can re-validate. It is the
 // behaviour-preserving core Install uses, and what a caller that already holds
 // a spec (the git backend) cites for evidence.
-func PlanForSpec(spec containment.ConfinementSpec, matchDigest string) PermissionPlan {
+func PlanForSpec(spec ConfinementSpec, matchDigest string) PermissionPlan {
 	s := spec
 	carrier := MonitorAssignment{
 		Monitor:           CarrierMonitor,
@@ -164,10 +162,10 @@ func (p PermissionPlan) Monitor(name string) (MonitorAssignment, bool) {
 // Confinement returns the paddock monitor's spec — the behaviour-preserving
 // output the run hands to LaunchConfined. It errors when the plan assigns no
 // paddock monitor (a carrier-only plan).
-func (p PermissionPlan) Confinement() (containment.ConfinementSpec, error) {
+func (p PermissionPlan) Confinement() (ConfinementSpec, error) {
 	a, ok := p.Monitor(PaddockMonitor)
 	if !ok || a.Confinement == nil {
-		return containment.ConfinementSpec{}, fmt.Errorf("%w: plan has no paddock monitor assignment carrying a spec", ErrPlanEvidence)
+		return ConfinementSpec{}, fmt.Errorf("%w: plan has no paddock monitor assignment carrying a spec", ErrPlanEvidence)
 	}
 	return *a.Confinement, nil
 }
@@ -179,7 +177,7 @@ func (p PermissionPlan) Descriptor() map[string]any {
 		assignments = append(assignments, a.descriptor())
 	}
 	return map[string]any{
-		"schema":      "shepherd.permission-plan.v1",
+		"schema":      "goatherd.permission-plan.v1",
 		"fallback":    p.Fallback,
 		"assignments": assignments,
 	}
@@ -269,7 +267,7 @@ func checkEvidence(plan PermissionPlan, key, want string) error {
 
 // SpecDigest is a stable digest of a confinement spec's writable-root set and
 // network mode, independent of ordering.
-func SpecDigest(spec containment.ConfinementSpec) string {
+func SpecDigest(spec ConfinementSpec) string {
 	payload, _ := json.Marshal(map[string]any{
 		"roots": sortedCopy(spec.WritableRoots),
 		"net":   string(spec.Network.Mode),

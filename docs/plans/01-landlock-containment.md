@@ -10,16 +10,16 @@
 ## 1. Objective & Context
 
 The backlog trigger is recorded in
-[`shepherd-kernel-go/docs/DEVELOPMENT.md`](file:///home/greg/Code/Agentic/Frameworks/shepherd-kernel-go/docs/DEVELOPMENT.md#L71):
+[`goatherd-kernel/docs/DEVELOPMENT.md`](file:///home/greg/Code/Agentic/Frameworks/goatherd-kernel/docs/DEVELOPMENT.md#L71):
 
 > *"Landlock exec-wrapper for git-sandbox Exec (Linux): a `JailedExec` option on
 > `SandboxSpec` would bring OS enforcement to the portable backend. Trigger: a
 > consumer runs untrusted code without containerd."*
 
 The same item, with the fuller framing, is in
-[`shepherd-kernel-go/docs/history/parity-plan.md`](file:///home/greg/Code/Agentic/Frameworks/shepherd-kernel-go/docs/history/parity-plan.md#L198)
+[`goatherd-kernel/docs/history/parity-plan.md`](file:///home/greg/Code/Agentic/Frameworks/goatherd-kernel/docs/history/parity-plan.md#L198)
 §5, and the "Path B — OS-level enforcement (fenced)" discussion is in
-[`00-execution-plan.md`](file:///home/greg/Code/Agentic/Frameworks/shepherd-kernel-go/docs/history/00-execution-plan.md#L726).
+[`00-execution-plan.md`](file:///home/greg/Code/Agentic/Frameworks/goatherd-kernel/docs/history/00-execution-plan.md#L726).
 
 Current state:
 
@@ -28,7 +28,7 @@ Current state:
    Linux via `containerd` (namespaces, cgroups v2, OverlayFS snapshots). It is
    **out of scope here**: Landlock is the lightweight, host-native tier that
    complements it, not replaces it.
-2. **`GitSandbox`** ([`shepherd-runtime-go/sandbox/git/backend.go`](file:///home/greg/Code/Agentic/Frameworks/shepherd-runtime-go/sandbox/git/backend.go))
+2. **`GitSandbox`** ([`goatherd-runtime/sandbox/git/backend.go`](file:///home/greg/Code/Agentic/Frameworks/goatherd-runtime/sandbox/git/backend.go))
    manages worktrees and repository state; its `Exec()` currently returns
    `sbx.ErrUnsupported` (`backend.go:585`), `ReadFile`/`WriteFile` likewise.
 3. Running local agent commands directly on the host is **uncontained**. This
@@ -37,7 +37,7 @@ Current state:
 4. The Go port has **no** authority layer at all: no `may=` profile, no
    per-binding grants, no `ConfinementSpec`, no monitor assignment. The parity
    plan records this as deliberately out of scope
-   ([`parity-plan.md:120`](file:///home/greg/Code/Agentic/Frameworks/shepherd-kernel-go/docs/history/parity-plan.md#L120)).
+   ([`parity-plan.md:120`](file:///home/greg/Code/Agentic/Frameworks/goatherd-kernel/docs/history/parity-plan.md#L120)).
 
 **Goal:** bring the kernel-enforced filesystem paddock to the lightweight
 Git-worktree path *and* the contract that makes it a policy-enforcement surface,
@@ -138,7 +138,7 @@ lowering** lives in the dialect (`confinement.py`, `permission_plan.py`). The Go
 port mirrors this:
 
 ```
-shepherd-runtime-go/                      # ROOT MODULE — kernel + stdlib only
+goatherd-runtime/                      # ROOT MODULE — kernel + stdlib only
 ├── sandbox/
 │   ├── containment/            # the contract (mirrors _containment.py + the spec half of _execution_capability.py)
 │   │   ├── backend.go          #   Backend interface, errors, Detect
@@ -674,19 +674,19 @@ Steps 1–6 are entirely within the component (§15). Host (`yaah`) and containe
 
 On completion, update the records this plan supersedes:
 
-- `shepherd-kernel-go/docs/DEVELOPMENT.md:71` — move the Landlock item from
+- `goatherd-kernel/docs/DEVELOPMENT.md:71` — move the Landlock item from
   Backlog to shipped; keep the macOS-clonefile item.
-- `shepherd-kernel-go/docs/history/parity-plan.md:192,198` — replace the
+- `goatherd-kernel/docs/history/parity-plan.md:192,198` — replace the
   "out of scope" row and §5 backlog entry with the shipped status and the
   remaining non-goals (Seatbelt, egress enforcement).
-- `shepherd-kernel-go/docs/history/00-execution-plan.md:726-732` — record the
+- `goatherd-kernel/docs/history/00-execution-plan.md:726-732` — record the
   §3 written decision that resolves the Path B fence for the Linux member.
 
 ## 15. Module & Repo Layout
 
 **Decision: the containment *contract* and the *authority lowering* ship in the
 root runtime module; the *Landlock backend* is a **nested module** at
-`shepherd-runtime-go/sandbox/landlock` with its own `go.mod` and version stream.
+`goatherd-runtime/sandbox/landlock` with its own `go.mod` and version stream.
 No new repository.** Integration with hosts and with `croft` is deferred (§15.5).
 
 ### 15.1 Rationale
@@ -694,9 +694,9 @@ No new repository.** Integration with hosts and with `croft` is deferred (§15.5
 The runtime states a hard invariant:
 
 > *"The kernel is the only external dependency family it pulls in; the runtime
-> carries no other third-party dependency."* — `shepherd-runtime-go/README.md:29`
+> carries no other third-party dependency."* — `goatherd-runtime/README.md:29`
 
-`go.mod` confirms it: the only direct require is `shepherd-kernel-go`, and
+`go.mod` confirms it: the only direct require is `goatherd-kernel`, and
 `golang.org/x/sys` is present **only** indirectly (pulled by
 `modernc.org/sqlite`). The Landlock backend breaks that invariant on two axes —
 it needs `golang.org/x/sys` **direct**, and it is platform-specific with a
@@ -707,7 +707,7 @@ The project has already solved this exact shape. The runtime formerly carried a
 platform/daemon-specific isolation backend kept out of the core module, versioned
 on its own (`sandbox/containerd/v0.1.1`, `v0.2.0`), coexisting with the `sandbox/`
 package in one repo
-([`public-components-plan.md:48,85-86,114`](file:///home/greg/Code/Agentic/Frameworks/shepherd-kernel-go/docs/history/public-components-plan.md#L48)).
+([`public-components-plan.md:48,85-86,114`](file:///home/greg/Code/Agentic/Frameworks/goatherd-kernel/docs/history/public-components-plan.md#L48)).
 That backend has since graduated out to **`croft`**, its own repo. Landlock is
 the *lightweight native* counterpart of that story: same pattern, but small
 enough that a nested module — not a repo — is the right weight.
@@ -715,7 +715,7 @@ enough that a nested module — not a repo — is the right weight.
 ### 15.2 Package → module assignment
 
 ```
-shepherd-runtime-go/                       module: github.com/buchenberg/shepherd-runtime-go (go 1.21)
+goatherd-runtime/                       module: github.com/buchenberg/goatherd-runtime (go 1.21)
 │                                            deps: kernel + stdlib ONLY (invariant preserved)
 ├── sandbox/
 │   ├── sandbox.go                         # Sandbox iface; ExecRequest gains Confinement + Placement
@@ -729,7 +729,7 @@ shepherd-runtime-go/                       module: github.com/buchenberg/shepher
 │   │   ├── plan.go                        #   PermissionPlan, monitors, digest
 │   │   └── placement.go                   #   Placement (paddock / advisory / auto)
 │   ├── git/                               # GitSandbox — ONE consumer of the contract
-│   └── landlock/                          # ★ NESTED MODULE: github.com/buchenberg/shepherd-runtime-go/sandbox/landlock
+│   └── landlock/                          # ★ NESTED MODULE: github.com/buchenberg/goatherd-runtime/sandbox/landlock
 │       ├── go.mod                         #   requires golang.org/x/sys (direct) + the root runtime
 │       ├── syscall_linux.go               #   ABI, WriteAccessMask, Confine (raw syscalls)
 │       ├── syscall_other.go               #   //go:build !linux
@@ -774,12 +774,12 @@ prevent.
 - **Versioning.** The nested module carries its own tags
   (`sandbox/landlock/vX.Y.Z`) and requires the **released** root runtime, with no
   `replace` directive — the `sandbox/containerd` release discipline
-  ([`public-components-plan.md:114,175`](file:///home/greg/Code/Agentic/Frameworks/shepherd-kernel-go/docs/history/public-components-plan.md#L114)).
+  ([`public-components-plan.md:114,175`](file:///home/greg/Code/Agentic/Frameworks/goatherd-kernel/docs/history/public-components-plan.md#L114)).
 - **Local development.** A repo-root `go.work` was tried and **removed**: in this
   toolchain it propagates the nested module's `require` on the parent into the
   root module's build and breaks it (the parent is not published at a resolvable
   version). The working mechanism is a dev-time `replace
-  github.com/buchenberg/shepherd-runtime-go => ../..` in the nested `go.mod`
+  github.com/buchenberg/goatherd-runtime => ../..` in the nested `go.mod`
   (the same pattern the kernel/runtime used), dropped at release when the root is
   tagged. See §16.2 #6.
 - **Language version.** The nested module can set its own `go` directive
@@ -838,9 +838,9 @@ only `sandbox/landlock` pulls `golang.org/x/sys` directly.
 6. **The nested module uses a dev-time `replace`, not a workspace.** A repo-root
    `go.work` was tried and **removed**: in this toolchain the workspace propagates
    the nested module's `require` on the parent into the root module's *own* build
-   and breaks it (`checkpoint.go:7:2: ... shepherd-runtime-go@v0.17.0: unknown
+   and breaks it (`checkpoint.go:7:2: ... goatherd-runtime@v0.17.0: unknown
    revision`), because the parent is not published at a resolvable version. The
-   working mechanism is `replace github.com/buchenberg/shepherd-runtime-go => ../..`
+   working mechanism is `replace github.com/buchenberg/goatherd-runtime => ../..`
    in `sandbox/landlock/go.mod`, which also required the nested module to carry
    its own `go.sum` for the parent's transitive deps. This is the same dev-time
    pattern the kernel/runtime used; it is dropped at release when the root is

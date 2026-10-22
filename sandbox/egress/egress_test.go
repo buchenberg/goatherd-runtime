@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 )
 
 func TestHostAtom_Matches(t *testing.T) {
@@ -191,7 +191,7 @@ func TestBroker_BadRequest(t *testing.T) {
 }
 
 func TestPolicyFromNetwork(t *testing.T) {
-	p, err := PolicyFromNetwork(containment.NetworkPolicy{Mode: containment.NetBroker, AllowedHosts: []string{"api.example.com"}})
+	p, err := PolicyFromNetwork(confinement.NetworkPolicy{Mode: confinement.NetBroker, AllowedHosts: []string{"api.example.com"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestPolicyFromNetwork(t *testing.T) {
 	if d, _ := p.Decide("evil.example.com", 443); d.Verdict != VerdictDeny {
 		t.Fatalf("default-deny: %+v", d)
 	}
-	if _, err := PolicyFromNetwork(containment.NetworkPolicy{Mode: containment.NetAllowAll}); err == nil {
+	if _, err := PolicyFromNetwork(confinement.NetworkPolicy{Mode: confinement.NetAllowAll}); err == nil {
 		t.Fatal("a non-broker mode must be refused")
 	}
 }

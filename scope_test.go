@@ -1,11 +1,11 @@
-package shepherd
+package goatherd
 
 import (
 	"context"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	sandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	trace "github.com/buchenberg/goatherd-kernel"
+	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/sandbox/git"
 	"os"
 	"path/filepath"
 	"strings"

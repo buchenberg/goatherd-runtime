@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 	"golang.org/x/sys/windows"
 )
 
@@ -56,7 +57,7 @@ func available() (bool, string) {
 //  3. deny-closed — an in-workdir path outside every root must be denied,
 //     catching a mis-lowered broader root.
 func probe(profileDoc, workingRoot string, roots []string) error {
-	wd := containment.Canonical(workingRoot)
+	wd := confinement.Canonical(workingRoot)
 	canonicalRoots := canonicalAll(roots)
 	tag := probeTag()
 
@@ -163,10 +164,10 @@ func launch(profileDoc string, req containment.LaunchRequest) (containment.Launc
 	if len(req.Command) == 0 {
 		return containment.LaunchResult{}, fmt.Errorf("winacl: empty command")
 	}
-	wd := containment.Canonical(req.WorkingRoot)
+	wd := confinement.Canonical(req.WorkingRoot)
 	cwd := wd
 	if req.Cwd != "" {
-		cwd = containment.Canonical(req.Cwd)
+		cwd = confinement.Canonical(req.Cwd)
 	}
 	rc, stdout, stderr, err := invoke(RunnerSentinel, profileDoc, cwd, req.Command, req.Env, req.Stdin, req.Timeout)
 	if err != nil {

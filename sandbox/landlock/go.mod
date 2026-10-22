@@ -1,10 +1,10 @@
-module github.com/buchenberg/shepherd-runtime-go/sandbox/landlock
+module github.com/buchenberg/goatherd-runtime/sandbox/landlock
 
 go 1.26.0
 
 require (
-	github.com/buchenberg/shepherd-kernel-go v0.17.0
-	github.com/buchenberg/shepherd-runtime-go v0.17.0
+	github.com/buchenberg/goatherd-kernel v0.18.0
+	github.com/buchenberg/goatherd-runtime v0.19.0
 	golang.org/x/sys v0.19.0
 )
 

@@ -1,11 +1,11 @@
-package shepherd
+package goatherd
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	sandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	trace "github.com/buchenberg/goatherd-kernel"
+	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 
 	"fmt"
 	"log/slog"
@@ -19,8 +19,8 @@ import (
 // backend-neutral fields (the v1 payload embedded git-specific stash_sha and
 // head_sha keys).
 const (
-	SchemaCheckpointCreated  = "shepherd.checkpoint.created.v2"
-	SchemaCheckpointRestored = "shepherd.checkpoint.restored.v2"
+	SchemaCheckpointCreated  = "goatherd.checkpoint.created.v2"
+	SchemaCheckpointRestored = "goatherd.checkpoint.restored.v2"
 )
 
 // nextCheckpointSeq is a process-wide monotonic sequence used for checkpoint,

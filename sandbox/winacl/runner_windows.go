@@ -44,7 +44,7 @@ const ConfineFailedRC = 3
 
 // envProbeVariable is the environment variable the probe child reads when it
 // is asked to report the environment it was given.
-const envProbeVariable = "SHEPHERD_WINACL_TEST_VALUE"
+const envProbeVariable = "GOATHERD_WINACL_TEST_VALUE"
 
 // MaybeRunRunner handles the runner's argv.
 //

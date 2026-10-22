@@ -7,22 +7,22 @@ import (
 	"path/filepath"
 	"testing"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
-	"github.com/buchenberg/shepherd-runtime-go/internal/rttest"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	trace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	"github.com/buchenberg/goatherd-runtime/internal/gittest"
+	"github.com/buchenberg/goatherd-runtime/internal/rttest"
+	"github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/git"
 )
 
-func newManager(t *testing.T) *shepherd.ScopeManager {
+func newManager(t *testing.T) *goatherd.ScopeManager {
 	t.Helper()
-	return shepherd.NewScopeManager(rttest.NewMemStore(t))
+	return goatherd.NewScopeManager(rttest.NewMemStore(t))
 }
 
-func newParent(t *testing.T, mgr *shepherd.ScopeManager, owner string) (*shepherd.Scope, string) {
+func newParent(t *testing.T, mgr *goatherd.ScopeManager, owner string) (*goatherd.Scope, string) {
 	t.Helper()
 	repo := gittest.NewTestRepo(t)
 	parent, err := mgr.Create(owner, git.NewLocalGitSandbox(repo))
@@ -135,7 +135,7 @@ func TestReversible_SealDisposition(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, "sealed.txt")); !os.IsNotExist(err) {
 		t.Fatal("sealing must not touch the parent workspace")
 	}
-	if err := mgr.Settle(context.Background(), out.Output.ID(), shepherd.SettleSelect); err != nil {
+	if err := mgr.Settle(context.Background(), out.Output.ID(), goatherd.SettleSelect); err != nil {
 		t.Fatalf("caller settle: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "sealed.txt")); err != nil {
@@ -149,7 +149,7 @@ func TestReversible_RefusesWithoutBackend(t *testing.T) {
 
 	_, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:    "run:paddock-1",
-		Placement:  confinement.PlacementPaddock,
+		Placement:  containment.PlacementPaddock,
 		NewSandbox: worktreeFactory(t, repo),
 	}, func(_ context.Context, _ *RunContext) (Result, error) {
 		return Result{}, nil
@@ -185,7 +185,7 @@ func TestReversible_AuthorityMerge(t *testing.T) {
 		OwnerID:     "run:am-1",
 		Disposition: DispositionAuthorityMerge,
 		NewSandbox:  worktreeFactory(t, repo),
-		Decision: func(_ context.Context, p shepherd.MergeProposal) error {
+		Decision: func(_ context.Context, p goatherd.MergeProposal) error {
 			sawChange = len(p.Changes) == 1
 			return nil
 		},
@@ -214,13 +214,13 @@ func TestReversible_AuthorityMergeDenied(t *testing.T) {
 		OwnerID:     "run:amd-1",
 		Disposition: DispositionAuthorityMerge,
 		NewSandbox:  worktreeFactory(t, repo),
-		Decision: func(_ context.Context, _ shepherd.MergeProposal) error {
+		Decision: func(_ context.Context, _ goatherd.MergeProposal) error {
 			return errors.New("denied by authority")
 		},
 	}, func(_ context.Context, rc *RunContext) (Result, error) {
 		return Result{}, writeIn(rc, "am.txt", "x")
 	})
-	var denied *shepherd.SupervisorDeniedError
+	var denied *goatherd.SupervisorDeniedError
 	if !errors.As(err, &denied) {
 		t.Fatalf("want *SupervisorDeniedError, got %v", err)
 	}
@@ -267,13 +267,13 @@ func TestReversible_MergeDeniedByReviewer(t *testing.T) {
 	_, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:    "run:review-1",
 		NewSandbox: worktreeFactory(t, repo),
-		Reviewer: func(shepherd.MergeProposal) error {
+		Reviewer: func(goatherd.MergeProposal) error {
 			return errors.New("denied by policy")
 		},
 	}, func(_ context.Context, rc *RunContext) (Result, error) {
 		return Result{}, writeIn(rc, "denied.txt", "x")
 	})
-	var denied *shepherd.SupervisorDeniedError
+	var denied *goatherd.SupervisorDeniedError
 	if !errors.As(err, &denied) {
 		t.Fatalf("want *SupervisorDeniedError, got %v", err)
 	}
@@ -287,8 +287,8 @@ type fakeBackend struct{ available bool }
 
 func (f *fakeBackend) Name() string                                          { return "fake" }
 func (f *fakeBackend) EnforcementTier() string                               { return "test" }
-func (f *fakeBackend) ProfileFor([]string, containment.NetworkPolicy) string { return "{}" }
-func (f *fakeBackend) SupportsNetwork(containment.NetMode) bool              { return true }
+func (f *fakeBackend) ProfileFor([]string, confinement.NetworkPolicy) string { return "{}" }
+func (f *fakeBackend) SupportsNetwork(confinement.NetMode) bool              { return true }
 func (f *fakeBackend) Probe(string, string, []string) error                  { return nil }
 func (f *fakeBackend) Launch(string, containment.LaunchRequest) (containment.LaunchResult, error) {
 	return containment.LaunchResult{ExitCode: 0}, nil
@@ -307,11 +307,11 @@ func TestReversible_HandlerRunsConfined(t *testing.T) {
 
 	out, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:   "run:conf-1",
-		Placement: confinement.PlacementPaddock,
+		Placement: containment.PlacementPaddock,
 		Backend:   fake,
 		NewSandbox: func(string) (sandbox.Sandbox, error) {
 			return git.NewWorktreeSandbox(repo, filepath.Join(t.TempDir(), "wt"),
-				git.WithExec(fake, confinement.PlacementPaddock)), nil
+				git.WithExec(fake, containment.PlacementPaddock)), nil
 		},
 	}, func(ctx context.Context, rc *RunContext) (Result, error) {
 		res, err := rc.Scope.Sandbox().Exec(ctx, sandbox.ExecRequest{Command: "true", AuthorityMatch: "m1"})
@@ -330,7 +330,7 @@ func TestReversible_HandlerRunsConfined(t *testing.T) {
 
 func TestReversible_RecordsRunOperation(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	repo := gittest.NewTestRepo(t)
 	parent, err := mgr.Create("run:rec-main", git.NewLocalGitSandbox(repo))
 	if err != nil {
@@ -360,7 +360,7 @@ func TestReversible_RecordsRunOperation(t *testing.T) {
 
 func TestReversible_RecordsEvidence(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	repo := gittest.NewTestRepo(t)
 	parent, err := mgr.Create("run:ev-main", git.NewLocalGitSandbox(repo))
 	if err != nil {
@@ -370,11 +370,11 @@ func TestReversible_RecordsEvidence(t *testing.T) {
 
 	if _, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:   "run:ev-1",
-		Placement: confinement.PlacementPaddock,
+		Placement: containment.PlacementPaddock,
 		Backend:   fake,
 		NewSandbox: func(string) (sandbox.Sandbox, error) {
 			return git.NewWorktreeSandbox(repo, filepath.Join(t.TempDir(), "wt"),
-				git.WithExec(fake, confinement.PlacementPaddock)), nil
+				git.WithExec(fake, containment.PlacementPaddock)), nil
 		},
 	}, func(ctx context.Context, rc *RunContext) (Result, error) {
 		res, err := rc.Scope.Sandbox().Exec(ctx, sandbox.ExecRequest{Command: "true", AuthorityMatch: "m1"})
@@ -396,7 +396,7 @@ func TestReversible_RecordsEvidence(t *testing.T) {
 }
 
 func TestRunContext_ExecRefusesWithoutBackend(t *testing.T) {
-	rc := &RunContext{Capability: containment.Capability{}, Confinement: containment.ReadOnlySpec()}
+	rc := &RunContext{Capability: containment.Capability{}, Confinement: confinement.ReadOnlySpec()}
 	if _, err := rc.Exec(containment.LaunchRequest{Command: []string{"true"}}); !errors.Is(err, containment.ErrPaddockNotEstablished) {
 		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
@@ -406,7 +406,7 @@ func TestRunContext_ExecConfined(t *testing.T) {
 	fake := &fakeBackend{available: true}
 	rc := &RunContext{
 		Capability:  containment.Capability{Backend: fake, WorkingRoot: t.TempDir()},
-		Confinement: containment.ReadOnlySpec(),
+		Confinement: confinement.ReadOnlySpec(),
 	}
 	res, err := rc.Exec(containment.LaunchRequest{Command: []string{"true"}})
 	if err != nil {
@@ -452,7 +452,7 @@ func TestReversible_PlanDrivesConfinement(t *testing.T) {
 		t.Fatalf("Install: %v", err)
 	}
 
-	var got containment.ConfinementSpec
+	var got confinement.ConfinementSpec
 	if _, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:    "run:plan-1",
 		Plan:       &plan,
@@ -463,14 +463,14 @@ func TestReversible_PlanDrivesConfinement(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Reversible: %v", err)
 	}
-	if len(got.WritableRoots) != 0 || got.Network.Mode != containment.NetDenyAll {
+	if len(got.WritableRoots) != 0 || got.Network.Mode != confinement.NetDenyAll {
 		t.Fatalf("the plan must drive the run's confinement; got %+v", got)
 	}
 }
 
 func TestReversible_RecordsPlanDigest(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	repo := gittest.NewTestRepo(t)
 	parent, err := mgr.Create("run:pd-main", git.NewLocalGitSandbox(repo))
 	if err != nil {
@@ -532,7 +532,7 @@ func TestReversible_PlanMutuallyExclusive(t *testing.T) {
 	mgr := newManager(t)
 	parent, _ := newParent(t, mgr, "run:mx-main")
 	plan := confinement.InstallCarrierCheck(confinement.CarrierCheckAuthority{})
-	spec := containment.ReadOnlySpec()
+	spec := confinement.ReadOnlySpec()
 
 	_, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:     "run:mx-1",

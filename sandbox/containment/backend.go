@@ -1,5 +1,7 @@
-// Package containment is the syscall-deny paddock contract: the seam that makes an
-// authority declaration real at the OS boundary. A Backend lowers a set of
+// Package containment is the syscall-deny paddock contract: the seam that makes a
+// [confinement.ConfinementSpec] real at the OS boundary, plus the placement
+// tiers (Placement, ResolvePlacement). The spec vocabulary itself lives in
+// package confinement. A Backend lowers a set of
 // writable roots (plus the network axis) to an OS-specific profile, probes it
 // fail-closed, then launches a command confined by it.
 //
@@ -20,6 +22,7 @@ package containment
 
 import (
 	"errors"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"time"
 )
 
@@ -38,10 +41,6 @@ var (
 	// ErrUnsupportedKernel is the host cannot provide the paddock — no LSM, or the
 	// syscalls are blocked (e.g. a container seccomp profile denies 444-446).
 	ErrUnsupportedKernel = errors.New("containment: kernel does not provide the required LSM (or it is blocked)")
-
-	// ErrUnsupportedConfinementSpec is a spec with no faithful lowering on this
-	// host's enforcement surface.
-	ErrUnsupportedConfinementSpec = errors.New("containment: spec has no faithful lowering on this host")
 
 	// ErrExecutionAuthorityRequired is a real-execution command dispatched
 	// without a capability (version skew / plain prepare): refuse, never a silent
@@ -82,11 +81,11 @@ type Backend interface {
 	// SupportsNetwork reports whether the backend can enforce the given network
 	// mode. LaunchConfined refuses a mode the backend cannot represent
 	// (fail-closed), never silently ignoring it — a paddock is host-blind, so
-	// NetBroker can only be pinned by port, and only where the kernel allows it.
-	SupportsNetwork(mode NetMode) bool
+	// confinement.NetBroker can only be pinned by port, and only where the kernel allows it.
+	SupportsNetwork(mode confinement.NetMode) bool
 	// ProfileFor lowers canonical writable roots and the network axis to a
 	// backend-private profile string.
-	ProfileFor(roots []string, network NetworkPolicy) string
+	ProfileFor(roots []string, network confinement.NetworkPolicy) string
 	// Probe proves the profile's paddock is BOTH live and grant-conformant before
 	// the body runs; it returns ErrPaddockNotEstablished on any violation.
 	Probe(profile, workingRoot string, roots []string) error

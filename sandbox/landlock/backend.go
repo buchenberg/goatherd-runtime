@@ -30,7 +30,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // Backend is the Linux Landlock containment backend.
@@ -81,11 +82,11 @@ func (b *Backend) Available() (bool, string) {
 // SupportsNetwork reports whether this kernel can pin network egress (Landlock
 // ABI >= 4). NetAllowAll is always representable; the zero value mirrors the
 // deny_all default (so SupportsNetwork and ProfileFor agree on "").
-func (b *Backend) SupportsNetwork(mode containment.NetMode) bool {
+func (b *Backend) SupportsNetwork(mode confinement.NetMode) bool {
 	switch mode {
-	case containment.NetAllowAll:
+	case confinement.NetAllowAll:
 		return true
-	case containment.NetDenyAll, containment.NetBroker, "":
+	case confinement.NetDenyAll, confinement.NetBroker, "":
 		return supportsNetwork()
 	default:
 		return false
@@ -94,11 +95,11 @@ func (b *Backend) SupportsNetwork(mode containment.NetMode) bool {
 
 // ProfileFor lowers canonical writable roots and the network pin to a
 // backend-private profile (a JSON doc: {"roots":[...],"net":{"mode":...,"port":...}}).
-func (b *Backend) ProfileFor(roots []string, network containment.NetworkPolicy) string {
+func (b *Backend) ProfileFor(roots []string, network confinement.NetworkPolicy) string {
 	mode := string(network.Mode)
 	if mode == "" {
 		// Fail closed: an omitted mode denies egress.
-		mode = string(containment.NetDenyAll)
+		mode = string(confinement.NetDenyAll)
 	}
 	doc := profileDoc{
 		Roots: canonicalAll(roots),
@@ -118,7 +119,7 @@ func (b *Backend) ProfileFor(roots []string, network containment.NetworkPolicy) 
 // Mirrors _landlock_containment.py:probe (three checks: liveness, per-root
 // conformance, deny-closed).
 func (b *Backend) Probe(profile, workingRoot string, roots []string) error {
-	wd := containment.Canonical(workingRoot)
+	wd := confinement.Canonical(workingRoot)
 	canonicalRoots := canonicalAll(roots)
 	// A per-probe unique tag so the probe never collides with — or deletes — a
 	// real workspace file that happens to share a fixed probe name.
@@ -224,10 +225,10 @@ func (b *Backend) Launch(profile string, req containment.LaunchRequest) (contain
 	if len(req.Command) == 0 {
 		return containment.LaunchResult{}, fmt.Errorf("landlock: empty command")
 	}
-	wd := containment.Canonical(req.WorkingRoot)
+	wd := confinement.Canonical(req.WorkingRoot)
 	cwd := wd
 	if req.Cwd != "" {
-		cwd = containment.Canonical(req.Cwd)
+		cwd = confinement.Canonical(req.Cwd)
 	}
 	rc, stdout, stderr, err := b.invoke(ExecSentinel, profile, cwd, req.Command, req.Env, req.Stdin, req.Timeout)
 	if err != nil {

@@ -1,7 +1,13 @@
-// Package confinement is the authority-enforcement seam: it lowers an authority
-// declaration — a may= profile or a set of per-binding grants — to a containment
-// spec. It is the Go port of the dialect's confinement.py: the one place that
-// turns "what the caller declared" into "which roots are writable", fail-closed.
+// Package confinement is the authority-enforcement seam: it owns the spec
+// vocabulary ([ConfinementSpec], [NetworkPolicy], the Net* modes and their
+// lowerings) and lowers an authority declaration — a may= profile or a set of
+// per-binding grants — to such a spec. It is the Go port of the dialect's
+// confinement.py: the one place that turns "what the caller declared" into
+// "which roots are writable", fail-closed.
+//
+// Glossary: confinement = declared policy (here); containment = the OS
+// enforcement mechanism (package containment); paddock = a run under
+// containment, fail-closed; jail = the kernel mechanism colloquially.
 //
 // The lowering is deliberately whole-root per binding (∅-or-all), which keeps it
 // sound without sub-root semantics: writable-root rules are additive, so a
@@ -12,8 +18,6 @@ package confinement
 import (
 	"errors"
 	"fmt"
-
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 )
 
 // ErrUnsupportedMayProfile is a declared may= profile with no v0 lowering —
@@ -37,19 +41,19 @@ func ResolveMay(may string) MayResolution {
 }
 
 // LowerMay lowers a declared profile name to a confinement spec.
-func LowerMay(may, workingPath string) (containment.ConfinementSpec, error) {
+func LowerMay(may, workingPath string) (ConfinementSpec, error) {
 	return LowerMayResolution(ResolveMay(may), workingPath)
 }
 
 // LowerMayResolution lowers an already-resolved may= declaration.
-func LowerMayResolution(res MayResolution, workingPath string) (containment.ConfinementSpec, error) {
+func LowerMayResolution(res MayResolution, workingPath string) (ConfinementSpec, error) {
 	switch res.Resolved {
 	case "Permissive":
-		return containment.PermissiveFor(workingPath), nil
+		return PermissiveFor(workingPath), nil
 	case "ReadOnly":
-		return containment.ReadOnlySpec(), nil
+		return ReadOnlySpec(), nil
 	default:
-		return containment.ConfinementSpec{}, fmt.Errorf(
+		return ConfinementSpec{}, fmt.Errorf(
 			"%w: may=%q (live profiles: 'ReadOnly', 'Permissive'; 'Standard'/'ModelOnly' are signposted, not built)",
 			ErrUnsupportedMayProfile, res.Declared)
 	}
@@ -70,22 +74,22 @@ type BindingRootGrant struct {
 // deny-all — v0.2 makes no network claim. Bound roots must be disjoint.
 //
 // Mirrors confinement.py:lower_grants_to_confinement.
-func LowerGrants(grants []BindingRootGrant) (containment.ConfinementSpec, error) {
+func LowerGrants(grants []BindingRootGrant) (ConfinementSpec, error) {
 	roots := make([]string, 0, len(grants))
 	for _, g := range grants {
 		roots = append(roots, g.Root)
 	}
 	if _, err := ValidateDisjointRoots(roots); err != nil {
-		return containment.ConfinementSpec{}, err
+		return ConfinementSpec{}, err
 	}
 	writable := make([]string, 0, len(grants))
 	for _, g := range grants {
 		if g.Writable {
-			writable = append(writable, containment.Canonical(g.Root))
+			writable = append(writable, Canonical(g.Root))
 		}
 	}
-	return containment.ConfinementSpec{
+	return ConfinementSpec{
 		WritableRoots: writable,
-		Network:       containment.NetworkPolicy{Mode: containment.NetDenyAll},
+		Network:       NetworkPolicy{Mode: NetDenyAll},
 	}, nil
 }

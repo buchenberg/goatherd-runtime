@@ -1,7 +1,7 @@
 // Package rttest holds the runtime layer's shared test helpers: the
 // in-memory store fixture and the trusted append/read contexts the
 // conformance suite uses. Test support is not API surface; the package
-// exists so the runtime layer's external test packages (shepherd_test,
+// exists so the runtime layer's external test packages (goatherd_test,
 // task_test, supervisor_test) can share the same fixtures the root
 // package's in-package tests use.
 package rttest
@@ -10,7 +10,7 @@ import (
 	"context"
 	"testing"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
+	trace "github.com/buchenberg/goatherd-kernel"
 )
 
 // NewMemStore returns a t.Cleanup-managed in-memory trace store.

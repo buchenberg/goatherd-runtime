@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
-
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 )
 
 // ErrOverlappingBoundRoots: bound roots overlap or nest — refuse, because the
@@ -30,7 +28,7 @@ var ErrOverlappingBoundRoots = errors.New("confinement: bound roots overlap, ali
 func ValidateDisjointRoots(roots []string) ([]string, error) {
 	canonical := make([]string, 0, len(roots))
 	for _, root := range roots {
-		canonical = append(canonical, containment.Canonical(root))
+		canonical = append(canonical, Canonical(root))
 	}
 	for i := range canonical {
 		for j := i + 1; j < len(canonical); j++ {

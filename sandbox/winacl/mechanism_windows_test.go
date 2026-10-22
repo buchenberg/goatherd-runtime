@@ -8,7 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 	"golang.org/x/sys/windows"
 )
 
@@ -72,9 +73,9 @@ func TestWinACL_AvailableOnWindows(t *testing.T) {
 func TestWinACL_WriteLandsInsideAGrantedRoot(t *testing.T) {
 	tr := newTree(t)
 	target := filepath.Join(tr.rootA, "inside.txt")
-	spec := containment.ConfinementSpec{
+	spec := confinement.ConfinementSpec{
 		WritableRoots: []string{tr.rootA, tr.rootB},
-		Network:       containment.NetworkPolicy{Mode: containment.NetAllowAll},
+		Network:       confinement.NetworkPolicy{Mode: confinement.NetAllowAll},
 	}
 	result, err := containment.LaunchConfined(New(), spec, containment.LaunchRequest{
 		Command:     effectCommand(t, "write", target),
@@ -94,9 +95,9 @@ func TestWinACL_WriteLandsInsideAGrantedRoot(t *testing.T) {
 func TestWinACL_WriteIsDeniedOutsideEveryRoot(t *testing.T) {
 	tr := newTree(t)
 	target := filepath.Join(tr.outside, "outside.txt")
-	spec := containment.ConfinementSpec{
+	spec := confinement.ConfinementSpec{
 		WritableRoots: []string{tr.rootA, tr.rootB},
-		Network:       containment.NetworkPolicy{Mode: containment.NetAllowAll},
+		Network:       confinement.NetworkPolicy{Mode: confinement.NetAllowAll},
 	}
 	result, err := containment.LaunchConfined(New(), spec, containment.LaunchRequest{
 		Command:     effectCommand(t, "write", target),
@@ -115,9 +116,9 @@ func TestWinACL_WriteIsDeniedOutsideEveryRoot(t *testing.T) {
 
 func TestWinACL_EveryGrantedRootIsWritable(t *testing.T) {
 	tr := newTree(t)
-	spec := containment.ConfinementSpec{
+	spec := confinement.ConfinementSpec{
 		WritableRoots: []string{tr.rootA, tr.rootB},
-		Network:       containment.NetworkPolicy{Mode: containment.NetAllowAll},
+		Network:       confinement.NetworkPolicy{Mode: confinement.NetAllowAll},
 	}
 	for _, root := range []string{tr.rootA, tr.rootB} {
 		target := filepath.Join(root, "per-root.txt")
@@ -140,9 +141,9 @@ func TestWinACL_DeleteIsDeniedOutsideEveryRoot(t *testing.T) {
 	if err := os.WriteFile(victim, []byte("host owned\n"), 0o600); err != nil {
 		t.Fatalf("seed the victim: %v", err)
 	}
-	spec := containment.ConfinementSpec{
+	spec := confinement.ConfinementSpec{
 		WritableRoots: []string{tr.rootA},
-		Network:       containment.NetworkPolicy{Mode: containment.NetAllowAll},
+		Network:       confinement.NetworkPolicy{Mode: confinement.NetAllowAll},
 	}
 	result, err := containment.LaunchConfined(New(), spec, containment.LaunchRequest{
 		Command:     effectCommand(t, "delete", victim),
@@ -184,9 +185,9 @@ func TestWinACL_ReadIsNotGoverned(t *testing.T) {
 	if err := os.WriteFile(readable, []byte("host owned\n"), 0o600); err != nil {
 		t.Fatalf("seed the readable file: %v", err)
 	}
-	spec := containment.ConfinementSpec{
+	spec := confinement.ConfinementSpec{
 		WritableRoots: []string{tr.rootA},
-		Network:       containment.NetworkPolicy{Mode: containment.NetAllowAll},
+		Network:       confinement.NetworkPolicy{Mode: confinement.NetAllowAll},
 	}
 	result, err := containment.LaunchConfined(New(), spec, containment.LaunchRequest{
 		Command:     effectCommand(t, "read", readable),
@@ -209,7 +210,7 @@ func TestWinACL_ProbePassesForAConformantProfile(t *testing.T) {
 	tr := newTree(t)
 	b := New()
 	roots := []string{tr.rootA, tr.rootB}
-	doc := b.ProfileFor(roots, containment.NetworkPolicy{Mode: containment.NetAllowAll})
+	doc := b.ProfileFor(roots, confinement.NetworkPolicy{Mode: confinement.NetAllowAll})
 	if err := b.Probe(doc, tr.rootA, roots); err != nil {
 		t.Fatalf("a conformant profile failed the probe: %v", err)
 	}
@@ -221,7 +222,7 @@ func TestWinACL_ProbeCatchesAMisloweredProfile(t *testing.T) {
 	// A profile that grants the working directory, probed against a root set
 	// that does not include it: the deny-closed check must catch the broader
 	// grant, because a write inside the working directory would be permitted.
-	doc := b.ProfileFor([]string{tr.rootA}, containment.NetworkPolicy{Mode: containment.NetAllowAll})
+	doc := b.ProfileFor([]string{tr.rootA}, confinement.NetworkPolicy{Mode: confinement.NetAllowAll})
 	if err := b.Probe(doc, tr.rootA, nil); err == nil {
 		t.Fatal("a profile granting the working directory passed the probe against a root set that excludes it")
 	}
@@ -230,7 +231,7 @@ func TestWinACL_ProbeCatchesAMisloweredProfile(t *testing.T) {
 func TestWinACL_NetworkModeWithoutEnforcementIsRefused(t *testing.T) {
 	tr := newTree(t)
 	spec := readOnlySpec()
-	spec.Network = containment.NetworkPolicy{Mode: containment.NetDenyAll}
+	spec.Network = confinement.NetworkPolicy{Mode: confinement.NetDenyAll}
 	_, err := containment.LaunchConfined(New(), spec, containment.LaunchRequest{
 		Command:     effectCommand(t, "write", filepath.Join(tr.rootA, "denied.txt")),
 		WorkingRoot: tr.rootA,
@@ -238,7 +239,7 @@ func TestWinACL_NetworkModeWithoutEnforcementIsRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("a network mode the mechanism cannot enforce was accepted")
 	}
-	if !errors.Is(err, containment.ErrUnsupportedConfinementSpec) {
+	if !errors.Is(err, confinement.ErrUnsupportedConfinementSpec) {
 		t.Fatalf("the refusal is %v, want ErrUnsupportedConfinementSpec", err)
 	}
 }
@@ -298,9 +299,9 @@ func TestWinACL_RevokeRemovesTheCapabilityAce(t *testing.T) {
 }
 
 // readOnlySpec is the read-only lowering with a representable network mode.
-func readOnlySpec() containment.ConfinementSpec {
-	return containment.ConfinementSpec{
-		Network: containment.NetworkPolicy{Mode: containment.NetAllowAll},
+func readOnlySpec() confinement.ConfinementSpec {
+	return confinement.ConfinementSpec{
+		Network: confinement.NetworkPolicy{Mode: confinement.NetAllowAll},
 	}
 }
 
@@ -317,7 +318,7 @@ func grantIdentities(t *testing.T, root string) (worldSID, lowSID, writeSID *win
 	if err != nil {
 		t.Fatalf("build the low integrity SID: %v", err)
 	}
-	writeSID, err = windows.StringToSid(WriteSidFor(containment.Canonical(root)))
+	writeSID, err = windows.StringToSid(WriteSidFor(confinement.Canonical(root)))
 	if err != nil {
 		t.Fatalf("parse the write identity: %v", err)
 	}

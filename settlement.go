@@ -1,11 +1,11 @@
-package shepherd
+package goatherd
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	sandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	trace "github.com/buchenberg/goatherd-kernel"
+	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"log/slog"
 	"sync"
 	"time"
@@ -18,10 +18,10 @@ const (
 	// SchemaRunOutputSealed is recorded on the sealing scope's owner path
 	// when an output is sealed. Declaration: the sealing is stated intent
 	// that the settlement records then observe.
-	SchemaRunOutputSealed = "shepherd.run_output.sealed.v1"
+	SchemaRunOutputSealed = "goatherd.run_output.sealed.v1"
 	// SchemaRunOutputSettled is recorded on the same owner path when the
 	// output is settled, citing the sealed record.
-	SchemaRunOutputSettled = "shepherd.run_output.settled.v1"
+	SchemaRunOutputSettled = "goatherd.run_output.settled.v1"
 )
 
 // SettlementAction is how a sealed output is consumed exactly once.
@@ -52,12 +52,12 @@ const (
 
 // ErrOutputConsumed reports a second settlement of an already-settled
 // output. Settlement is consume-once: every action is terminal.
-var ErrOutputConsumed = errors.New("shepherd: retained output already settled")
+var ErrOutputConsumed = errors.New("goatherd: retained output already settled")
 
 // ErrApplyConflict reports a SettleApply whose changes overlap paths the
 // parent changed since the fork baseline. The output is NOT consumed by a
 // conflict — apply failure never consumes.
-var ErrApplyConflict = errors.New("shepherd: apply conflict")
+var ErrApplyConflict = errors.New("goatherd: apply conflict")
 
 // ErrSettleEffectLanded reports a settle whose physical effect landed
 // on the parent's workspace but whose causal merge failed to complete.
@@ -75,7 +75,7 @@ var ErrApplyConflict = errors.New("shepherd: apply conflict")
 // message names the ending its child's state allows. The output stays
 // unconsumed — the kernel's own partial-settlement contract. Wrapped in
 // the settle error alongside the merge failure.
-var ErrSettleEffectLanded = errors.New("shepherd: settle effect landed")
+var ErrSettleEffectLanded = errors.New("goatherd: settle effect landed")
 
 // RetainedOutput is a sealed child result: the child's captured workspace
 // frozen at seal time, settle-able exactly once. It outlives the scope that
@@ -192,7 +192,7 @@ func (o *RetainedOutput) Settle(ctx context.Context, action SettlementAction) er
 // at fork time); a scope without a baseline has nothing to diff against and
 // sealing it would freeze changes with no base to settle them onto.
 //
-// Records shepherd.run_output.sealed.v1 on the scope's owner path. The append
+// Records goatherd.run_output.sealed.v1 on the scope's owner path. The append
 // is hard, not advisory: the sealed record is the durable half of the output
 // (plan 05 §4 rebuilds metadata from it), so a trace that cannot carry it
 // must not hand out an output whose settlement would be unrecordable.
@@ -350,7 +350,7 @@ func stateFor(action SettlementAction) (OutputState, error) {
 // outlives it (git worktrees share the object store; a snapshot-backed
 // backend pins captured states on a lease).
 //
-// Records shepherd.run_output.settled.v1 on the sealing scope's owner path.
+// Records goatherd.run_output.settled.v1 on the sealing scope's owner path.
 // The append is advisory, checkpoint-style: by the time it runs the
 // settlement's physical effects have happened and cannot be rolled back.
 //

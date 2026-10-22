@@ -1,8 +1,10 @@
-module github.com/buchenberg/shepherd-runtime-go/sandbox/winacl
+module github.com/buchenberg/goatherd-runtime/sandbox/winacl
 
 go 1.21
 
 require (
-	github.com/buchenberg/shepherd-runtime-go v0.18.0
+	github.com/buchenberg/goatherd-runtime v0.19.0
 	golang.org/x/sys v0.19.0
 )
+
+require golang.org/x/text v0.21.0 // indirect

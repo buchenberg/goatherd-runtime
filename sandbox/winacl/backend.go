@@ -1,7 +1,8 @@
 package winacl
 
 import (
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // Backend is the Windows write-restriction containment backend.
@@ -55,9 +56,9 @@ func (b *Backend) Available() (bool, string) { return available() }
 // and broker are refused, and LaunchConfined turns that refusal into a
 // fail-closed error rather than running with the network axis silently
 // ignored.
-func (b *Backend) SupportsNetwork(mode containment.NetMode) bool {
+func (b *Backend) SupportsNetwork(mode confinement.NetMode) bool {
 	switch mode {
-	case containment.NetAllowAll:
+	case confinement.NetAllowAll:
 		return true
 	default:
 		return false
@@ -70,12 +71,12 @@ func (b *Backend) SupportsNetwork(mode containment.NetMode) bool {
 // The mode follows the root count: no roots is read-only (no write SID at
 // all, so every write is denied), one or more roots is workspace-write with
 // one write capability SID per root.
-func (b *Backend) ProfileFor(roots []string, network containment.NetworkPolicy) string {
+func (b *Backend) ProfileFor(roots []string, network confinement.NetworkPolicy) string {
 	canonical := canonicalAll(roots)
 	netMode := string(network.Mode)
 	if netMode == "" {
 		// Fail closed: an omitted mode denies egress.
-		netMode = string(containment.NetDenyAll)
+		netMode = string(confinement.NetDenyAll)
 	}
 	p := profile{
 		Roots: canonical,

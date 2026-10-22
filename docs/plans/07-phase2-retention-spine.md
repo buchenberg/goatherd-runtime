@@ -13,7 +13,7 @@ host path is untouched.
 
 ## 1. The primitive already exists in the kernel
 
-Nothing here is new substrate. `shepherd-kernel-go` ships the whole retained-run
+Nothing here is new substrate. `goatherd-kernel` ships the whole retained-run
 machine, and `yaah` already imports it:
 
 | Kernel symbol | Role |
@@ -198,7 +198,7 @@ It is smaller than it looks. A retained dispatch does:
 
 | repo | tracked | checkout | `worktree add` | apply step | teardown | **≈ overhead** |
 |---|---|---|---|---|---|---|
-| shepherd-runtime-go | 92 | 1.2 M | 0.02 s | 0.02 s | ~0.01 s | **~0.05 s** |
+| goatherd-runtime | 92 | 1.2 M | 0.02 s | 0.02 s | ~0.01 s | **~0.05 s** |
 | naah | 260 | 1.6 M | 0.02 s | 0.02 s | ~0.01 s | **~0.05 s** |
 | yaah | 688 | 6.2 M | 0.31 s | 0.10 s | 0.01 s | **~0.42 s** |
 | pi | 1902 | 28 M | 0.13 s | 0.32 s | — | ~0.45 s |

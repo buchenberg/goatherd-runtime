@@ -2,6 +2,8 @@ package containment
 
 import (
 	"errors"
+
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"os"
 	"path/filepath"
 	"testing"
@@ -24,8 +26,8 @@ func (f *fakeBackend) Available() (bool, string) {
 	}
 	return false, "unavailable"
 }
-func (f *fakeBackend) ProfileFor([]string, NetworkPolicy) string { return "[]" }
-func (f *fakeBackend) SupportsNetwork(NetMode) bool              { return true }
+func (f *fakeBackend) ProfileFor([]string, confinement.NetworkPolicy) string { return "[]" }
+func (f *fakeBackend) SupportsNetwork(confinement.NetMode) bool              { return true }
 func (f *fakeBackend) Probe(string, string, []string) error {
 	f.probed = true
 	return f.probeErr
@@ -36,24 +38,24 @@ func (f *fakeBackend) Launch(string, LaunchRequest) (LaunchResult, error) {
 }
 
 func TestReadOnlyAndPermissiveSpecs(t *testing.T) {
-	ro := ReadOnlySpec()
-	if len(ro.WritableRoots) != 0 || ro.Network.Mode != NetDenyAll {
-		t.Fatalf("ReadOnlySpec = %+v", ro)
+	ro := confinement.ReadOnlySpec()
+	if len(ro.WritableRoots) != 0 || ro.Network.Mode != confinement.NetDenyAll {
+		t.Fatalf("confinement.ReadOnlySpec = %+v", ro)
 	}
-	p := PermissiveFor("/x")
-	if len(p.WritableRoots) != 1 || p.Network.Mode != NetAllowAll {
-		t.Fatalf("PermissiveFor = %+v", p)
+	p := confinement.PermissiveFor("/x")
+	if len(p.WritableRoots) != 1 || p.Network.Mode != confinement.NetAllowAll {
+		t.Fatalf("confinement.PermissiveFor = %+v", p)
 	}
 }
 
 func TestResolveSpec_Broker(t *testing.T) {
 	// A broker policy without a port cannot be pinned — refuse.
-	if _, _, err := ResolveSpec(ConfinementSpec{Network: NetworkPolicy{Mode: NetBroker}}); !errors.Is(err, ErrUnsupportedConfinementSpec) {
-		t.Fatalf("broker without a port: want ErrUnsupportedConfinementSpec, got %v", err)
+	if _, _, err := confinement.ResolveSpec(confinement.ConfinementSpec{Network: confinement.NetworkPolicy{Mode: confinement.NetBroker}}); !errors.Is(err, confinement.ErrUnsupportedConfinementSpec) {
+		t.Fatalf("broker without a port: want confinement.ErrUnsupportedConfinementSpec, got %v", err)
 	}
 	// With a port it resolves; the backend gates enforceability (SupportsNetwork).
-	_, network, err := ResolveSpec(ConfinementSpec{Network: NetworkPolicy{Mode: NetBroker, BrokerPort: 8080}})
-	if err != nil || network.Mode != NetBroker || network.BrokerPort != 8080 {
+	_, network, err := confinement.ResolveSpec(confinement.ConfinementSpec{Network: confinement.NetworkPolicy{Mode: confinement.NetBroker, BrokerPort: 8080}})
+	if err != nil || network.Mode != confinement.NetBroker || network.BrokerPort != 8080 {
 		t.Fatalf("broker with a port: %+v, %v", network, err)
 	}
 }
@@ -64,24 +66,24 @@ func TestResolveSpec_CanonicalizesRoots(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "a"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	roots, network, err := ResolveSpec(ConfinementSpec{
+	roots, network, err := confinement.ResolveSpec(confinement.ConfinementSpec{
 		WritableRoots: []string{unclean},
-		Network:       NetworkPolicy{Mode: NetAllowAll},
+		Network:       confinement.NetworkPolicy{Mode: confinement.NetAllowAll},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if network.Mode != NetAllowAll {
+	if network.Mode != confinement.NetAllowAll {
 		t.Fatalf("network mode = %q, want allow_all", network.Mode)
 	}
-	if len(roots) != 1 || roots[0] != Canonical(root) {
-		t.Fatalf("roots = %v, want [%s]", roots, Canonical(root))
+	if len(roots) != 1 || roots[0] != confinement.Canonical(root) {
+		t.Fatalf("roots = %v, want [%s]", roots, confinement.Canonical(root))
 	}
 }
 
 func TestLaunchConfined_ProbesFirst(t *testing.T) {
 	fb := &fakeBackend{available: true, result: LaunchResult{ExitCode: 0}}
-	_, err := LaunchConfined(fb, PermissiveFor(t.TempDir()), LaunchRequest{WorkingRoot: t.TempDir(), Command: []string{"true"}})
+	_, err := LaunchConfined(fb, confinement.PermissiveFor(t.TempDir()), LaunchRequest{WorkingRoot: t.TempDir(), Command: []string{"true"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +94,7 @@ func TestLaunchConfined_ProbesFirst(t *testing.T) {
 
 func TestLaunchConfined_RefusesWhenUnavailable(t *testing.T) {
 	fb := &fakeBackend{available: false}
-	_, err := LaunchConfined(fb, ReadOnlySpec(), LaunchRequest{WorkingRoot: t.TempDir(), Command: []string{"true"}})
+	_, err := LaunchConfined(fb, confinement.ReadOnlySpec(), LaunchRequest{WorkingRoot: t.TempDir(), Command: []string{"true"}})
 	if !errors.Is(err, ErrPaddockNotEstablished) {
 		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
@@ -103,7 +105,7 @@ func TestLaunchConfined_RefusesWhenUnavailable(t *testing.T) {
 
 func TestLaunchConfined_ProbeFailureRefuses(t *testing.T) {
 	fb := &fakeBackend{available: true, probeErr: ErrPaddockNotEstablished}
-	_, err := LaunchConfined(fb, ReadOnlySpec(), LaunchRequest{WorkingRoot: t.TempDir(), Command: []string{"true"}})
+	_, err := LaunchConfined(fb, confinement.ReadOnlySpec(), LaunchRequest{WorkingRoot: t.TempDir(), Command: []string{"true"}})
 	if !errors.Is(err, ErrPaddockNotEstablished) {
 		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
@@ -113,7 +115,7 @@ func TestLaunchConfined_ProbeFailureRefuses(t *testing.T) {
 }
 
 func TestLaunchConfined_NilBackend(t *testing.T) {
-	_, err := LaunchConfined(nil, ReadOnlySpec(), LaunchRequest{Command: []string{"true"}})
+	_, err := LaunchConfined(nil, confinement.ReadOnlySpec(), LaunchRequest{Command: []string{"true"}})
 	if !errors.Is(err, ErrPaddockNotEstablished) {
 		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
@@ -121,7 +123,7 @@ func TestLaunchConfined_NilBackend(t *testing.T) {
 
 func TestCapability_RefusesWithoutBackend(t *testing.T) {
 	cap := Capability{WorkingRoot: t.TempDir(), Isolation: "ground"}
-	if _, err := cap.LaunchConfined(ReadOnlySpec(), LaunchRequest{Command: []string{"true"}}); !errors.Is(err, ErrPaddockNotEstablished) {
+	if _, err := cap.LaunchConfined(confinement.ReadOnlySpec(), LaunchRequest{Command: []string{"true"}}); !errors.Is(err, ErrPaddockNotEstablished) {
 		t.Fatalf("want ErrPaddockNotEstablished, got %v", err)
 	}
 }

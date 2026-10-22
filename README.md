@@ -1,16 +1,16 @@
-# shepherd-runtime-go
+# goatherd-runtime
 
 The runtime layer of the Shepherd kernel: the execution scope tree, the merge gate, settlement and recovery, the sandbox backends, the substrate/materialize layer, the task runtime, and the supervision rules engine.
 
-It composes [`github.com/buchenberg/shepherd-kernel-go`](https://github.com/buchenberg/shepherd-kernel-go) — the trace kernel (record model, canonical JSON, SQLite store, effect bus, projections) — and adds the primitives that *use* a trace: branching execution, workspace capture/restore, reversible settlement, and supervised task handles.
+It composes [`github.com/buchenberg/goatherd-kernel`](https://github.com/buchenberg/goatherd-kernel) — the trace kernel (record model, canonical JSON, SQLite store, effect bus, projections) — and adds the primitives that *use* a trace: branching execution, workspace capture/restore, reversible settlement, and supervised task handles.
 
-> **Module scope.** The kernel module owns the durable trace: the record model, the store, the effect bus, and the execution/history projections. This module owns everything above it. Trace types (`trace.Record`, `trace.SQLiteTraceStore`, `trace.WorkspaceState`, …) come from `github.com/buchenberg/shepherd-kernel-go` (package `trace`, the kernel's module root).
+> **Module scope.** The kernel module owns the durable trace: the record model, the store, the effect bus, and the execution/history projections. This module owns everything above it. Trace types (`trace.Record`, `trace.SQLiteTraceStore`, `trace.WorkspaceState`, …) come from `github.com/buchenberg/goatherd-kernel` (package `trace`, the kernel's module root).
 
 ## Packages
 
 | Package | Contents |
 |---|---|
-| `shepherd` (module root) | the runtime hub — `Scope`, `ScopeManager`, checkpoints, workspace operations, the merge gate, settlement (`Seal`, `Settle`, `RetainedOutput`), recovery (`RecoverScopes`) |
+| `goatherd` (module root) | the runtime hub — `Scope`, `ScopeManager`, checkpoints, workspace operations, the merge gate, settlement (`Seal`, `Settle`, `RetainedOutput`), recovery (`RecoverScopes`) |
 | `sandbox` | the `Sandbox` interface and the backend registry |
 | `sandbox/git` | the git backend (in-place, worktree); self-registers as `"git"` |
 | `substrate` | the `Substrate` contract, the registry (unknown substrate refs fail the materialization), the echo/KV/workspace substrates |
@@ -40,7 +40,7 @@ A backend that cannot enforce the requested network mode refuses it rather than 
 The runtime requires the kernel for the trace store, the record vocabulary, and the shared public `testkit` package:
 
 ```
-require github.com/buchenberg/shepherd-kernel-go v0.17.0
+require github.com/buchenberg/goatherd-kernel v0.17.0
 ```
 
 The kernel is the only external dependency family it pulls in; the runtime carries no other third-party dependency. The module carries no `replace` directive, so it resolves from the module proxy like any other dependency.
@@ -52,7 +52,7 @@ The kernel is the only external dependency family it pulls in; the runtime carri
 Create isolated execution branches for speculative work. Fork records the branch point in the trace; merge or discard the branch later:
 
 ```go
-mgr := shepherd.NewScopeManager(store)
+mgr := goatherd.NewScopeManager(store)
 
 // A root scope carries the workspace it operates on.
 parent, _ := mgr.Create("agent:main", git.NewLocalGitSandbox(repoPath))
@@ -100,7 +100,7 @@ invented: the host's resolver decides which worktrees and containers to
 re-adopt and which to orphan-clean:
 
 ```go
-mgr, err := shepherd.RecoverScopes(store, shepherd.RecoverOptions{
+mgr, err := goatherd.RecoverScopes(store, goatherd.RecoverOptions{
     // backend and path come from the fork record the trace durably holds;
     // both are empty for roots, and shared children are never resolved —
     // they inherit the parent's re-adopted sandbox.
@@ -171,8 +171,8 @@ a denial returns `*SupervisorDeniedError` and never touches the parent:
 
 ```go
 // Commit-time review: shared-sandbox child, rollback via checkpoint restore.
-err := mgr.CommitMerge(ctx, child.ID(), shepherd.DraftsOnlyReviewer("drafts"))
-var denied *shepherd.SupervisorDeniedError
+err := mgr.CommitMerge(ctx, child.ID(), goatherd.DraftsOnlyReviewer("drafts"))
+var denied *goatherd.SupervisorDeniedError
 if errors.As(err, &denied) {
     _, _ = mgr.RestoreCheckpoint(ctx, cp.ID) // roll the shared workspace back
     // retry with the denial reason injected as guidance
@@ -184,7 +184,7 @@ settlement: seal each output, compare the frozen `Changes`, then settle
 exactly one — best-of-n in a dozen lines:
 
 ```go
-var outs []*shepherd.RetainedOutput
+var outs []*goatherd.RetainedOutput
 for i := 0; i < n; i++ {
     child, _ := mgr.ForkIsolated(parent.ID(), fmt.Sprintf("try-%d", i), nil, worktreeFor(repo, i))
     // ... the attempt does its work in the worktree ...
@@ -192,13 +192,13 @@ for i := 0; i < n; i++ {
     outs = append(outs, out) // out.Changes and out.Diff are frozen at seal time
 }
 
-if err := mgr.Settle(ctx, outs[winner].ID, shepherd.SettleSelect); err != nil { // parent unmoved: fast-forward
+if err := mgr.Settle(ctx, outs[winner].ID, goatherd.SettleSelect); err != nil { // parent unmoved: fast-forward
     // parent moved since the fork? three-way instead:
-    //   disjoint paths  -> mgr.Settle(ctx, outs[winner].ID, shepherd.SettleApply)
+    //   disjoint paths  -> mgr.Settle(ctx, outs[winner].ID, goatherd.SettleApply)
     //   path overlap    -> ErrApplyConflict, output stays unconsumed
 }
 for _, out := range losers {
-    _ = mgr.Settle(ctx, out.ID, shepherd.SettleDiscard)
+    _ = mgr.Settle(ctx, out.ID, goatherd.SettleDiscard)
 }
 ```
 
@@ -362,7 +362,7 @@ caps := sb.Capabilities()   // capability negotiation: Lifecycle/Exec/FileIO/Dif
 ### Scope Manager
 
 ```go
-mgr := shepherd.NewScopeManager(store)
+mgr := goatherd.NewScopeManager(store)
 
 scope, err := mgr.Create("owner-id", sb)                            // sb may be nil (pure-causal)
 child, err := mgr.Fork("parent-scope-id", "child-owner-id", nil)    // inherits parent's sandbox
@@ -380,24 +380,24 @@ mgr.PruneCheckpoints(ctx, "scope-id")                 // also deletes persisted 
 
 // Merge gate (plan 04): propose, review, commit-or-discard
 proposal, err := mgr.ProposeMerge(ctx, "child-scope-id", 2000)      // query; classifies create/modify/delete
-err = mgr.CommitMerge(ctx, "child-scope-id", shepherd.DraftsOnlyReviewer("drafts"))
+err = mgr.CommitMerge(ctx, "child-scope-id", goatherd.DraftsOnlyReviewer("drafts"))
 // deny -> *SupervisorDeniedError, child discarded; isolated children are refused (use Seal + Settle)
 
 // Retained outputs: seal, then settle exactly once
 out, err := mgr.Seal(ctx, "scope-id")                              // scope stays active
 got, ok := mgr.Output(out.ID)
 outs := mgr.OutputsForScope("scope-id")
-err = mgr.Settle(ctx, out.ID, shepherd.SettleSelect)               // or SettleApply / SettleRelease / SettleDiscard
+err = mgr.Settle(ctx, out.ID, goatherd.SettleSelect)               // or SettleApply / SettleRelease / SettleDiscard
 
 // Restart durability: rebuild the registry from the trace
-mgr, err = shepherd.RecoverScopes(store, shepherd.RecoverOptions{ /* Resolver: re-adopt sandboxes */ })
+mgr, err = goatherd.RecoverScopes(store, goatherd.RecoverOptions{ /* Resolver: re-adopt sandboxes */ })
 pruned := mgr.PruneTerminal()                                      // unregister merged/discarded scopes
 ```
 
 ### Scope workspace and checkpoint operations
 
 ```go
-scope := shepherd.NewScope(store, "owner-id").WithSandbox(sb, false)  // owns=false: do not Destroy
+scope := goatherd.NewScope(store, "owner-id").WithSandbox(sb, false)  // owns=false: do not Destroy
 
 ws, err := scope.CaptureWorkspace(ctx)          // reusable state, no lifecycle
 err = scope.ApplyWorkspace(ctx, ws)
@@ -457,10 +457,10 @@ the workspace was a git tree, a worktree, or a container snapshot:
 
 | Schema | Mode | Payload |
 |---|---|---|
-| `shepherd.checkpoint.created.v2` | declaration | `checkpoint_id, backend, revision, state_digest, has_snapshot` |
-| `shepherd.checkpoint.restored.v2` | capture | `checkpoint_id, backend, revision, state_digest` |
-| `shepherd.workspace.captured.v1` | declaration | `backend, revision, state_digest` |
-| `shepherd.workspace.applied.v1` | capture | `backend, revision, state_digest` |
+| `goatherd.checkpoint.created.v2` | declaration | `checkpoint_id, backend, revision, state_digest, has_snapshot` |
+| `goatherd.checkpoint.restored.v2` | capture | `checkpoint_id, backend, revision, state_digest` |
+| `goatherd.workspace.captured.v1` | declaration | `backend, revision, state_digest` |
+| `goatherd.workspace.applied.v1` | capture | `backend, revision, state_digest` |
 
 These are kernel extensions, not part of `shepherd.kernel.abi.v0`, so they do not
 affect the golden vectors. Trace writes are advisory: a failed append never fails
@@ -470,19 +470,19 @@ audit record.
 ### Constants
 
 ```go
-shepherd.SchemaScopeForked          // "shepherd.scope.forked.v1"
-shepherd.SchemaScopeMerged          // "shepherd.scope.merged.v1"
-shepherd.SchemaScopeDiscarded       // "shepherd.scope.discarded.v1"
-shepherd.SchemaSupervisorInject     // "shepherd.supervisor.inject.v1"
-shepherd.SchemaSupervisorHalt       // "shepherd.supervisor.halt.v1"
-shepherd.SchemaCheckpointCreated    // "shepherd.checkpoint.created.v2"
-shepherd.SchemaCheckpointRestored   // "shepherd.checkpoint.restored.v2"
-shepherd.SchemaWorkspaceCaptured    // "shepherd.workspace.captured.v1"
-shepherd.SchemaWorkspaceApplied     // "shepherd.workspace.applied.v1"
+goatherd.SchemaScopeForked          // "goatherd.scope.forked.v1"
+goatherd.SchemaScopeMerged          // "goatherd.scope.merged.v1"
+goatherd.SchemaScopeDiscarded       // "goatherd.scope.discarded.v1"
+goatherd.SchemaSupervisorInject     // "goatherd.supervisor.inject.v1"
+goatherd.SchemaSupervisorHalt       // "goatherd.supervisor.halt.v1"
+goatherd.SchemaCheckpointCreated    // "goatherd.checkpoint.created.v2"
+goatherd.SchemaCheckpointRestored   // "goatherd.checkpoint.restored.v2"
+goatherd.SchemaWorkspaceCaptured    // "goatherd.workspace.captured.v1"
+goatherd.SchemaWorkspaceApplied     // "goatherd.workspace.applied.v1"
 
-shepherd.CheckpointValid            // "valid"
-shepherd.CheckpointUsed             // "used"
-shepherd.CheckpointInvalid          // "invalid"
+goatherd.CheckpointValid            // "valid"
+goatherd.CheckpointUsed             // "used"
+goatherd.CheckpointInvalid          // "invalid"
 
 sandbox.ErrNoSandbox               // scope has no sandbox
 sandbox.ErrUnsupported             // backend does not implement the capability
@@ -502,5 +502,5 @@ gofmt -l .            # must be empty
 
 ## History
 
-Extracted unchanged from `github.com/buchenberg/shepherd-kernel-go` (fresh
+Extracted unchanged from `github.com/buchenberg/goatherd-kernel` (fresh
 history; the original history remains in that repository's log).
