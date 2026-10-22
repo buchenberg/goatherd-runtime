@@ -157,7 +157,7 @@ move is to make that the **default** for every sub-agent (folding
 `spawn_subagent`, which today mutates the host directly), then attach the
 confiner to the one retained launch.
 
-- **Phase 0:** ✅ done — `shepherd-runtime-go v0.17.0`, `sandbox/landlock/v0.1.0`
+- **Phase 0:** ✅ done — `goatherd-runtime v0.17.0`, `sandbox/landlock/v0.1.0`
   then **`v0.1.1`** published (the nested module's dev `replace` dropped); yaah
   ported onto the split modules (kernel v0.17.0 + runtime v0.17.0) — a pure
   import rewrite across 44 files.
@@ -248,7 +248,7 @@ boundary means it cannot govern every file effect.
   and escaping-symlink paths); `FileIO` capability now reported.
 - **Kernel decision note** — ✅ done: the Path B fence decision for the Linux
   Landlock member is recorded in the kernel's
-  [`gap-report.md`](../../../shepherd-kernel-go/docs/history/gap-report.md) and
+  [`gap-report.md`](../../../goatherd-kernel/docs/history/gap-report.md) and
   the `DEVELOPMENT.md` backlog item is marked resolved.
 - **Foundation/`confinement` normalization** — ✅ done:
   `golang.org/x/text/unicode/norm` (Plan 1 §16.2 #5).
@@ -300,7 +300,7 @@ Plan 7 (yaah integration) depends on a released runtime (Phase 0) + Plan 4a (mac
   (`v0.21.0`, pinned to keep the module's `go 1.21` directive). This is the one
   deliberate relaxation of the root module's "kernel + stdlib only" footprint.
 - **Nested module with a dev-time `replace`.** `sandbox/landlock` is its own
-  module; its `go.mod` carries `replace github.com/buchenberg/shepherd-runtime-go
+  module; its `go.mod` carries `replace github.com/buchenberg/goatherd-runtime
   => ../..` for local development, dropped at release when the root is tagged.
   A repo-root `go.work` was tried and rejected (it propagates the nested
   require into the root build).

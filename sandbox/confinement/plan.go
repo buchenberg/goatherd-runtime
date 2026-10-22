@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // Monitor identifiers. The set is open by design — a transmit gate or egress
@@ -179,7 +179,7 @@ func (p PermissionPlan) Descriptor() map[string]any {
 		assignments = append(assignments, a.descriptor())
 	}
 	return map[string]any{
-		"schema":      "shepherd.permission-plan.v1",
+		"schema":      "goatherd.permission-plan.v1",
 		"fallback":    p.Fallback,
 		"assignments": assignments,
 	}

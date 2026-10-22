@@ -20,10 +20,10 @@ import (
 	"strings"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	sbx "github.com/buchenberg/shepherd-runtime-go/sandbox"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	trace "github.com/buchenberg/goatherd-kernel"
+	sbx "github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // gitTimeout bounds each git subprocess. A hung git process (e.g. waiting on a
@@ -131,7 +131,7 @@ func indexEnv(path string) []string {
 //
 // Returns the scratch index path and a cleanup func the caller must always call.
 func (g *gitRunner) stagedIndex(ctx context.Context) (string, func(), error) {
-	dir, err := os.MkdirTemp("", "shepherd-index-*")
+	dir, err := os.MkdirTemp("", "goatherd-index-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create scratch index dir: %w", err)
 	}
@@ -1189,7 +1189,7 @@ func (g *GitSandbox) AnnotateDeltaBase(ctx context.Context, delta *trace.Workspa
 // collection traverses refs and the index, not SQLite — an explicit
 // `git gc` between Seal and Settle could otherwise prune the very objects a
 // settlement needs.
-const stateRefPrefix = "refs/shepherd/states/"
+const stateRefPrefix = "refs/goatherd/states/"
 
 // pinTree anchors a recorded state tree with a ref keyed by the tree's own
 // SHA, so identical content shares one pin and re-pinning is idempotent.

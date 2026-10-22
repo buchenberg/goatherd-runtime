@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	sbx "github.com/buchenberg/shepherd-runtime-go/sandbox"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	trace "github.com/buchenberg/goatherd-kernel"
+	sbx "github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // fakeConfiner is a containment.Backend double for the git backend's Exec tests.

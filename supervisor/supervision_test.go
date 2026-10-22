@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	"github.com/buchenberg/shepherd-runtime-go/internal/rttest"
-	"github.com/buchenberg/shepherd-runtime-go/supervisor"
+	trace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	"github.com/buchenberg/goatherd-runtime/internal/rttest"
+	"github.com/buchenberg/goatherd-runtime/supervisor"
 )
 
 func TestSupervisor_BasicRuleMatch(t *testing.T) {
@@ -17,7 +17,7 @@ func TestSupervisor_BasicRuleMatch(t *testing.T) {
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	sup := supervisor.NewSupervisor(mgr, bus)
 
 	matched := false
@@ -71,7 +71,7 @@ func TestSupervisor_NonMatchingRule(t *testing.T) {
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	sup := supervisor.NewSupervisor(mgr, bus)
 
 	sup.AddRule(supervisor.SupervisionRule{
@@ -107,7 +107,7 @@ func TestSupervisor_FirstRuleWins(t *testing.T) {
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	sup := supervisor.NewSupervisor(mgr, bus)
 
 	var firstCalled bool
@@ -150,7 +150,7 @@ func TestSupervisor_ObserveOnlyRule(t *testing.T) {
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	sup := supervisor.NewSupervisor(mgr, bus)
 
 	// Rule that matches but returns nil (observe-only)
@@ -180,7 +180,7 @@ func TestSupervisor_Inject(t *testing.T) {
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	mgr.Create("sub:inject-target", nil)
 
 	sup := supervisor.NewSupervisor(mgr, bus)
@@ -198,7 +198,7 @@ func TestSupervisor_Inject(t *testing.T) {
 	found := false
 	for _, id := range slice.FactIDs() {
 		rec := slice.FactsByID[id]
-		if rec.GetEnvelope().SchemaRef == shepherd.SchemaSupervisorInject {
+		if rec.GetEnvelope().SchemaRef == goatherd.SchemaSupervisorInject {
 			found = true
 			break
 		}
@@ -213,7 +213,7 @@ func TestSupervisor_Halt(t *testing.T) {
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	target, _ := mgr.Create("sub:halt-target", nil)
 
 	sup := supervisor.NewSupervisor(mgr, bus)
@@ -223,7 +223,7 @@ func TestSupervisor_Halt(t *testing.T) {
 	}
 
 	// the target scope should be discarded
-	if target.State() != shepherd.ScopeDiscarded {
+	if target.State() != goatherd.ScopeDiscarded {
 		t.Errorf("expected scope discarded after halt, got %s", target.State())
 	}
 
@@ -236,7 +236,7 @@ func TestSupervisor_Halt(t *testing.T) {
 	found := false
 	for _, id := range slice.FactIDs() {
 		rec := slice.FactsByID[id]
-		if rec.GetEnvelope().SchemaRef == shepherd.SchemaSupervisorHalt {
+		if rec.GetEnvelope().SchemaRef == goatherd.SchemaSupervisorHalt {
 			found = true
 			break
 		}
@@ -248,7 +248,7 @@ func TestSupervisor_Halt(t *testing.T) {
 
 func TestSupervisor_ScopeNotFound(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	sup := supervisor.NewSupervisor(mgr, nil)
 
 	err := sup.Inject("scope:nonexistent", "hello")
@@ -451,7 +451,7 @@ func TestStuckDetectionRule_IgnoresCaptures(t *testing.T) {
 
 func TestSupervisor_CheckCall_Approved(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	sup := supervisor.NewSupervisor(mgr, nil)
 
 	// Non-matching rule
@@ -477,7 +477,7 @@ func TestSupervisor_CheckCall_Approved(t *testing.T) {
 
 func TestSupervisor_CheckCall_Deny(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	sup := supervisor.NewSupervisor(mgr, nil)
 
 	sup.AddRule(supervisor.DestructiveToolGuard())
@@ -498,7 +498,7 @@ func TestSupervisor_CheckCall_Deny(t *testing.T) {
 
 func TestSupervisor_CheckCall_FirstRuleWins(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	sup := supervisor.NewSupervisor(mgr, nil)
 
 	sup.AddRule(supervisor.SupervisionRule{
@@ -527,7 +527,7 @@ func TestSupervisor_CheckCall_FirstRuleWins(t *testing.T) {
 
 func TestSupervisor_CheckCall_ObserveOnly(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	sup := supervisor.NewSupervisor(mgr, nil)
 
 	sup.AddRule(supervisor.SupervisionRule{

@@ -1,4 +1,4 @@
-package shepherd_test
+package goatherd_test
 
 import (
 	"context"
@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
-	"github.com/buchenberg/shepherd-runtime-go/internal/rttest"
-	sandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/git"
-	"github.com/buchenberg/shepherd-runtime-go/supervisor"
+	trace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	"github.com/buchenberg/goatherd-runtime/internal/gittest"
+	"github.com/buchenberg/goatherd-runtime/internal/rttest"
+	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/sandbox/git"
+	"github.com/buchenberg/goatherd-runtime/supervisor"
 )
 
 // TestIntegration_RollbackScenario exercises the full rollback flow:
@@ -29,7 +29,7 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 	store.WithBus(bus)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 
 	// 2. Git repo with initial code
 	repo := gittest.NewTestRepo(t)
@@ -43,13 +43,13 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 		t.Fatalf("create scope: %v", err)
 	}
 
-	// 4. shepherd.Checkpoint BEFORE the sub-agent runs
+	// 4. goatherd.Checkpoint BEFORE the sub-agent runs
 	conversationSnapshot := []byte(`{"messages":["system prompt","task: fix the bug"]}`)
 	cp, err := mgr.CreateCheckpoint(ctx, scope.ID(), conversationSnapshot)
 	if err != nil {
 		t.Fatalf("CreateCheckpoint: %v", err)
 	}
-	if cp.State != shepherd.CheckpointValid {
+	if cp.State != goatherd.CheckpointValid {
 		t.Fatalf("expected valid checkpoint, got %s", cp.State)
 	}
 
@@ -95,11 +95,11 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 	for _, id := range slice.FactIDs() {
 		env := slice.FactsByID[id].GetEnvelope()
 		switch env.SchemaRef {
-		case shepherd.SchemaCheckpointCreated:
+		case goatherd.SchemaCheckpointCreated:
 			if env.Mode == trace.Declaration {
 				foundCreate = true
 			}
-		case shepherd.SchemaCheckpointRestored:
+		case goatherd.SchemaCheckpointRestored:
 			if env.Mode == trace.Capture {
 				foundRestore = true
 			}
@@ -117,7 +117,7 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 // destructive tool call before it executes, using CheckCall.
 func TestIntegration_SynchronousDeny(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	sup := supervisor.NewSupervisor(mgr, nil)
 
 	// Install the blocking guard
@@ -175,7 +175,7 @@ func TestIntegration_SynchronousDeny(t *testing.T) {
 func TestIntegration_CheckpointForkRestore(t *testing.T) {
 	ctx := context.Background()
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 
 	repo := gittest.NewTestRepo(t)
 	gittest.WriteFile(t, repo, "app.go", "package main\n")
@@ -194,7 +194,7 @@ func TestIntegration_CheckpointForkRestore(t *testing.T) {
 		t.Fatalf("fork: %v", err)
 	}
 
-	// shepherd.Checkpoint the child
+	// goatherd.Checkpoint the child
 	cp, err := mgr.CreateCheckpoint(ctx, child.ID(), []byte("v1"))
 	if err != nil {
 		t.Fatalf("checkpoint: %v", err)
@@ -220,7 +220,7 @@ func TestIntegration_CheckpointForkRestore(t *testing.T) {
 	if err := parent.Merge(child); err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	if child.State() != shepherd.ScopeMerged {
+	if child.State() != goatherd.ScopeMerged {
 		t.Errorf("expected child merged, got %s", child.State())
 	}
 }
@@ -230,7 +230,7 @@ func TestIntegration_CheckpointForkRestore(t *testing.T) {
 func TestIntegration_MultipleCheckpoints(t *testing.T) {
 	ctx := context.Background()
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 
 	repo := gittest.NewTestRepo(t)
 	gittest.WriteFile(t, repo, "main.go", "version 1")
@@ -242,7 +242,7 @@ func TestIntegration_MultipleCheckpoints(t *testing.T) {
 		t.Fatalf("create scope: %v", err)
 	}
 
-	// shepherd.Checkpoint 1
+	// goatherd.Checkpoint 1
 	cp1, err := mgr.CreateCheckpoint(ctx, scope.ID(), []byte("state-1"))
 	if err != nil {
 		t.Fatalf("cp1: %v", err)
@@ -253,7 +253,7 @@ func TestIntegration_MultipleCheckpoints(t *testing.T) {
 	gittest.MustGit(t, repo, "add", "-A")
 	gittest.MustGit(t, repo, "commit", "-m", "v2")
 
-	// shepherd.Checkpoint 2
+	// goatherd.Checkpoint 2
 	time.Sleep(10 * time.Millisecond) // ensure different timestamps
 	cp2, err := mgr.CreateCheckpoint(ctx, scope.ID(), []byte("state-2"))
 	if err != nil {
@@ -300,7 +300,7 @@ func TestIntegration_MultipleCheckpoints(t *testing.T) {
 func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 	ctx := context.Background()
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 
 	repo := gittest.NewTestRepo(t)
 	gittest.WriteFile(t, repo, "base.txt", "base")
@@ -320,7 +320,7 @@ func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 
 	root := t.TempDir()
 	type variant struct {
-		child    *shepherd.Scope
+		child    *goatherd.Scope
 		worktree string
 		state    trace.WorkspaceState
 		file     string

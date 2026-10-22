@@ -1,4 +1,4 @@
-package shepherd
+package goatherd
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	"github.com/buchenberg/goatherd-runtime/internal/gittest"
+	"github.com/buchenberg/goatherd-runtime/sandbox/git"
 )
 
 // TestSeal_FreezesChanges covers T3.5's Seal: registered output, classified

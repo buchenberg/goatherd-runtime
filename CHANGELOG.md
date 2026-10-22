@@ -1,8 +1,34 @@
 # Changelog
 
-Notable changes to `shepherd-runtime-go`. This project follows
+Notable changes to `goatherd-runtime`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
+
+## [v0.19.0] - 2026-10-22
+
+### Changed
+- **Module renamed**: `github.com/buchenberg/shepherd-runtime-go` is now
+  `github.com/buchenberg/goatherd-runtime`; the root package `shepherd` is now
+  `goatherd`. Requires `github.com/buchenberg/goatherd-kernel` v0.18.0 (the
+  renamed kernel; see its v0.18.0 entry for the import-path migration).
+- **Nested modules move with it**: `sandbox/landlock` v0.1.2 and
+  `sandbox/winacl` v0.1.1. Both now carry a relative `replace` pointing at the
+  repo root so in-repo builds resolve the runtime locally; `replace`
+  directives of dependencies are ignored, so external consumers (yaah) are
+  unaffected and pin the published versions.
+- **Go-native record vocabulary renamed**: `shepherd.{scope,merge,workspace,
+  checkpoint,supervisor,run_output}.*` schema refs are now `goatherd.*`. The
+  cross-language surface is untouched: `shepherd2.*` refs and
+  `shepherd.kernel.abi.v0` keep their names, and the golden vectors are
+  byte-identical.
+
+### Breaking (on-disk state)
+- Workspace state refs inside sandboxed repos move from `refs/shepherd/states/`
+  to `refs/goatherd/states/`. Sandboxes created by v0.18.0 keep their old refs;
+  re-create the scope (or `git branch -m` the refs) after upgrading. The git
+  backend's temp-dir prefix (`shepherd-index-*` -> `goatherd-index-*`) and the
+  winacl probe env (`SHEPHERD_WINACL_TEST_VALUE` -> `GOATHERD_WINACL_TEST_VALUE`)
+  are renamed likewise.
 
 ## [v0.18.0] - 2026-10-19
 

@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	sbx "github.com/buchenberg/shepherd-runtime-go/sandbox"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	sbx "github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/git"
 )
 
 // TestIntegration_GitSandboxPaddockExec exercises the whole stack end to end:

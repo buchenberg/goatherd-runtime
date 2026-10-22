@@ -1,7 +1,7 @@
 package winacl
 
 import (
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // Backend is the Windows write-restriction containment backend.

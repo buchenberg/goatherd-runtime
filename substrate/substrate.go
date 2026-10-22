@@ -27,13 +27,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go"
+	trace "github.com/buchenberg/goatherd-kernel"
 	"reflect"
 )
 
 // ErrUnknownSubstrate is the sentinel behind UnknownSubstrateError, so
 // callers can errors.Is(err, ErrUnknownSubstrate) without matching strings.
-var ErrUnknownSubstrate = errors.New("shepherd: unknown substrate")
+var ErrUnknownSubstrate = errors.New("goatherd: unknown substrate")
 
 // SubstrateError is raised for substrate registration or dispatch failures.
 // It mirrors Python's SubstrateError (RuntimeError subclass).

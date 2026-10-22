@@ -15,14 +15,14 @@ import (
 	"testing"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	"github.com/buchenberg/shepherd-runtime-go/run"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/egress"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	trace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	"github.com/buchenberg/goatherd-runtime/run"
+	"github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/egress"
+	"github.com/buchenberg/goatherd-runtime/sandbox/git"
 )
 
 // The confined connect helpers' sentinels, dispatched by TestMain.
@@ -80,7 +80,7 @@ func TestE2E_ReversibleBrokerEgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Close(context.Background()) }()
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	parent, err := mgr.Create("e2e:main", git.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatal(err)

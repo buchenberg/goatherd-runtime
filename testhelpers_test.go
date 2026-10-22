@@ -1,18 +1,18 @@
-package shepherd
+package goatherd
 
 // Shared test helpers for the runtime-layer tests. The fixtures live in
-// internal/rttest so the external test packages (shepherd_test, task_test,
+// internal/rttest so the external test packages (goatherd_test, task_test,
 // supervisor_test) share them; these wrappers keep the root package's
 // in-package tests unchanged. Test code is not API surface.
 
 import (
 	"testing"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
+	trace "github.com/buchenberg/goatherd-kernel"
 
-	"github.com/buchenberg/shepherd-kernel-go/testkit"
-	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
-	"github.com/buchenberg/shepherd-runtime-go/internal/rttest"
+	"github.com/buchenberg/goatherd-kernel/testkit"
+	"github.com/buchenberg/goatherd-runtime/internal/gittest"
+	"github.com/buchenberg/goatherd-runtime/internal/rttest"
 )
 
 func newMemStore(t *testing.T) *trace.SQLiteTraceStore { return rttest.NewMemStore(t) }

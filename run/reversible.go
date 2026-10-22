@@ -21,10 +21,10 @@ import (
 	"errors"
 	"fmt"
 
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	"github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // Disposition is what a successful reversible run does with its isolated work.
@@ -47,7 +47,7 @@ const (
 // DecisionProvider judges a run's proposed changes before integration,
 // mirroring merge_with_authority's data-only decision provider. Approve by
 // returning nil; deny by returning an error (the run is discarded).
-type DecisionProvider func(ctx context.Context, proposal shepherd.MergeProposal) error
+type DecisionProvider func(ctx context.Context, proposal goatherd.MergeProposal) error
 
 // Options configures one reversible run. The zero value plus OwnerID runs a
 // merge-disposition, auto-placement, isolated run with a Permissive default
@@ -73,8 +73,8 @@ type Options struct {
 	// with Confinement.
 	Plan *confinement.PermissionPlan
 	// Reviewer, when set, gates a merge disposition: a denial discards the run
-	// and returns *shepherd.SupervisorDeniedError.
-	Reviewer shepherd.MergeReviewer
+	// and returns *goatherd.SupervisorDeniedError.
+	Reviewer goatherd.MergeReviewer
 	// Decision, required for DispositionAuthorityMerge, judges the run's proposed
 	// changes before integration; a denial discards the run.
 	Decision DecisionProvider
@@ -98,7 +98,7 @@ type Options struct {
 // paddock-or-refuse) or the scope's sandbox (sandbox-first), and never needs to
 // know about forks or settlement.
 type RunContext struct {
-	Scope       *shepherd.Scope
+	Scope       *goatherd.Scope
 	Capability  containment.Capability
 	Confinement containment.ConfinementSpec
 }
@@ -126,7 +126,7 @@ type Result struct {
 
 // SchemaRunExecuted is the runtime record the wrap appends for each run — the
 // durable trail of isolation, disposition, authority evidence, and outcome.
-const SchemaRunExecuted = "shepherd.run.executed.v1"
+const SchemaRunExecuted = "goatherd.run.executed.v1"
 
 // Handler runs the run's work in RunContext. It is the structural analogue of a
 // driver's prepare_bound: a handler receives execution authority per call and
@@ -136,10 +136,10 @@ type Handler func(ctx context.Context, rc *RunContext) (Result, error)
 // Outcome is the wrap's result.
 type Outcome struct {
 	// Scope is the run scope (the child, or the parent for a NonReversible run).
-	Scope *shepherd.Scope
+	Scope *goatherd.Scope
 	// Output is the sealed output for a seal disposition or a merge that sealed
 	// on the way (nil otherwise).
-	Output *shepherd.RetainedOutput
+	Output *goatherd.RetainedOutput
 	// Result is the handler's outcome.
 	Result Result
 	// Isolation is "isolated" or "ground".
@@ -158,7 +158,7 @@ type Outcome struct {
 //     is guarded by RequireExecutionAuthority.
 //  4. The handler runs; on error the child is discarded, never half-merged.
 //  5. On success the disposition integrates (merge), seals, or refuses.
-func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepherd.Scope, opts Options, handler Handler) (Outcome, error) {
+func Reversible(ctx context.Context, mgr *goatherd.ScopeManager, parent *goatherd.Scope, opts Options, handler Handler) (Outcome, error) {
 	if mgr == nil {
 		return Outcome{}, errors.New("run: nil scope manager")
 	}
@@ -300,7 +300,7 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 		if deny := opts.Reviewer(*proposal); deny != nil {
 			_ = mgr.Discard(runScope.ID())
 			return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition},
-				&shepherd.SupervisorDeniedError{Reason: deny.Error(), Changes: proposal.Changes}
+				&goatherd.SupervisorDeniedError{Reason: deny.Error(), Changes: proposal.Changes}
 		}
 	}
 	if disposition == DispositionAuthorityMerge {
@@ -313,7 +313,7 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 		if deny := opts.Decision(ctx, *proposal); deny != nil {
 			_ = mgr.Discard(runScope.ID())
 			return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition},
-				&shepherd.SupervisorDeniedError{Reason: deny.Error(), Changes: proposal.Changes}
+				&goatherd.SupervisorDeniedError{Reason: deny.Error(), Changes: proposal.Changes}
 		}
 	}
 
@@ -330,8 +330,8 @@ func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepher
 	}
 
 	// Merge: fast-forward, or three-way when the parent moved since the fork.
-	if err := mgr.Settle(ctx, sealed.ID(), shepherd.SettleSelect); err != nil {
-		if aerr := mgr.Settle(ctx, sealed.ID(), shepherd.SettleApply); aerr != nil {
+	if err := mgr.Settle(ctx, sealed.ID(), goatherd.SettleSelect); err != nil {
+		if aerr := mgr.Settle(ctx, sealed.ID(), goatherd.SettleApply); aerr != nil {
 			return out, fmt.Errorf("run: settle: select failed (%v) and apply failed: %w", err, aerr)
 		}
 	}
@@ -381,7 +381,7 @@ func VerifyHandler(ctx context.Context, probe *RunContext, h Handler) error {
 
 // workDirOf returns the sandbox's durable address when it is path-addressed
 // (a git worktree or repository), else "".
-func workDirOf(s *shepherd.Scope) string {
+func workDirOf(s *goatherd.Scope) string {
 	sb := s.Sandbox()
 	if sb == nil {
 		return ""
@@ -396,7 +396,7 @@ func workDirOf(s *shepherd.Scope) string {
 // isolation, disposition, the authority-evidence digest, and the outcome. It is
 // the durable half of the authority trail — Plan 1 surfaced the digest on the
 // ExecResult; this writes it into the trace.
-func recordRun(ctx context.Context, runScope, parent *shepherd.Scope, isolation string, disposition Disposition, result Result, plan *confinement.PermissionPlan) error {
+func recordRun(ctx context.Context, runScope, parent *goatherd.Scope, isolation string, disposition Disposition, result Result, plan *confinement.PermissionPlan) error {
 	payload := map[string]any{
 		"owner":              runScope.OwnerID(),
 		"parent_scope":       parent.ID(),

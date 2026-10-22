@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
-	sbx "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	trace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/goatherd-runtime/internal/gittest"
+	sbx "github.com/buchenberg/goatherd-runtime/sandbox"
 )
 
 // samePath reports whether two paths refer to the same location, resolving
@@ -1005,7 +1005,7 @@ func TestGitSandbox_PinTreeIdempotentWhenRefLocked(t *testing.T) {
 	if err := sb.pinTree(ctx, tree); err != nil {
 		t.Fatalf("pinTree (first): %v", err)
 	}
-	refPath := filepath.Join(repo, ".git", "refs", "shepherd", "states", tree)
+	refPath := filepath.Join(repo, ".git", "refs", "goatherd", "states", tree)
 	if _, err := os.Stat(refPath); err != nil {
 		t.Fatalf("the pin's ref file %s: %v", refPath, err)
 	}
@@ -1020,7 +1020,7 @@ func TestGitSandbox_PinTreeIdempotentWhenRefLocked(t *testing.T) {
 
 	// Sanity: an update-ref really cannot proceed now — on any OS and
 	// for any privilege, because the lock path is a directory.
-	if _, err := gittest.Run(t, repo, "update-ref", "refs/shepherd/states/"+tree, tree); err == nil {
+	if _, err := gittest.Run(t, repo, "update-ref", "refs/goatherd/states/"+tree, tree); err == nil {
 		t.Skip("update-ref succeeded despite the occupied lock path; this git tolerates a directory at the lock path and the fallback cannot be exercised")
 	}
 

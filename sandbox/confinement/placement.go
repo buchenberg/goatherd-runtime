@@ -3,7 +3,7 @@ package confinement
 import (
 	"fmt"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // Placement is where authority is enforced for a run.

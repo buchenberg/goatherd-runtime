@@ -1,4 +1,4 @@
-package shepherd
+package goatherd
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
+	trace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/goatherd-runtime/internal/gittest"
 )
 
 // rmFile removes a file from the test repo, failing the test on error.
@@ -204,7 +204,7 @@ func TestWorkspace_CaptureRecordsInTrace(t *testing.T) {
 	}
 	// The old tree schemas must be gone.
 	for _, id := range slice.FactIDs() {
-		if ref := slice.FactsByID[id].GetEnvelope().SchemaRef; strings.HasPrefix(ref, "shepherd.tree.") {
+		if ref := slice.FactsByID[id].GetEnvelope().SchemaRef; strings.HasPrefix(ref, "goatherd.tree.") {
 			t.Errorf("unexpected legacy schema ref %q", ref)
 		}
 	}

@@ -5,7 +5,7 @@ package winacl
 import (
 	"fmt"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // available reports the backend as unavailable off Windows.

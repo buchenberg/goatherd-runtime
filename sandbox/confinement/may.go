@@ -13,7 +13,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // ErrUnsupportedMayProfile is a declared may= profile with no v0 lowering —

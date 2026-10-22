@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // allowAll / denyAll are the network policies most tests use.

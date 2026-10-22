@@ -543,7 +543,7 @@ load-bearing for anyone reasoning about what the boundary covers (§5.3).
 
 ### 10.3 The containment stamp is `contained`, never `full`
 
-`shepherd-kernel-go`'s `Containment` enum is
+`goatherd-kernel`'s `Containment` enum is
 `full | contained | buffered | uncontained`. The Windows backend must stamp
 **`contained`**: the hard-link boundary (§5.3) means the backend cannot
 govern every file effect, and Plan 1 §10.2's rule — *"Capabilities must be
@@ -658,7 +658,7 @@ the root module; the **backend** is a nested module so the root keeps its
 folded into the root module.
 
 ```
-shepherd-runtime-go/                       module: github.com/buchenberg/shepherd-runtime-go (go 1.21)
+goatherd-runtime/                       module: github.com/buchenberg/goatherd-runtime (go 1.21)
 │                                            deps: kernel + stdlib ONLY (invariant preserved)
 ├── sandbox/
 │   ├── sandbox.go                         # Sandbox iface (unchanged)
@@ -696,22 +696,22 @@ version stream (`sandbox/winacl/vX.Y.Z`).
 On completion, the records this plan supersedes or amends must be updated, so
 the fences reflect reality (the shape Plan 1 §14 established):
 
-- `shepherd-kernel-go/PARITY-PLAN.md:188` — the "OS jails (Seatbelt/Landlock)
+- `goatherd-kernel/PARITY-PLAN.md:188` — the "OS jails (Seatbelt/Landlock)
   and signature grants" row records that the *containerd* backend provides the
   Linux enforcement story. It should name the Windows native tier (this plan)
   as the Windows story, and the container tier as the Linux story.
-- `shepherd-kernel-go/PARITY-PLAN.md:194` — the "Landlock exec-wrapper for
+- `goatherd-kernel/PARITY-PLAN.md:194` — the "Landlock exec-wrapper for
   git-sandbox Exec (Linux)" backlog item gets a Windows sibling: the
   `sandbox/winacl` backend behind the same opt-in `Exec`.
-- `shepherd-kernel-go/plans/00-execution-plan.md:598-610` — the **Path B**
+- `goatherd-kernel/plans/00-execution-plan.md:598-610` — the **Path B**
   fence ("None of it is ported, and R6 says it must not be by accident")
   needs the Windows decision recorded, the way Plan 1 recorded the Linux
   member's.
-- `shepherd-kernel-go/GAP-REPORT.md:374` — the note that overlay/container
+- `goatherd-kernel/GAP-REPORT.md:374` — the note that overlay/container
   isolation is *"Not viable on Windows (yaah's primary platform)"* is true of
   that tier and should point at this plan's native tier rather than leave
   Windows without an answer.
-- `shepherd-runtime-go/docs/plans/README.md` — the status table, the gap
+- `goatherd-runtime/docs/plans/README.md` — the status table, the gap
   inventory, the dependency graph, and the non-goals list are updated by this
   plan's landing (already done in the plan-writing commit).
 

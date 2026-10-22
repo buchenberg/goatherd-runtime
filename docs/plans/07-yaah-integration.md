@@ -21,7 +21,7 @@
 
 ## 1. Objective & Context
 
-`yaah` now depends on `shepherd-runtime-go v0.17.0` + `shepherd-kernel-go
+`yaah` now depends on `goatherd-runtime v0.17.0` + `goatherd-kernel
 v0.17.0` (Phase 0, done — the modules are split, and yaah was ported onto them),
 plus `croft v0.3.0`. But it **already owns the settlement machine** — on one
 lane:
@@ -195,7 +195,7 @@ Any captured entry point (test binaries) adds the same line to `TestMain`.
 
 The prerequisite: publish the split modules and port yaah onto them.
 
-1. ✅ **`shepherd-runtime-go v0.17.0`** tagged (annotated, on `main`) and
+1. ✅ **`goatherd-runtime v0.17.0`** tagged (annotated, on `main`) and
    published; the tag's `release-verify` CI confirms it resolves from a clean
    consumer.
 2. ✅ **`sandbox/landlock/go.mod` replace dropped** (PR #2) — the nested module
@@ -205,8 +205,8 @@ The prerequisite: publish the split modules and port yaah onto them.
    `v0.17.0` is *post-extraction* (trace-only — no `ScopeManager`, `sandbox/`,
    `substrate/`, `task/`, `supervisor/`), so yaah had to move onto the runtime.
    A **pure import rewrite** — 44 files, 89/89 lines, no source changes:
-   `.../shepherd-kernel-go/trace → .../shepherd-kernel-go` (package `trace`, 40);
-   `.../shepherd-kernel-go → .../shepherd-runtime-go` (30);
+   `.../goatherd-kernel/trace → .../goatherd-kernel` (package `trace`, 40);
+   `.../goatherd-kernel → .../goatherd-runtime` (30);
    `.../sandbox`, `.../sandbox/git`, `.../supervisor` → the runtime (19).
    `go.mod` pins both at `v0.17.0`. Green on ubuntu/macos/windows.
 
@@ -540,7 +540,7 @@ predicate, which is exactly where the authority sits.
 6. **Placement is per-dispatch-capable** (`auto` default, `jail` fails closed, `advisory` visible), and the **resolved** placement is recorded on the trace.
 7. **The writable root is the sub-agent's bound worktree = one `ReadWrite` binding.** No signature-grant DSL, no `ReadOnly` binding (§11 A).
 8. **Trampoline hook in `yaah/main.go`** (and any captured entry point).
-9. **Where this plan lives:** `shepherd-runtime-go/docs/plans/` (the numbered series); yaah's docs link to it.
+9. **Where this plan lives:** `goatherd-runtime/docs/plans/` (the numbered series); yaah's docs link to it.
 
 ## 11. Python-parity: how Shepherd applies the boundary
 

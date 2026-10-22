@@ -5,7 +5,7 @@ package landlock
 import (
 	"fmt"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // WriteAccessMask is defined for parity of the package's exported surface; the

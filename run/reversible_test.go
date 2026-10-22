@@ -7,22 +7,22 @@ import (
 	"path/filepath"
 	"testing"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
-	"github.com/buchenberg/shepherd-runtime-go/internal/rttest"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	trace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	"github.com/buchenberg/goatherd-runtime/internal/gittest"
+	"github.com/buchenberg/goatherd-runtime/internal/rttest"
+	"github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/git"
 )
 
-func newManager(t *testing.T) *shepherd.ScopeManager {
+func newManager(t *testing.T) *goatherd.ScopeManager {
 	t.Helper()
-	return shepherd.NewScopeManager(rttest.NewMemStore(t))
+	return goatherd.NewScopeManager(rttest.NewMemStore(t))
 }
 
-func newParent(t *testing.T, mgr *shepherd.ScopeManager, owner string) (*shepherd.Scope, string) {
+func newParent(t *testing.T, mgr *goatherd.ScopeManager, owner string) (*goatherd.Scope, string) {
 	t.Helper()
 	repo := gittest.NewTestRepo(t)
 	parent, err := mgr.Create(owner, git.NewLocalGitSandbox(repo))
@@ -135,7 +135,7 @@ func TestReversible_SealDisposition(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, "sealed.txt")); !os.IsNotExist(err) {
 		t.Fatal("sealing must not touch the parent workspace")
 	}
-	if err := mgr.Settle(context.Background(), out.Output.ID(), shepherd.SettleSelect); err != nil {
+	if err := mgr.Settle(context.Background(), out.Output.ID(), goatherd.SettleSelect); err != nil {
 		t.Fatalf("caller settle: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "sealed.txt")); err != nil {
@@ -185,7 +185,7 @@ func TestReversible_AuthorityMerge(t *testing.T) {
 		OwnerID:     "run:am-1",
 		Disposition: DispositionAuthorityMerge,
 		NewSandbox:  worktreeFactory(t, repo),
-		Decision: func(_ context.Context, p shepherd.MergeProposal) error {
+		Decision: func(_ context.Context, p goatherd.MergeProposal) error {
 			sawChange = len(p.Changes) == 1
 			return nil
 		},
@@ -214,13 +214,13 @@ func TestReversible_AuthorityMergeDenied(t *testing.T) {
 		OwnerID:     "run:amd-1",
 		Disposition: DispositionAuthorityMerge,
 		NewSandbox:  worktreeFactory(t, repo),
-		Decision: func(_ context.Context, _ shepherd.MergeProposal) error {
+		Decision: func(_ context.Context, _ goatherd.MergeProposal) error {
 			return errors.New("denied by authority")
 		},
 	}, func(_ context.Context, rc *RunContext) (Result, error) {
 		return Result{}, writeIn(rc, "am.txt", "x")
 	})
-	var denied *shepherd.SupervisorDeniedError
+	var denied *goatherd.SupervisorDeniedError
 	if !errors.As(err, &denied) {
 		t.Fatalf("want *SupervisorDeniedError, got %v", err)
 	}
@@ -267,13 +267,13 @@ func TestReversible_MergeDeniedByReviewer(t *testing.T) {
 	_, err := Reversible(context.Background(), mgr, parent, Options{
 		OwnerID:    "run:review-1",
 		NewSandbox: worktreeFactory(t, repo),
-		Reviewer: func(shepherd.MergeProposal) error {
+		Reviewer: func(goatherd.MergeProposal) error {
 			return errors.New("denied by policy")
 		},
 	}, func(_ context.Context, rc *RunContext) (Result, error) {
 		return Result{}, writeIn(rc, "denied.txt", "x")
 	})
-	var denied *shepherd.SupervisorDeniedError
+	var denied *goatherd.SupervisorDeniedError
 	if !errors.As(err, &denied) {
 		t.Fatalf("want *SupervisorDeniedError, got %v", err)
 	}
@@ -330,7 +330,7 @@ func TestReversible_HandlerRunsConfined(t *testing.T) {
 
 func TestReversible_RecordsRunOperation(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	repo := gittest.NewTestRepo(t)
 	parent, err := mgr.Create("run:rec-main", git.NewLocalGitSandbox(repo))
 	if err != nil {
@@ -360,7 +360,7 @@ func TestReversible_RecordsRunOperation(t *testing.T) {
 
 func TestReversible_RecordsEvidence(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	repo := gittest.NewTestRepo(t)
 	parent, err := mgr.Create("run:ev-main", git.NewLocalGitSandbox(repo))
 	if err != nil {
@@ -470,7 +470,7 @@ func TestReversible_PlanDrivesConfinement(t *testing.T) {
 
 func TestReversible_RecordsPlanDigest(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	repo := gittest.NewTestRepo(t)
 	parent, err := mgr.Create("run:pd-main", git.NewLocalGitSandbox(repo))
 	if err != nil {
