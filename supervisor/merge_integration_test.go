@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
-	"github.com/buchenberg/shepherd-runtime-go/internal/rttest"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/git"
-	"github.com/buchenberg/shepherd-runtime-go/supervisor"
+	trace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	"github.com/buchenberg/goatherd-runtime/internal/gittest"
+	"github.com/buchenberg/goatherd-runtime/internal/rttest"
+	"github.com/buchenberg/goatherd-runtime/sandbox/git"
+	"github.com/buchenberg/goatherd-runtime/supervisor"
 )
 
 // withinDrafts mirrors the merge gate's drafts-prefix rule: prefix itself or
@@ -42,7 +42,7 @@ func fileExists(t *testing.T, dir, name string) bool {
 
 func TestSupervisor_ReviewMerge(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	repo := gittest.NewTestRepo(t)
 	parent, _ := mgr.Create("gate:rev-parent", git.NewLocalGitSandbox(repo))
 
@@ -50,7 +50,7 @@ func TestSupervisor_ReviewMerge(t *testing.T) {
 	sup.AddRule(supervisor.SupervisionRule{
 		Name: "drafts_only_merge_gate",
 		Match: func(e trace.EffectEvent) bool {
-			return e.SchemaRef == shepherd.SchemaMergeProposed
+			return e.SchemaRef == goatherd.SchemaMergeProposed
 		},
 		Action: func(e trace.EffectEvent) *supervisor.Intervention {
 			paths, _ := e.Payload["paths"].([]string)
@@ -68,7 +68,7 @@ func TestSupervisor_ReviewMerge(t *testing.T) {
 		},
 	})
 
-	reviewer := func(p shepherd.MergeProposal) error {
+	reviewer := func(p goatherd.MergeProposal) error {
 		if iv := sup.ReviewMerge(p.ChildScopeID, p); iv != nil && iv.Type == supervisor.InterventionDiscard {
 			return errors.New(fmt.Sprint(iv.Payload))
 		}
@@ -86,14 +86,14 @@ func TestSupervisor_ReviewMerge(t *testing.T) {
 	}
 
 	err = mgr.CommitMerge(context.Background(), child.ID(), reviewer)
-	var denied *shepherd.SupervisorDeniedError
+	var denied *goatherd.SupervisorDeniedError
 	if !errors.As(err, &denied) {
-		t.Fatalf("CommitMerge via ReviewMerge: err = %T (%v), want shepherd.SupervisorDeniedError", err, err)
+		t.Fatalf("CommitMerge via ReviewMerge: err = %T (%v), want goatherd.SupervisorDeniedError", err, err)
 	}
 	if !strings.Contains(denied.Error(), "drafts/") {
 		t.Errorf("denial text = %q, want the rule's payload as the reason", denied.Error())
 	}
-	if child.State() != shepherd.ScopeDiscarded {
+	if child.State() != goatherd.ScopeDiscarded {
 		t.Errorf("child state = %s, want discarded", child.State())
 	}
 	// A denial is causal-only: a shared-sandbox child's write is already in
@@ -105,9 +105,9 @@ func TestSupervisor_ReviewMerge(t *testing.T) {
 	}
 
 	// An in-prefix proposal produces no intervention (approval).
-	good := shepherd.MergeProposal{
+	good := goatherd.MergeProposal{
 		ChildScopeID: "scope:gate:rev-child",
-		Changes:      []shepherd.ProposedChange{{Path: "drafts/ok.txt", Kind: shepherd.ChangeCreate}},
+		Changes:      []goatherd.ProposedChange{{Path: "drafts/ok.txt", Kind: goatherd.ChangeCreate}},
 	}
 	if iv := sup.ReviewMerge(child.ID(), good); iv != nil {
 		t.Errorf("in-prefix proposal: intervention = %+v, want nil", iv)

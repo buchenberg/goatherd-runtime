@@ -1,10 +1,10 @@
-package shepherd
+package goatherd
 
 import (
 	"context"
 	"fmt"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
+	trace "github.com/buchenberg/goatherd-kernel"
 )
 
 // AppendFact appends a capture record on this scope's owner path and returns the

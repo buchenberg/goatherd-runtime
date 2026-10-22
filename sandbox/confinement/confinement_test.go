@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 )
 
 func TestResolveMay_DefaultPermissive(t *testing.T) {
@@ -59,10 +57,10 @@ func TestLowerGrants_ReadOnlyContributesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.WritableRoots) != 1 || spec.WritableRoots[0] != containment.Canonical(rw) {
-		t.Fatalf("writable roots = %v, want [%s]", spec.WritableRoots, containment.Canonical(rw))
+	if len(spec.WritableRoots) != 1 || spec.WritableRoots[0] != Canonical(rw) {
+		t.Fatalf("writable roots = %v, want [%s]", spec.WritableRoots, Canonical(rw))
 	}
-	if spec.Network.Mode != containment.NetDenyAll {
+	if spec.Network.Mode != NetDenyAll {
 		t.Fatalf("grant lowering must default to deny-all, got %q", spec.Network.Mode)
 	}
 }
@@ -118,21 +116,6 @@ func TestValidateDisjointRoots_UnicodeAliasRejected(t *testing.T) {
 	}
 }
 
-func TestPlacement_AutoResolves(t *testing.T) {
-	if paddock, err := ResolvePlacement(PlacementAuto, false); err != nil || paddock {
-		t.Fatalf("auto, unavailable = (%v, %v)", paddock, err)
-	}
-	if paddock, err := ResolvePlacement(PlacementAuto, true); err != nil || !paddock {
-		t.Fatalf("auto, available = (%v, %v)", paddock, err)
-	}
-	if _, err := ResolvePlacement(PlacementPaddock, false); !errors.Is(err, containment.ErrPaddockNotEstablished) {
-		t.Fatalf("paddock, unavailable must refuse, got %v", err)
-	}
-	if paddock, err := ResolvePlacement(PlacementAdvisory, true); err != nil || paddock {
-		t.Fatalf("advisory must never paddock, got (%v, %v)", paddock, err)
-	}
-}
-
 func TestDeclaration_MayAndGrants(t *testing.T) {
 	if d := MayDeclaration("ReadOnly", "m1"); d.May != "ReadOnly" || d.Match != "m1" || len(d.Grants) != 0 {
 		t.Fatalf("MayDeclaration = %+v", d)
@@ -176,7 +159,7 @@ func TestInstall_MayAndGrants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Confinement(): %v", err)
 	}
-	if len(spec2.WritableRoots) != 1 || spec2.WritableRoots[0] != containment.Canonical(rw) {
+	if len(spec2.WritableRoots) != 1 || spec2.WritableRoots[0] != Canonical(rw) {
 		t.Fatalf("grant paddock spec = %+v", spec2)
 	}
 }
@@ -190,7 +173,7 @@ func TestInstall_EmptyGrantsIsReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.WritableRoots) != 0 || spec.Network.Mode != containment.NetDenyAll {
+	if len(spec.WritableRoots) != 0 || spec.Network.Mode != NetDenyAll {
 		t.Fatalf("empty grants must lower to ReadOnly, got %+v", spec)
 	}
 }
@@ -219,20 +202,20 @@ func TestInstall_RefusesUnsupported(t *testing.T) {
 }
 
 func TestPermissionPlan_DigestStable(t *testing.T) {
-	p := PlanForSpec(containment.ReadOnlySpec(), "match-1")
+	p := PlanForSpec(ReadOnlySpec(), "match-1")
 	if p.Digest() != p.Digest() {
 		t.Fatal("digest must be stable")
 	}
 	if p.Fallback != "enforce" {
 		t.Fatalf("fallback = %q, want enforce", p.Fallback)
 	}
-	if PlanForSpec(containment.ReadOnlySpec(), "match-2").Digest() == p.Digest() {
+	if PlanForSpec(ReadOnlySpec(), "match-2").Digest() == p.Digest() {
 		t.Fatal("digest must change with the match digest")
 	}
 }
 
 func TestPermissionPlan_ConfinementIsThePaddockSpec(t *testing.T) {
-	want := containment.PermissiveFor(t.TempDir())
+	want := PermissiveFor(t.TempDir())
 	plan := PlanForSpec(want, "")
 	got, err := plan.Confinement()
 	if err != nil {
@@ -244,7 +227,7 @@ func TestPermissionPlan_ConfinementIsThePaddockSpec(t *testing.T) {
 }
 
 func TestMonitorAssignment_Present(t *testing.T) {
-	plan := PlanForSpec(containment.ReadOnlySpec(), "")
+	plan := PlanForSpec(ReadOnlySpec(), "")
 	paddock, ok := plan.Monitor(PaddockMonitor)
 	if !ok || paddock.Timing != TimingPreAction || paddock.Confinement == nil {
 		t.Fatalf("paddock assignment = %+v", paddock)
@@ -256,7 +239,7 @@ func TestMonitorAssignment_Present(t *testing.T) {
 }
 
 func TestValidatePlanEvidence(t *testing.T) {
-	p := PlanForSpec(containment.ReadOnlySpec(), "match-1")
+	p := PlanForSpec(ReadOnlySpec(), "match-1")
 	if err := ValidatePlanEvidence(p.Digest(), p, "", "match-1", ""); err != nil {
 		t.Fatalf("matching evidence should validate: %v", err)
 	}

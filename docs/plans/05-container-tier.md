@@ -134,7 +134,7 @@ live — **ahead** of the reference.
 
 ## 6. Phase 1 — Typed effect extraction
 
-New runtime package `shepherd-runtime-go/effect`:
+New runtime package `goatherd-runtime/effect`:
 
 ```go
 // ChangeEffect is one typed workspace change.
@@ -159,7 +159,7 @@ And an emitter that records + publishes:
 ```go
 // Emit appends each effect on the scope's owner path (caused by opID) and
 // publishes it on the bus for live supervision.
-func Emit(ctx context.Context, scope *shepherd.Scope, bus *trace.EffectBus, opID string, effects []ChangeEffect) error
+func Emit(ctx context.Context, scope *goatherd.Scope, bus *trace.EffectBus, opID string, effects []ChangeEffect) error
 ```
 
 Schemas are **runtime-level** (`shepherd.effect.file.*.v1`) — schema refs are
@@ -168,7 +168,7 @@ validated only for non-emptiness, so no kernel ABI change (the same pattern as
 
 ## 7. Phase 2 — The `copy` carrier
 
-`shepherd-runtime-go/sandbox/copy` — the universal, all-platform `Sandbox`
+`goatherd-runtime/sandbox/copy` — the universal, all-platform `Sandbox`
 backend (mirrors `_copy_carrier.py`): each scope is a plain recursive copy of its
 base; no CoW, no union mount, no kernel/FUSE, no privileges.
 

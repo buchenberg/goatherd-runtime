@@ -103,7 +103,7 @@ jobs:
       - name: module resolves from a clean consumer
         run: |
           set -euo pipefail
-          REPO_MODULE="github.com/buchenberg/shepherd-runtime-go"
+          REPO_MODULE="github.com/buchenberg/goatherd-runtime"
           tag="${GITHUB_REF_NAME}"
           # A root tag is `vX.Y.Z`; a nested module tags its subdirectory
           # (`<subdir>/vX.Y.Z`, module path `<repo-module>/<subdir>`). Split on

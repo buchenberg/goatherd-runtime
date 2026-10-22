@@ -18,22 +18,22 @@ import (
 	"sync"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
+	trace "github.com/buchenberg/goatherd-kernel"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // ErrUnsupported is returned by a Sandbox method whose capability is false
 // according to Capabilities. Callers should check Capabilities before calling
 // an optional method rather than relying on the error, but backends return it
 // so a misconfigured caller fails loudly instead of silently doing nothing.
-var ErrUnsupported = errors.New("shepherd: sandbox capability not supported")
+var ErrUnsupported = errors.New("goatherd: sandbox capability not supported")
 
 // ErrNoSandbox is returned when a workspace or checkpoint operation is
 // attempted on a scope that was created without a sandbox. Pure-causal scopes
 // (no filesystem) are valid; only workspace operations are rejected.
-var ErrNoSandbox = errors.New("shepherd: scope has no sandbox")
+var ErrNoSandbox = errors.New("goatherd: scope has no sandbox")
 
 // SandboxCapabilities declares what a backend supports and how its workspace
 // is contained. Callers use it to decide whether an optional operation is
@@ -88,10 +88,10 @@ type ExecRequest struct {
 	// value asks the backend for its default (Permissive over the workspace for
 	// the git backend). It carries the writable-root set, not raw roots, so the
 	// authority layer (package confinement) is the only producer of roots.
-	Confinement *containment.ConfinementSpec
+	Confinement *confinement.ConfinementSpec
 	// Placement selects where authority is enforced (paddock | advisory | auto).
 	// An empty value asks the backend for its configured default.
-	Placement confinement.Placement
+	Placement containment.Placement
 	// AuthorityMatch is the authority-surface digest the caller is enforcing
 	// (optional). It is folded into the run's authority evidence when confined.
 	AuthorityMatch string
@@ -260,7 +260,7 @@ type Addressed interface {
 // ErrUnknownSandboxBackend is the sentinel behind UnknownSandboxBackendError,
 // so callers can errors.Is(err, ErrUnknownSandboxBackend) without matching
 // strings.
-var ErrUnknownSandboxBackend = errors.New("shepherd: unknown sandbox backend")
+var ErrUnknownSandboxBackend = errors.New("goatherd: unknown sandbox backend")
 
 // UnknownSandboxBackendError names the backend that was asked for and the
 // backends that are actually registered, so a config typo fails with the
@@ -271,7 +271,7 @@ type UnknownSandboxBackendError struct {
 }
 
 func (e *UnknownSandboxBackendError) Error() string {
-	return fmt.Sprintf("shepherd: unknown sandbox backend %q (available: %s)",
+	return fmt.Sprintf("goatherd: unknown sandbox backend %q (available: %s)",
 		e.Backend, strings.Join(e.Available, ", "))
 }
 
@@ -303,15 +303,15 @@ type sandboxRegistry struct {
 
 func (r *sandboxRegistry) register(backend string, f SandboxFactory) {
 	if backend == "" {
-		panic("shepherd: RegisterSandbox called with an empty backend name")
+		panic("goatherd: RegisterSandbox called with an empty backend name")
 	}
 	if f == nil {
-		panic(fmt.Sprintf("shepherd: RegisterSandbox called with a nil factory for %q", backend))
+		panic(fmt.Sprintf("goatherd: RegisterSandbox called with a nil factory for %q", backend))
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, dup := r.factories[backend]; dup {
-		panic(fmt.Sprintf("shepherd: sandbox backend %q is already registered", backend))
+		panic(fmt.Sprintf("goatherd: sandbox backend %q is already registered", backend))
 	}
 	r.factories[backend] = f
 }
@@ -338,7 +338,7 @@ func (r *sandboxRegistry) open(backend string, cfg any) (Sandbox, error) {
 	// Create/Capture — far from the seam that exists to catch exactly
 	// this. Fail at the seam.
 	if sb == nil {
-		return nil, fmt.Errorf("shepherd: sandbox backend %q returned a nil sandbox without an error (misconfigured factory)", backend)
+		return nil, fmt.Errorf("goatherd: sandbox backend %q returned a nil sandbox without an error (misconfigured factory)", backend)
 	}
 	return sb, nil
 }

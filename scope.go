@@ -1,24 +1,24 @@
-package shepherd
+package goatherd
 
 import (
 	"context"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	sandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	trace "github.com/buchenberg/goatherd-kernel"
+	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"sync"
 )
 
 // Scope schema refs for trace recording.
 const (
-	SchemaScopeForked    = "shepherd.scope.forked.v1"
-	SchemaScopeMerged    = "shepherd.scope.merged.v1"
-	SchemaScopeDiscarded = "shepherd.scope.discarded.v1"
+	SchemaScopeForked    = "goatherd.scope.forked.v1"
+	SchemaScopeMerged    = "goatherd.scope.merged.v1"
+	SchemaScopeDiscarded = "goatherd.scope.discarded.v1"
 	// SchemaSupervisorInject is recorded by Scope.Inject — the supervisor
 	// vocabulary the scope itself writes; the supervisor component reads it.
-	SchemaSupervisorInject = "shepherd.supervisor.inject.v1"
+	SchemaSupervisorInject = "goatherd.supervisor.inject.v1"
 	// SchemaSupervisorHalt is recorded by Scope.Halt and scanned by recovery
 	// as a terminal state.
-	SchemaSupervisorHalt = "shepherd.supervisor.halt.v1"
+	SchemaSupervisorHalt = "goatherd.supervisor.halt.v1"
 )
 
 // ScopeState tracks the lifecycle of a scope.

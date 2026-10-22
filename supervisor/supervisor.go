@@ -2,7 +2,7 @@
 // observes the effect bus, decides interventions (inject, fork, discard,
 // halt, deny) through registered SupervisionRules, and acts on scopes
 // through the ScopeManager. The scope tree, the merge gate, and the
-// settlement surface live in the root shepherd package; this package owns
+// settlement surface live in the root goatherd package; this package owns
 // the rule engine only.
 package supervisor
 
@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	trace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 )
 
 // InterventionType identifies the kind of supervisor action.
@@ -54,7 +54,7 @@ type SupervisionRule struct {
 // The supervisor is stateless by default — rules that need state (error
 // rates, repetition tracking) maintain their own via closures.
 type Supervisor struct {
-	manager       *shepherd.ScopeManager
+	manager       *goatherd.ScopeManager
 	bus           *trace.EffectBus
 	rules         []SupervisionRule
 	interventions chan Intervention
@@ -70,7 +70,7 @@ type Supervisor struct {
 // returned channel.
 //
 // Call Close() to stop the supervisor's background goroutine.
-func NewSupervisor(manager *shepherd.ScopeManager, bus *trace.EffectBus) *Supervisor {
+func NewSupervisor(manager *goatherd.ScopeManager, bus *trace.EffectBus) *Supervisor {
 	return &Supervisor{
 		manager:       manager,
 		bus:           bus,
@@ -231,7 +231,7 @@ func (s *Supervisor) Halt(scopeID string) error {
 // InterventionDiscard or InterventionDeny.
 //
 // The proposal is presented to the rules as a synthetic effect event — Mode
-// Declaration, SchemaRef shepherd.merge.proposed.v1, KindLabel
+// Declaration, SchemaRef goatherd.merge.proposed.v1, KindLabel
 // "merge:proposed" — carrying the changed paths, so the same rule set that
 // watches tool calls can watch merges. This is the emitter that makes
 // InterventionDiscard reachable: before it, nothing in the kernel produced
@@ -239,7 +239,7 @@ func (s *Supervisor) Halt(scopeID string) error {
 //
 // The returned intervention is the rules' verdict only; acting on it is the
 // caller's decision, unlike Halt which executes immediately.
-func (s *Supervisor) ReviewMerge(scopeID string, proposal shepherd.MergeProposal) *Intervention {
+func (s *Supervisor) ReviewMerge(scopeID string, proposal goatherd.MergeProposal) *Intervention {
 	paths := make([]string, 0, len(proposal.Changes))
 	for _, c := range proposal.Changes {
 		paths = append(paths, c.Path)
@@ -248,7 +248,7 @@ func (s *Supervisor) ReviewMerge(scopeID string, proposal shepherd.MergeProposal
 	event := trace.EffectEvent{
 		TraceOwnerID: strings.TrimPrefix(proposal.ChildScopeID, "scope:"),
 		Mode:         trace.Declaration,
-		SchemaRef:    shepherd.SchemaMergeProposed,
+		SchemaRef:    goatherd.SchemaMergeProposed,
 		KindLabel:    "merge:proposed",
 		Payload: map[string]any{
 			"child_scope":     proposal.ChildScopeID,

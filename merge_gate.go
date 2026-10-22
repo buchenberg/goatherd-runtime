@@ -1,10 +1,10 @@
-package shepherd
+package goatherd
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go"
+	trace "github.com/buchenberg/goatherd-kernel"
 	"path"
 	"strings"
 )
@@ -13,10 +13,10 @@ import (
 const (
 	// SchemaMergeProposed is recorded on the child's owner path when a merge
 	// is proposed for review, before the reviewer runs.
-	SchemaMergeProposed = "shepherd.merge.proposed.v1"
+	SchemaMergeProposed = "goatherd.merge.proposed.v1"
 	// SchemaSupervisorDecision records the review outcome on the parent's
 	// owner path, citing the proposed record as its causal parent.
-	SchemaSupervisorDecision = "shepherd.supervisor.decision.v1"
+	SchemaSupervisorDecision = "goatherd.supervisor.decision.v1"
 )
 
 // DefaultProposalDiffLines bounds the diff a CommitMerge proposal carries
@@ -74,13 +74,13 @@ type SupervisorDeniedError struct {
 
 func (e *SupervisorDeniedError) Error() string {
 	if len(e.Changes) == 0 {
-		return fmt.Sprintf("shepherd: merge review denied: %s", e.Reason)
+		return fmt.Sprintf("goatherd: merge review denied: %s", e.Reason)
 	}
 	paths := make([]string, 0, len(e.Changes))
 	for _, c := range e.Changes {
 		paths = append(paths, c.Path)
 	}
-	return fmt.Sprintf("shepherd: merge review denied: %s (changed paths: %s)",
+	return fmt.Sprintf("goatherd: merge review denied: %s (changed paths: %s)",
 		e.Reason, strings.Join(paths, ", "))
 }
 
@@ -142,11 +142,11 @@ func (m *ScopeManager) ProposeMerge(ctx context.Context, childID string, maxDiff
 //
 //  1. ProposeMerge builds the proposal from the child's current workspace
 //     diffed against the fork baseline.
-//  2. A shepherd.merge.proposed.v1 capture is recorded on the child's owner
+//  2. A goatherd.merge.proposed.v1 capture is recorded on the child's owner
 //     path (change paths, kinds, count, and the diff digest — never the diff
 //     body).
 //  3. review(proposal) decides.
-//  4. Approval records shepherd.supervisor.decision.v1 {approved: true} on
+//  4. Approval records goatherd.supervisor.decision.v1 {approved: true} on
 //     the parent's path and merges the child (the plain, ungated Merge).
 //     Denial records the decision with the reason, discards the child —
 //     never merges — and returns *SupervisorDeniedError.

@@ -1,4 +1,4 @@
-package shepherd_test
+package goatherd_test
 
 import (
 	"context"
@@ -9,13 +9,13 @@ import (
 	"strings"
 	"testing"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	"github.com/buchenberg/shepherd-runtime-go/internal/gittest"
-	"github.com/buchenberg/shepherd-runtime-go/internal/rttest"
-	sandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/git"
-	"github.com/buchenberg/shepherd-runtime-go/supervisor"
+	trace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	"github.com/buchenberg/goatherd-runtime/internal/gittest"
+	"github.com/buchenberg/goatherd-runtime/internal/rttest"
+	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/sandbox/git"
+	"github.com/buchenberg/goatherd-runtime/supervisor"
 )
 
 // The three workspace-handle recipes from the reference (plan 04 §3), as
@@ -32,7 +32,7 @@ import (
 // Local copy of the root package's test helper: this file is the external
 // test package, and shared helpers that touch runtime types cannot live in
 // rttest without an import cycle.
-func forkWorktreeChild(t *testing.T, mgr *shepherd.ScopeManager, parentID, childOwner, repo, leaf string) (*shepherd.Scope, string) {
+func forkWorktreeChild(t *testing.T, mgr *goatherd.ScopeManager, parentID, childOwner, repo, leaf string) (*goatherd.Scope, string) {
 	t.Helper()
 	wtPath := filepath.Join(t.TempDir(), leaf)
 	sb := git.NewWorktreeSandbox(repo, wtPath)
@@ -84,7 +84,7 @@ func fileExistsT(t *testing.T, dir, name string) bool {
 
 func TestExample_BestOfN(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	repo := gittest.NewTestRepo(t)
 	ctx := context.Background()
 	parent, err := mgr.Create("bestofn", git.NewLocalGitSandbox(repo))
@@ -93,8 +93,8 @@ func TestExample_BestOfN(t *testing.T) {
 	}
 
 	const attempts = 3
-	outs := make([]*shepherd.RetainedOutput, 0, attempts)
-	var children []*shepherd.Scope
+	outs := make([]*goatherd.RetainedOutput, 0, attempts)
+	var children []*goatherd.Scope
 	for i := 0; i < attempts; i++ {
 		child, wtPath := forkWorktreeChild(t, mgr, parent.ID(),
 			fmt.Sprintf("bestofn:c%d", i), repo, fmt.Sprintf("wt-%d", i))
@@ -118,14 +118,14 @@ func TestExample_BestOfN(t *testing.T) {
 	}
 
 	// Choose attempt 1: select its output, discard the losers.
-	if err := mgr.Settle(ctx, outs[1].ID(), shepherd.SettleSelect); err != nil {
+	if err := mgr.Settle(ctx, outs[1].ID(), goatherd.SettleSelect); err != nil {
 		t.Fatalf("select winner: %v", err)
 	}
 	for i, out := range outs {
 		if i == 1 {
 			continue
 		}
-		if err := mgr.Settle(ctx, out.ID(), shepherd.SettleDiscard); err != nil {
+		if err := mgr.Settle(ctx, out.ID(), goatherd.SettleDiscard); err != nil {
 			t.Fatalf("discard loser %d: %v", i, err)
 		}
 	}
@@ -138,17 +138,17 @@ func TestExample_BestOfN(t *testing.T) {
 		if fileExistsT(t, repo, fmt.Sprintf("result-%d.txt", i)) {
 			t.Errorf("loser %d leaked into the parent workspace", i)
 		}
-		if children[i].State() != shepherd.ScopeDiscarded {
+		if children[i].State() != goatherd.ScopeDiscarded {
 			t.Errorf("loser %d state = %s, want discarded", i, children[i].State())
 		}
 	}
-	if children[1].State() != shepherd.ScopeMerged {
+	if children[1].State() != goatherd.ScopeMerged {
 		t.Errorf("winner state = %s, want merged", children[1].State())
 	}
 
 	// Consume-once: the winner cannot be settled again.
-	if err := mgr.Settle(ctx, outs[1].ID(), shepherd.SettleSelect); !errors.Is(err, shepherd.ErrOutputConsumed) {
-		t.Errorf("second settle of winner: %v, want shepherd.ErrOutputConsumed", err)
+	if err := mgr.Settle(ctx, outs[1].ID(), goatherd.SettleSelect); !errors.Is(err, goatherd.ErrOutputConsumed) {
+		t.Errorf("second settle of winner: %v, want goatherd.ErrOutputConsumed", err)
 	}
 }
 
@@ -158,7 +158,7 @@ func TestExample_BestOfN(t *testing.T) {
 // merge gate's commit deny appear in one flow.
 func TestExample_RetryUntilAcceptable(t *testing.T) {
 	store := rttest.NewMemStore(t)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	repo := gittest.NewTestRepo(t)
 	ctx := context.Background()
 	parent, err := mgr.Create("retry", git.NewLocalGitSandbox(repo))
@@ -167,16 +167,16 @@ func TestExample_RetryUntilAcceptable(t *testing.T) {
 	}
 
 	// The supervision surface: supervisor.DestructiveToolGuard denies calls before
-	// execution; shepherd.DraftsOnlyReviewer denies merges at commit time.
+	// execution; goatherd.DraftsOnlyReviewer denies merges at commit time.
 	sup := supervisor.NewSupervisor(mgr, nil)
 	sup.AddRule(supervisor.DestructiveToolGuard())
-	reviewer := shepherd.DraftsOnlyReviewer("out")
+	reviewer := goatherd.DraftsOnlyReviewer("out")
 
 	const maxAttempts = 3
 	denied := 0
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		// shepherd.Checkpoint before the attempt: a denial's rollback is the caller's
+		// goatherd.Checkpoint before the attempt: a denial's rollback is the caller's
 		// restore of the shared workspace.
 		cp, err := mgr.CreateCheckpoint(ctx, parent.ID(), []byte("conversation"))
 		if err != nil {
@@ -222,7 +222,7 @@ func TestExample_RetryUntilAcceptable(t *testing.T) {
 		}
 
 		lastErr = mgr.CommitMerge(ctx, child.ID(), reviewer)
-		var deniedErr *shepherd.SupervisorDeniedError
+		var deniedErr *goatherd.SupervisorDeniedError
 		if errors.As(lastErr, &deniedErr) {
 			denied++
 			// Deny → child discarded (CommitMerge does it); the caller
@@ -256,7 +256,7 @@ func TestExample_RetryUntilAcceptable(t *testing.T) {
 
 	// The trace carries the whole story: one denied decision per failed
 	// attempt, one approval.
-	decisions := findRecords(t, store, "retry", shepherd.SchemaSupervisorDecision)
+	decisions := findRecords(t, store, "retry", goatherd.SchemaSupervisorDecision)
 	if len(decisions) != maxAttempts {
 		t.Fatalf("decision records: %d, want %d", len(decisions), maxAttempts)
 	}
@@ -274,11 +274,11 @@ func TestExample_RetryUntilAcceptable(t *testing.T) {
 }
 
 // TestExample_ApplyOntoMovedWorkspace: seal a child output; the parent
-// advances on disjoint paths and shepherd.SettleApply succeeds; a second output
+// advances on disjoint paths and goatherd.SettleApply succeeds; a second output
 // overlapping the parent's concurrent change is refused with
-// shepherd.ErrApplyConflict and stays unconsumed.
+// goatherd.ErrApplyConflict and stays unconsumed.
 func TestExample_ApplyOntoMovedWorkspace(t *testing.T) {
-	mgr := shepherd.NewScopeManager(rttest.NewMemStore(t))
+	mgr := goatherd.NewScopeManager(rttest.NewMemStore(t))
 	repo := gittest.NewTestRepo(t)
 	ctx := context.Background()
 	parent, err := mgr.Create("moved", git.NewLocalGitSandbox(repo))
@@ -319,7 +319,7 @@ func TestExample_ApplyOntoMovedWorkspace(t *testing.T) {
 	gittest.MustGit(t, repo, "commit", "-m", "parent advances")
 
 	// Disjoint output applies onto the moved workspace.
-	if err := mgr.Settle(ctx, out1.ID(), shepherd.SettleApply); err != nil {
+	if err := mgr.Settle(ctx, out1.ID(), goatherd.SettleApply); err != nil {
 		t.Fatalf("apply disjoint output onto moved parent: %v", err)
 	}
 	if got := readRepoFile(t, repo, "feature.txt"); got != "feature" {
@@ -330,14 +330,14 @@ func TestExample_ApplyOntoMovedWorkspace(t *testing.T) {
 	}
 
 	// Overlapping output is refused without consuming.
-	err = mgr.Settle(ctx, out2.ID(), shepherd.SettleApply)
-	if !errors.Is(err, shepherd.ErrApplyConflict) {
-		t.Fatalf("overlapping apply: %v, want shepherd.ErrApplyConflict", err)
+	err = mgr.Settle(ctx, out2.ID(), goatherd.SettleApply)
+	if !errors.Is(err, goatherd.ErrApplyConflict) {
+		t.Fatalf("overlapping apply: %v, want goatherd.ErrApplyConflict", err)
 	}
 	if !strings.Contains(err.Error(), "shared.txt") {
 		t.Errorf("conflict text = %q, want it to name shared.txt", err.Error())
 	}
-	if out2.State() != shepherd.OutputUnconsumed {
+	if out2.State() != goatherd.OutputUnconsumed {
 		t.Errorf("conflicting output state = %s, want unconsumed", out2.State())
 	}
 	if got := readRepoFile(t, repo, "shared.txt"); got != "parent's edit" {
@@ -345,7 +345,7 @@ func TestExample_ApplyOntoMovedWorkspace(t *testing.T) {
 	}
 
 	// Clean up the refused output's scope.
-	if err := mgr.Settle(ctx, out2.ID(), shepherd.SettleDiscard); err != nil {
+	if err := mgr.Settle(ctx, out2.ID(), goatherd.SettleDiscard); err != nil {
 		t.Fatalf("discard refused output: %v", err)
 	}
 }

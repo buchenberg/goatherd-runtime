@@ -1,9 +1,14 @@
-package containment
+package confinement
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 )
+
+// ErrUnsupportedConfinementSpec is a spec with no faithful lowering on this
+// host's enforcement surface.
+var ErrUnsupportedConfinementSpec = errors.New("confinement: spec has no faithful lowering on this host")
 
 // NetMode is the coarse network axis of a confinement spec.
 type NetMode string

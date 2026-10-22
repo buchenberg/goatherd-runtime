@@ -1,4 +1,4 @@
-package shepherd
+package goatherd
 
 // Backend-agnostic TraceStore conformance suite (T1.7, plan 01 §5).
 //
@@ -32,7 +32,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	trace "github.com/buchenberg/shepherd-kernel-go"
+	trace "github.com/buchenberg/goatherd-kernel"
 	"path/filepath"
 	"strings"
 	"testing"

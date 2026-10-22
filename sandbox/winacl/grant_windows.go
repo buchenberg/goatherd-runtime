@@ -28,7 +28,7 @@ func lockFilePath(path string) (string, error) {
 		return "", fmt.Errorf("winacl: no temp directory for the grant lock")
 	}
 	digest := sha256.Sum256([]byte(strings.ToLower(path)))
-	return filepath.Join(temp, "shepherd-winacl-locks", fmt.Sprintf("%x.lock", digest[:8])), nil
+	return filepath.Join(temp, "goatherd-winacl-locks", fmt.Sprintf("%x.lock", digest[:8])), nil
 }
 
 // withPathLock runs action holding the exclusive lock for path.

@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
+	trace "github.com/buchenberg/goatherd-kernel"
 )
 
 // trustedHandlesReadContext mirrors Python's TRUSTED_READ_CONTEXT.

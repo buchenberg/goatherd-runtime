@@ -1,5 +1,5 @@
 # Binaries
-/shepherd-runtime-go
+/goatherd-runtime
 *.exe
 
 # Test binary

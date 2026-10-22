@@ -1,10 +1,10 @@
-package shepherd
+package goatherd
 
 import (
 	"context"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	sandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	trace "github.com/buchenberg/goatherd-kernel"
+	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"log/slog"
 	"sort"
 	"sync"

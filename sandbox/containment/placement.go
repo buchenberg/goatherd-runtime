@@ -1,9 +1,7 @@
-package confinement
+package containment
 
 import (
 	"fmt"
-
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 )
 
 // Placement is where authority is enforced for a run.
@@ -25,7 +23,7 @@ func ResolvePlacement(p Placement, available bool) (paddock bool, err error) {
 	switch p {
 	case PlacementPaddock:
 		if !available {
-			return false, fmt.Errorf("%w: placement=paddock requires a paddock-capable backend, none available", containment.ErrPaddockNotEstablished)
+			return false, fmt.Errorf("%w: placement=paddock requires a paddock-capable backend, none available", ErrPaddockNotEstablished)
 		}
 		return true, nil
 	case PlacementAdvisory:
@@ -33,6 +31,6 @@ func ResolvePlacement(p Placement, available bool) (paddock bool, err error) {
 	case PlacementAuto:
 		return available, nil
 	default:
-		return false, fmt.Errorf("confinement: unknown placement %q", p)
+		return false, fmt.Errorf("containment: unknown placement %q", p)
 	}
 }

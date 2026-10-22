@@ -20,10 +20,10 @@ import (
 	"strings"
 	"time"
 
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	sbx "github.com/buchenberg/shepherd-runtime-go/sandbox"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	trace "github.com/buchenberg/goatherd-kernel"
+	sbx "github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // gitTimeout bounds each git subprocess. A hung git process (e.g. waiting on a
@@ -131,7 +131,7 @@ func indexEnv(path string) []string {
 //
 // Returns the scratch index path and a cleanup func the caller must always call.
 func (g *gitRunner) stagedIndex(ctx context.Context) (string, func(), error) {
-	dir, err := os.MkdirTemp("", "shepherd-index-*")
+	dir, err := os.MkdirTemp("", "goatherd-index-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create scratch index dir: %w", err)
 	}
@@ -244,7 +244,7 @@ type GitSandbox struct {
 	// unsupported). placement is the default placement when a request names
 	// none. Both are set by WithExec.
 	confiner  containment.Backend
-	placement confinement.Placement
+	placement containment.Placement
 }
 
 // Option configures a GitSandbox at construction.
@@ -255,7 +255,7 @@ type Option func(*GitSandbox)
 // Capabilities reports Exec=false. The caller supplies the backend (e.g. the
 // landlock nested module) so this package depends on the contract, not on any
 // particular isolation technology.
-func WithExec(b containment.Backend, p confinement.Placement) Option {
+func WithExec(b containment.Backend, p containment.Placement) Option {
 	return func(g *GitSandbox) {
 		g.confiner = b
 		g.placement = p
@@ -357,7 +357,7 @@ func (g *GitSandbox) Capabilities() sbx.SandboxCapabilities {
 	}
 	execEnabled := g.confiner != nil
 	if execEnabled {
-		if ok, _ := g.confiner.Available(); ok && g.placement != confinement.PlacementAdvisory {
+		if ok, _ := g.confiner.Available(); ok && g.placement != containment.PlacementAdvisory {
 			containmentLevel = trace.ContainContained
 		}
 	}
@@ -754,18 +754,18 @@ func (g *GitSandbox) Exec(ctx context.Context, req sbx.ExecRequest) (sbx.ExecRes
 		placement = g.placement
 	}
 	if placement == "" {
-		placement = confinement.PlacementAuto
+		placement = containment.PlacementAuto
 	}
 	available := false
 	if ok, _ := g.confiner.Available(); ok {
 		available = true
 	}
-	paddock, err := confinement.ResolvePlacement(placement, available)
+	paddock, err := containment.ResolvePlacement(placement, available)
 	if err != nil {
 		return sbx.ExecResult{}, err
 	}
 
-	spec := containment.PermissiveFor(workDir)
+	spec := confinement.PermissiveFor(workDir)
 	if req.Confinement != nil {
 		spec = *req.Confinement
 	}
@@ -1189,7 +1189,7 @@ func (g *GitSandbox) AnnotateDeltaBase(ctx context.Context, delta *trace.Workspa
 // collection traverses refs and the index, not SQLite — an explicit
 // `git gc` between Seal and Settle could otherwise prune the very objects a
 // settlement needs.
-const stateRefPrefix = "refs/shepherd/states/"
+const stateRefPrefix = "refs/goatherd/states/"
 
 // pinTree anchors a recorded state tree with a ref keyed by the tree's own
 // SHA, so identical content shares one pin and re-pinning is idempotent.

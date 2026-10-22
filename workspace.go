@@ -1,19 +1,19 @@
-package shepherd
+package goatherd
 
 import (
 	"context"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go"
-	sandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	trace "github.com/buchenberg/goatherd-kernel"
+	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"log/slog"
 )
 
 // Workspace schema refs for trace recording. These replace the git-specific
-// shepherd.tree.* schemas: the payload is backend-neutral and carries a state
+// goatherd.tree.* schemas: the payload is backend-neutral and carries a state
 // digest rather than stash/head SHAs.
 const (
-	SchemaWorkspaceCaptured = "shepherd.workspace.captured.v1"
-	SchemaWorkspaceApplied  = "shepherd.workspace.applied.v1"
+	SchemaWorkspaceCaptured = "goatherd.workspace.captured.v1"
+	SchemaWorkspaceApplied  = "goatherd.workspace.applied.v1"
 )
 
 // CaptureWorkspace records the scope's current workspace state as a reusable

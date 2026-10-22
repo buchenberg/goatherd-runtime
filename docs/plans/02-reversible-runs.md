@@ -103,7 +103,7 @@ recorded-operation boundary + evidence persistence, the dispositions
 
 ### 5.1 Where it lives
 
-A new package `github.com/buchenberg/shepherd-runtime-go/run`, importing the root
+A new package `github.com/buchenberg/goatherd-runtime/run`, importing the root
 `shepherd` package (Scope/ScopeManager), `sandbox`, `sandbox/containment`,
 `sandbox/confinement`. The root hub stays lean; `run` is the orchestration seam
 Python puts in `_vcscore_runtime`.
@@ -165,14 +165,14 @@ type Options struct {
     Placement     confinement.Placement         // default PlacementAuto
     Confinement   *containment.ConfinementSpec  // nil ⇒ PermissiveFor(workdir)
     MatchDigest   string                        // authority-surface digest for evidence
-    Reviewer      shepherd.MergeReviewer        // merge disposition
+    Reviewer      goatherd.MergeReviewer        // merge disposition
     NewSandbox    func(runID string) (sandbox.Sandbox, error) // required for reversible runs
     Snapshot      any
     MaxDiffLines  int
 }
 
 type RunContext struct {
-    Scope      *shepherd.Scope
+    Scope      *goatherd.Scope
     Capability containment.Capability
 }
 
@@ -182,14 +182,14 @@ type Result struct {
 }
 
 type Outcome struct {
-    Scope       *shepherd.Scope
-    Output      *shepherd.RetainedOutput // DispositionSeal
+    Scope       *goatherd.Scope
+    Output      *goatherd.RetainedOutput // DispositionSeal
     Result      Result
     Isolation   string                   // "isolated" | "ground"
     Disposition Disposition
 }
 
-func Reversible(ctx context.Context, mgr *shepherd.ScopeManager, parent *shepherd.Scope,
+func Reversible(ctx context.Context, mgr *goatherd.ScopeManager, parent *goatherd.Scope,
     opts Options, handler Handler) (Outcome, error)
 
 type Handler func(ctx context.Context, rc *RunContext) (Result, error)
@@ -325,7 +325,7 @@ first) → Phase 3 (recorded operation + evidence) → Phase 5 (tests throughout
 
 ## 13. Decisions (resolved by the implementation)
 
-1. **Package** — ✅ **`run`** (`github.com/buchenberg/shepherd-runtime-go/run`).
+1. **Package** — ✅ **`run`** (`github.com/buchenberg/goatherd-runtime/run`).
    Keeps the root hub lean; the wrap is orchestration.
 2. **Recorded-operation shape** — ✅ **runtime-level record, no kernel change**:
    `shepherd.run.executed.v1` appended via `(*Scope).AppendFact` (schema refs are
