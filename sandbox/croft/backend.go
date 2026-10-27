@@ -1,41 +1,5 @@
-// Package croft is the containerd sandbox backend: it puts
-// github.com/buchenberg/goatherd-croft behind the sandbox package's registry
-// seam as backend "containerd", so a container workspace is addressable
-// through OpenSandbox exactly like the git backend is.
-//
-// Croft is a *world* (the substrate axis — a sibling of sandbox/git), not a
-// *paddock* (the authority axis, containment.Backend, where landlock and
-// winacl live). The container boundary — namespaces, cgroups, an unshared
-// network namespace — is what encloses the work, so this backend reports
-// ContainContained and never a syscall-tier claim. Do not layer Landlock
-// inside the container: a container seccomp profile may block the Landlock
-// syscalls outright, and under namespaces it would be redundant.
-//
-// This is a nested module so the runtime core keeps its "kernel + stdlib"
-// dependency footprint: only this module pulls containerd v2 and the OCI
-// tree. It is the Go analogue of the Shepherd reference keeping its remote
-// sandbox backends in an optional, lazily-imported package.
-//
-// # Digest stability — a known, recorded gap
-//
-// sandbox.Sandbox.Capture requires that two captures of identical content at
-// an unchanged timeline position produce equal WorkspaceState digests, because
-// settlement's select precondition compares digests as content equality.
-//
-// This backend does NOT satisfy that, and cannot until goatherd-croft ships
-// content-derived state identity (croft bead croft-dlb: a no-change capture
-// fast path plus an exposed ContentDigest). Croft states are sequence-keyed —
-// Capture unconditionally commits a fresh layer and mints a new SnapshotKey,
-// even when the active layer is unchanged. Hashing the state's fields does not
-// help: the inputs themselves differ on every capture, so any hash of them
-// differs too. croft-broker's four-field sha256 is a stable *name* for a given
-// state, not content equality, and is deliberately not reproduced here.
-//
-// The gap is safe today only because settlement never sees a container state:
-// yaah gates retained outputs on `sessionSandbox == nil`, so a container
-// session produces none. Enabling retained outputs in container mode requires
-// croft-dlb first. Per the Capture contract's own instruction, the gap is
-// recorded here rather than papered over.
+//go:build linux
+
 package croft
 
 import (
@@ -43,105 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"time"
 
 	trace "github.com/buchenberg/goatherd-kernel"
 	sbx "github.com/buchenberg/goatherd-runtime/sandbox"
 
 	croftlib "github.com/buchenberg/goatherd-croft"
 )
-
-// BackendName is the registry key this backend answers to, and the value
-// stamped into every trace.WorkspaceState it produces. The kernel's WorkspaceState
-// doc names "containerd" as the container backend's identifier, and Apply
-// rejects a state carrying a different one.
-const BackendName = "containerd"
-
-// Config configures the containerd backend. It is adapter-owned and mirrors
-// the croft essentials field-for-field so a host never imports croft types —
-// the same reason GitSandboxConfig exists for the git backend.
-type Config struct {
-	// Address is the containerd socket or endpoint. Empty uses containerd's
-	// own default resolution.
-	Address string
-	// Namespace isolates this backend's containers and snapshots from other
-	// containerd users on the same daemon.
-	Namespace string
-	// Image is the base image the workspace is provisioned from. Required:
-	// a container with no rootfs has nothing to run.
-	Image string
-	// Runtime is the OCI runtime name, for example "io.containerd.runc.v2".
-	// Empty uses containerd's default.
-	Runtime string
-	// Snapshotter selects the containerd snapshotter plugin. Empty uses
-	// "overlayfs". Other snapshotters differ in commit semantics, so the
-	// default is not assumed silently — it is croft's documented default.
-	Snapshotter string
-	// InitArgs is the long-lived command keeping the container up between
-	// execs. Empty uses croft's `/bin/sh -c "sleep infinity"`, which needs a
-	// shell in the image.
-	InitArgs []string
-	// Workdir is the workspace path inside the container; relative file paths
-	// and commands resolve against it. Empty defaults to "/workspace".
-	//
-	// This governs the workspace root. sbx.SandboxSpec.Workdir is ignored by
-	// Create, per that field's contract ("ignored by backends that infer their
-	// own") — the container's root is fixed at construction, not per call.
-	Workdir string
-	// WriteChunkBytes bounds how much file content one WriteFile exec carries
-	// before base64 expansion. Empty uses croft's default.
-	WriteChunkBytes int
-	// MaxOutputBytes caps each of an exec's stdout and stderr in memory,
-	// applied per stream. Zero or negative means unbounded. Data transport
-	// (ReadFile, diff readers) stays lossless regardless.
-	MaxOutputBytes int
-	// FIFODir is where the containerd *client* creates the stdio FIFOs for an
-	// exec. containerd's default is root-owned, so an unprivileged caller must
-	// set this to a directory it can write to.
-	FIFODir string
-	// Limits bounds the container's CPU, memory and process count. Nil means
-	// unbounded. Fixed at construction: decide limits before New.
-	Limits *Limits
-	// Network is the workspace's network posture. "" or "none" keeps the
-	// container's own unshared namespace — loopback only, no egress, DNS fails
-	// fast, which is the default and the container lane's egress answer.
-	// "host" is the explicit opt-in that shares the daemon host's network.
-	// Unknown values are rejected by croft at every generation-starting entry.
-	Network string
-	// Secrets are host files bind-mounted read-only into the container. A
-	// token arrives as a file, never in argv or the process environment.
-	Secrets []SecretMount
-	// StagingDir is a host directory enabling argv-free writes: when set,
-	// WriteFile stages through it and moves the payload into place inside the
-	// container, so content appears in no argv. When unset, WriteFile keeps
-	// croft's documented base64-in-argv posture.
-	StagingDir string
-}
-
-// Limits bounds a container's resources, mapped onto the OCI runtime spec's
-// Linux resources (cgroup v2 on a modern daemon). Zero-valued fields are left
-// unset, so partial limits compose with the image and runtime defaults.
-type Limits struct {
-	// CPUShares is the relative CPU weight against other containers.
-	CPUShares uint64
-	// CPUQuota caps CPU bandwidth: at most CPUQuota microseconds of CPU time
-	// per scheduling period (typically 100ms, so 50000 is half a CPU).
-	CPUQuota int64
-	// MemoryBytes is the cgroup v2 memory.max limit. Swap is accounted
-	// separately and left at the runtime default.
-	MemoryBytes int64
-	// Pids caps the process count in the container's cgroup — the fork-bomb
-	// fairness bound.
-	Pids int64
-}
-
-// SecretMount binds a host file read-only into the container.
-type SecretMount struct {
-	// Source is an absolute path on the daemon host.
-	Source string
-	// Destination is the absolute in-container path.
-	Destination string
-}
 
 // Sandbox is a container workspace behind the runtime's Sandbox seam. It owns
 // no filesystem state of its own: every operation delegates to the croft
@@ -394,14 +265,4 @@ func init() {
 		}
 		return New(c)
 	})
-}
-
-// deadlineCtx bounds an operation by timeout when one is given, and is a
-// pass-through otherwise. Shared by Create and Exec so both apply the same
-// rule.
-func deadlineCtx(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout <= 0 {
-		return ctx, func() {}
-	}
-	return context.WithTimeout(ctx, timeout)
 }
