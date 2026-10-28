@@ -58,8 +58,11 @@ func TestSandbox_EffectChanges_MapsEveryKind(t *testing.T) {
 			t.Errorf("change %d = (%q, %q), want (%q, %q)", i, got[i].Path, got[i].Kind, w.path, w.kind)
 		}
 	}
-	// croft hands back changes sorted by Path and a caller correlates them
-	// against a diff, so the order must survive the translation.
+	// This pins that the *translation* preserves order: the fake returns the
+	// slice above verbatim, so reordering inside toEffectChanges would put
+	// gone.txt first and fail here. It does not pin croft's own sorting — that
+	// is croft's documented contract ("Changes are sorted by Path") and is
+	// tested there, not something this seam can or should re-verify.
 	if got[0].Path != "new.txt" || got[2].Path != "gone.txt" {
 		t.Errorf("ordering not preserved: %q … %q", got[0].Path, got[2].Path)
 	}
@@ -85,6 +88,11 @@ func TestSandbox_EffectChanges_CarriesMetadata(t *testing.T) {
 	got, err := s.EffectChanges(ctx, ws)
 	if err != nil {
 		t.Fatalf("EffectChanges: %v", err)
+	}
+	// Guard the length before indexing, so a regression that drops the change
+	// reports what happened instead of panicking with index-out-of-range.
+	if len(got) != 1 {
+		t.Fatalf("got %d changes, want 1: %+v", len(got), got)
 	}
 	if got[0].Mode != fs.ModeSetuid|0o755 {
 		t.Errorf("Mode = %v, want the setuid executable bit preserved", got[0].Mode)
@@ -115,8 +123,13 @@ func TestSandbox_EffectChanges_DeletedSymlinkKeepsItsTypeBit(t *testing.T) {
 	}
 
 	fake.mu.Lock()
+	// Croft's documented shape for a deleted symlink: the ModeSymlink type bit
+	// set and the permission bits left at zero. The fixture uses that shape
+	// rather than a plausible-looking 0o777, so the assertions below check the
+	// real thing — with permission bits present, a regression that dropped them
+	// would still pass.
 	fake.changes = []croftlib.Change{
-		{Path: "link", Kind: croftlib.ChangeDelete, Mode: fs.ModeSymlink | 0o777},
+		{Path: "link", Kind: croftlib.ChangeDelete, Mode: fs.ModeSymlink},
 		{Path: "file", Kind: croftlib.ChangeDelete},
 	}
 	fake.mu.Unlock()
@@ -125,11 +138,22 @@ func TestSandbox_EffectChanges_DeletedSymlinkKeepsItsTypeBit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EffectChanges: %v", err)
 	}
+	if len(got) != 2 {
+		t.Fatalf("got %d changes, want 2: %+v", len(got), got)
+	}
 	if got[0].Mode&fs.ModeSymlink == 0 {
 		t.Errorf("the deleted symlink lost its ModeSymlink bit: mode = %v", got[0].Mode)
 	}
 	if got[1].Mode&fs.ModeSymlink != 0 {
 		t.Errorf("the deleted regular file gained a symlink bit: mode = %v", got[1].Mode)
+	}
+	// The type bit must survive without permission bits being invented for it:
+	// a delete has no mode to report, and fabricating one would put a number in
+	// the trace that never existed on disk.
+	for i, c := range got {
+		if c.Mode.Perm() != 0 {
+			t.Errorf("change %d (%s) has permission bits %v on a delete, want zero", i, c.Path, c.Mode.Perm())
+		}
 	}
 }
 

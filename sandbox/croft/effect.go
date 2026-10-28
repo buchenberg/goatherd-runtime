@@ -53,10 +53,16 @@ func (s *Sandbox) EffectChanges(ctx context.Context, ws trace.WorkspaceState) ([
 // toEffectChanges translates croft's classified change set into the runtime's
 // neutral vocabulary.
 //
-// croft hands back changes sorted by Path and workspace-relative with slash
-// separators, which is exactly what effect.Change documents, so paths pass
-// through untouched and the ordering a caller correlates against a diff is
-// preserved.
+// Paths pass through untouched: croft already reports them workspace-relative
+// and slash-separated, which is what effect.Change documents.
+//
+// Ordering is inherited, not enforced, and that distinction is worth stating
+// because a caller depends on it. Croft's Change doc says "Changes are sorted by
+// Path"; this function copies that order verbatim, so anyone correlating effects
+// against a diff is relying on croft's contract rather than on a guarantee made
+// here. Re-sorting would duplicate a guarantee croft already makes and would
+// mask the contract change that actually matters, so the dependency is recorded
+// instead of papered over.
 func toEffectChanges(changes []croftlib.Change) ([]effect.Change, error) {
 	out := make([]effect.Change, 0, len(changes))
 	for _, c := range changes {
