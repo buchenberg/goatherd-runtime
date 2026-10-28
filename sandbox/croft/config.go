@@ -1,6 +1,12 @@
 package croft
 
-import "errors"
+import (
+	"context"
+	"errors"
+
+	trace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/goatherd-runtime/effect"
+)
 
 // BackendName is the registry key this backend answers to, and the value
 // stamped into every trace.WorkspaceState it produces. The kernel's
@@ -11,6 +17,25 @@ import "errors"
 // reference the name — in config validation, in a doctor check — on any
 // platform, including one where no such backend can ever be opened.
 const BackendName = "containerd"
+
+// EffectChanger is the optional capability this backend provides for typed
+// workspace effects: the change set between a captured state and the current
+// workspace, already translated into the runtime's backend-neutral vocabulary.
+//
+// It is declared here, untagged, for the same reason BackendName and Config are:
+// a host must be able to name the capability on every platform it builds for.
+// Callers detect it by type assertion, the convention the runtime itself uses
+// for DeltaApplier, so a host never has to import croft to consume the result —
+// which is the whole point of the translation. On a non-Linux build nothing
+// implements it, because no backend registers; the assertion fails, and that is
+// the honest answer rather than a stub returning empty changes.
+//
+// The result feeds effect.FromChanges and then effect.Emit. See EffectChanges
+// for what the translation preserves and the one detail it cannot carry into a
+// recorded payload.
+type EffectChanger interface {
+	EffectChanges(ctx context.Context, ws trace.WorkspaceState) ([]effect.Change, error)
+}
 
 // ErrUnsupportedPlatform is what New returns on a platform the backend is not
 // built for. See the package doc: the implementation is Linux-only because

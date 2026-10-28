@@ -13,6 +13,7 @@ import (
 	"time"
 
 	trace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/goatherd-runtime/effect"
 	sbx "github.com/buchenberg/goatherd-runtime/sandbox"
 
 	croftlib "github.com/buchenberg/goatherd-croft"
@@ -413,4 +414,119 @@ func containsPath(paths []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// TestLiveSandbox_EffectChangesAgainstRealDaemon exercises the croft → effect
+// translation against containerd's actual diff output rather than a fake.
+//
+// The unit tests drive toEffectChanges with change sets this package
+// constructed, so they prove the mapping is self-consistent but cannot prove it
+// matches what the daemon really reports — in particular whether a create, a
+// modify and a delete arrive as the kinds assumed here, and whether they feed
+// effect.FromChanges cleanly. This is the evidence behind plan 05's parity map
+// row 8.
+func TestLiveSandbox_EffectChangesAgainstRealDaemon(t *testing.T) {
+	lc := loadLiveConfig(t)
+	s := liveSandbox(t, lc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), lc.timeout)
+	defer cancel()
+	defer func() {
+		dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer dcancel()
+		_ = s.Destroy(dctx)
+	}()
+
+	if err := s.Create(ctx, sbx.SandboxSpec{Timeout: lc.timeout}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Seed the three paths that will each take a different branch, then capture
+	// the baseline they are compared against.
+	for _, f := range []string{"keep.txt", "modify.txt", "delete.txt"} {
+		if err := s.WriteFile(ctx, f, []byte("seed "+f+"\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile %s: %v", f, err)
+		}
+	}
+	base, err := s.Capture(ctx)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+
+	if err := s.WriteFile(ctx, "added.txt", []byte("brand new\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile added.txt: %v", err)
+	}
+	if err := s.WriteFile(ctx, "modify.txt", []byte("changed content\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile modify.txt: %v", err)
+	}
+	res, err := s.Exec(ctx, sbx.ExecRequest{
+		Command: "rm",
+		Args:    []string{"-f", path.Join(lc.cfg.Workdir, "delete.txt")},
+	})
+	if err != nil {
+		t.Fatalf("Exec rm: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("rm exit %d: %s", res.ExitCode, res.Stderr)
+	}
+
+	// The capability a host actually uses: find it by type assertion on the
+	// runtime's interface, with no croft import in scope.
+	var sb any = s
+	changer, ok := sb.(EffectChanger)
+	if !ok {
+		t.Fatal("the adapter is not discoverable as an EffectChanger by type assertion")
+	}
+	changes, err := changer.EffectChanges(ctx, base)
+	if err != nil {
+		t.Fatalf("EffectChanges: %v", err)
+	}
+
+	byPath := map[string]effect.Kind{}
+	for _, c := range changes {
+		byPath[path.Base(c.Path)] = c.Kind
+	}
+	want := map[string]effect.Kind{
+		"added.txt":  effect.KindCreated,
+		"modify.txt": effect.KindPatched,
+		"delete.txt": effect.KindDeleted,
+	}
+	for p, k := range want {
+		got, present := byPath[p]
+		if !present {
+			t.Errorf("%s is missing from the change set %v", p, byPath)
+			continue
+		}
+		if got != k {
+			t.Errorf("%s classified as %q, want %q", p, got, k)
+		}
+	}
+	// keep.txt was untouched, so it must not appear: a converter that reported
+	// unchanged paths would make every effect stream noise.
+	if _, present := byPath["keep.txt"]; present {
+		t.Errorf("keep.txt was not modified but appears in the change set: %v", byPath)
+	}
+
+	// And the neutral change set must feed the effect layer directly, which is
+	// the whole point of translating at this seam.
+	effects, err := effect.FromChanges(changes)
+	if err != nil {
+		t.Fatalf("FromChanges on the real change set: %v", err)
+	}
+	if len(effects) < 3 {
+		t.Fatalf("FromChanges yielded %d effects from %d changes, want at least 3", len(effects), len(changes))
+	}
+	refs := map[string]bool{}
+	for _, e := range effects {
+		refs[e.SchemaRef] = true
+		if e.Path == "" {
+			t.Errorf("an effect carries no path: %+v", e)
+		}
+	}
+	for _, want := range []string{effect.SchemaFileCreated, effect.SchemaFilePatched, effect.SchemaFileDeleted} {
+		if !refs[want] {
+			t.Errorf("no effect recorded under %q; got %v", want, refs)
+		}
+	}
+	t.Logf("real daemon produced %d changes → %d effects across %d schemas", len(changes), len(effects), len(refs))
 }
