@@ -4,6 +4,98 @@ Notable changes to `goatherd-runtime`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [v0.20.0] - 2026-10-28
+
+### Added
+- **`effect` package**: typed workspace-change effects with causal linkage and
+  live emission — plan 05 Phase 1, and the container tier's parity gap against
+  the Python reference's `OverlayEffectExtractor`. `FromChanges` maps a
+  backend-neutral `[]Change` onto `ChangeEffect` values carrying a schema ref
+  and kind label (`shepherd2.effect.file.{created,patched,deleted}.v1`,
+  `file:{created,patched,deleted}`); `Emit` appends each as a capture fact and
+  publishes it on a `trace.EffectBus`. Append strictly precedes publish, so a
+  subscriber can fetch the record the moment it sees the event, and a receipt
+  that does not name exactly one fact is an error rather than an event pointing
+  at nothing. Causality is operation-level: `opID` becomes the payload's
+  `caused_by` and the event's sole causal parent. Directories are omitted, and
+  an unrecognised `Kind` fails rather than being silently dropped. `Emit` takes
+  a two-method `FactAppender` (satisfied by `*goatherd.Scope`) so the package
+  stays a leaf the root can depend on.
+- **`sandbox/croft` nested module** (v0.1.2): `goatherd-croft` v0.8.0 behind the
+  `Sandbox` registry seam as backend `"containerd"`, so a container workspace is
+  addressable through `OpenSandbox` exactly like the git backend. Croft is a
+  *world* on the substrate axis, not a paddock: `Capabilities` reports
+  `ContainContained` and never a syscall-tier claim. Both `Create` and `Exec`
+  are bounded by a backend ceiling when the caller supplies no timeout. A
+  `ConfinementSpec`, an explicit paddock `Placement` or an `AuthorityMatch` is
+  refused rather than silently satisfied by the coarse container boundary, and
+  an unknown `Placement` is refused rather than treated as permissive — the
+  container-tier authority vocabulary is an open decision (goatherd-croft bead
+  `croft-ku0`). Implements `DeltaApplier`, propagating `ErrDeltaConflict`
+  unwrapped so settlement fails closed; exposes `Changes` and `ReleaseState`
+  beyond the interface for callers to find by type assertion. Deliberately does
+  **not** implement `Addressed` (croft identity is not a path) or
+  `DeltaBaseAnnotator` (croft already carries `BaseKey` and pins by lease).
+
+### Platform support
+- **`sandbox/croft` is Linux-only, with a stub elsewhere.** The implementation
+  is gated `//go:build linux`. `doc.go` and `config.go` carry no build tag, so
+  `BackendName`, `Config`, `Limits` and `SecretMount` compile on every platform
+  from one declaration that cannot drift between them; `backend_other.go`
+  provides a `Sandbox`/`New` that registers no backend and returns
+  `ErrUnsupportedPlatform`. This is what lets a host ship Windows and macOS
+  binaries while depending on the module: `goatherd-croft` v0.8.0 does not
+  compile on Windows (`syscall.O_NOFOLLOW` in its staging-write path), filed
+  upstream as goatherd-croft bead `croft-itw`. Off-Linux,
+  `OpenSandbox("containerd", ...)` reports an unknown backend naming what *is*
+  available.
+- Consumers should require **`sandbox/croft` v0.1.2 or later**. v0.1.0 resolves
+  from the module proxy and works on Linux but does not build on Windows, and
+  the proxy cache is permanent so it cannot be re-pointed; v0.1.1 added the
+  platform gate, v0.1.2 the `Create` ceiling and fail-closed placement.
+
+### Known limitations
+- **Container state digests are not content-stable.** croft mints a
+  sequence-derived snapshot key per capture, so two captures of unchanged
+  content digest differently — which `Sandbox.Capture`'s contract asks backends
+  to avoid, because settlement's `select` compares digests as content equality.
+  Hashing the state's fields does not help: the inputs differ on every capture.
+  Recorded in the adapter's package doc and pinned by a test written to invert
+  itself when goatherd-croft bead `croft-dlb` lands. Safe while settlement never
+  sees a container state; a host must not enable retained outputs in container
+  mode before then.
+- **Effect volume is unbounded.** `Emit` appends one fact per effect with no
+  cap, batching or summary record, and the bus drops oldest-first when a
+  subscriber's buffer fills — so a supervisor can miss events on a large change
+  set while the durable trace stays complete. Plan 05 §11 records this as not
+  mitigated; the right bounding shape depends on consumers that do not exist
+  yet.
+- **`effect` produces observations, not reversible actions.** The Python
+  reference's `FileCreate`/`FilePatch`/`FileDelete` carry content and implement
+  `reverse()`. These effects carry metadata only, because a containerd change
+  set is already classified by the daemon and reading content back would mean a
+  round trip per file. Rollback remains the workspace-state layer's job
+  (`Capture`/`Apply`).
+
+### Changed
+- **Plan 05 amended as-built** (§4, §5, §6, §11). Four claims did not survive
+  contact with the code: `FromChanges([]croft.Change)` in a core package would
+  have pulled containerd v2 and the OCI tree into the core, defeating the nested
+  module; the cited precedent `shepherd.run.executed.v1` does not exist and the
+  kernel's real convention is a `shepherd2.` prefix; "parity" with
+  `OverlayEffectExtractor` overstated a metadata-only effect stream; and `Emit`
+  taking `*goatherd.Scope` would have coupled a leaf package to the runtime
+  root. The parity map now points at the tests that exist, and row 8 is marked
+  pending — the croft→`effect.Change` converter belongs in `sandbox/croft`,
+  which pins published core versions and so cannot land until this release is
+  tagged.
+- Plan 5's status in `docs/plans/README.md` moves from scoped to Phase 1 landed.
+- Nested `go.mod` tidy: `sandbox/winacl` gains `golang.org/x/text` as an
+  indirect requirement; stray blank lines removed from `sandbox/landlock` and
+  `sandbox/winacl`. Neither carries a `replace` directive, so both remain
+  consumable as published — as does `sandbox/croft`.
+- README project-name and link corrections.
+
 ## [v0.19.0] - 2026-10-22
 
 ### Changed
