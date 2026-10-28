@@ -79,19 +79,31 @@ the `copy` carrier (Phase 2); the `clonefile` carrier (Phase 3).
 
 ## 4. Parity Map (completion checklist)
 
+> **Amended as-built.** Schema refs corrected to the kernel's real `shepherd2.`
+> prefix (see §6 correction 2), the `FromChanges` signature corrected to the
+> backend-neutral type (§6 correction 1), and test names updated to the ones
+> that exist. Rows 1-3 are **partial** parity, not full: see the note under the
+> table.
+
 | # | Python symbol | Go target | Test |
 |---|---|---|---|
-| 1 | `FileCreate` | `shepherd.effect.file.created.v1` record | `TestEffect_FromChanges` |
-| 2 | `FilePatch` | `shepherd.effect.file.patched.v1` record | `TestEffect_FromChanges` |
-| 3 | `FileDelete` | `shepherd.effect.file.deleted.v1` record | `TestEffect_FromChanges` |
-| 4 | `OverlayEffectExtractor.extract` | `effect.FromChanges([]croft.Change)` | `TestEffect_FromChanges` |
-| 5 | `caused_by` (D25) | `CausalParents = [operation record id]` | `TestEffect_Causality` |
-| 6 | effect emission | `(*EffectBus).Publish` + `AppendFact` | `TestEffect_EmittedOnBus` |
-| 7 | whiteouts (D9) | inherent: `croft.Changes` reports `ChangeDelete` | `TestEffect_FromChanges` |
-| 8 | `ContainerDevice.extract_effects` | the run/handler calls `effect.FromChanges` on the sandbox's `croft.Changes` output, then `effect.Emit` | `TestEffect_ContainerRun` (live) |
+| 1 | `FileCreate` | `shepherd2.effect.file.created.v1` record | `TestFromChanges_MapsEachKindToItsSchema` |
+| 2 | `FilePatch` | `shepherd2.effect.file.patched.v1` record | `TestFromChanges_MapsEachKindToItsSchema` |
+| 3 | `FileDelete` | `shepherd2.effect.file.deleted.v1` record | `TestFromChanges_MapsEachKindToItsSchema` |
+| 4 | `OverlayEffectExtractor.extract` | `effect.FromChanges([]effect.Change)`; each backend converts into `effect.Change` | `TestFromChanges_*` |
+| 5 | `caused_by` (D25) | `CausalParents = [opID]` + payload `caused_by` | `TestEmit_AppendsAndPublishes`, `TestEmit_NoCauseOmitsTheField` |
+| 6 | effect emission | `(*EffectBus).Publish` + `AppendFact`, append strictly before publish | `TestEmit_AppendsAndPublishes`, `TestEmit_AppendsBeforePublishing` |
+| 7 | whiteouts (D9) | inherent: `croft.Changes` reports `ChangeDelete` | `TestSandbox_ChangesExposedForEffectExtraction` (adapter) |
+| 8 | `ContainerDevice.extract_effects` | the run/handler calls the backend's neutral change accessor, then `effect.FromChanges` + `effect.Emit` | **pending** — needs the adapter converter, which needs a core release first (§6 sequencing note) |
 | 9 | `_copy_carrier.py` | `sandbox/copy` backend | `TestCopyCarrier_*` |
 | 10 | `_clonefile_carrier.py` | `sandbox/clonefile` (darwin) | `TestClonefile_*` (macOS) |
 | 11 | `_kernel_overlay` / `_fuse_overlay` | `croft` (already) | croft's live suite |
+
+**Rows 1-3 are partial parity, deliberately.** Python's `FileCreate`/`FilePatch`/
+`FileDelete` carry content and implement `reverse()`, so they are reversible
+actions. The Go effects carry metadata only and are observations. Same
+vocabulary, same schema shape, same causal linkage — different capability. See
+§6 correction 3 before assuming this can back an undo.
 
 ## 5. Architecture
 
@@ -101,18 +113,26 @@ the `copy` carrier (Phase 2); the `clonefile` carrier (Phase 3).
 run / handler
    │  exec + mutate the workspace
    ▼
-croft.Changes(ctx, ws)  ──►  []Change{Kind: Add|Modify|Delete, Path, IsDir, Mode, Size}
+backend change accessor   (croft: Changes(ctx, ws) → []croftlib.Change)
+   │
+   ▼  backend-side conversion — the only package allowed to import croft
+[]effect.Change{Kind: created|patched|deleted, Path, IsDir, Mode, Size}
    │
    ▼
-effect.FromChanges(changes)  ──►  []ChangeEffect
-   │
+effect.FromChanges(changes)  ──►  []ChangeEffect, error
+   │                              (unknown Kind is an error, not a dropped entry)
    ▼
-effect.Emit(ctx, scope, bus, opID, effects)   (opID → CausalParents)
-   │  ChangeAdd→created, ChangeModify→patched, ChangeDelete→deleted
+effect.Emit(ctx, appender, bus, opID, effects)   (opID → CausalParents)
+   │  appender is a FactAppender; *goatherd.Scope satisfies it
    ▼
-typed records  ──►  (*EffectBus).Publish(EffectEvent)   (live supervision)
-               └─►  (*Scope).AppendFact(...)             (durable trace)
+typed records  ──►  AppendFact(...)                  (durable trace, first)
+               └─►  (*EffectBus).Publish(EffectEvent) (live supervision, second)
 ```
+
+The conversion step is what keeps the core free of containerd: `effect` never
+names a backend type, so the core's dependency set stays free of any container
+or OCI tree.
+
 
 Because croft already classifies, this is **one adapter** plus a schema series —
 no overlay walking, no whiteout logic (containerd resolves it), no VM reader.
@@ -134,12 +154,27 @@ live — **ahead** of the reference.
 
 ## 6. Phase 1 — Typed effect extraction
 
+> **Amended as-built.** Four claims in the original text of this section were
+> checked against the code and did not survive. Each is corrected inline and
+> summarised at the end of the section. The shape of Phase 1 is unchanged; its
+> signature, schema names and parity claim are not.
+
 New runtime package `goatherd-runtime/effect`:
 
 ```go
-// ChangeEffect is one typed workspace change.
+// Change is one classified workspace difference, in backend-neutral terms.
+// Metadata only — see the parity note below.
+type Change struct {
+    Path  string
+    Kind  Kind // "created" | "patched" | "deleted"
+    IsDir bool
+    Mode  fs.FileMode
+    Size  int64
+}
+
+// ChangeEffect is a Change resolved to the schema ref and label it records under.
 type ChangeEffect struct {
-    SchemaRef  string // shepherd.effect.file.{created,patched,deleted}.v1
+    SchemaRef  string // shepherd2.effect.file.{created,patched,deleted}.v1
     KindLabel  string // "file:created" | "file:patched" | "file:deleted"
     Path       string
     IsDir      bool
@@ -147,24 +182,83 @@ type ChangeEffect struct {
     Size       int64
 }
 
-// FromChanges maps croft's classified changes to typed effects. It is the Go
-// analogue of OverlayEffectExtractor.extract — and needs no overlay walk,
-// because croft (containerd) already resolves creates/modifies/deletes and
-// whiteouts.
-func FromChanges(changes []croft.Change) []ChangeEffect
+// FromChanges maps a change set to typed effects. Directories are skipped, as
+// in the Python reference. An unrecognised Kind is an error, not a skipped
+// entry: silently dropping a reported change would leave a mutation unrecorded
+// with nothing saying so.
+func FromChanges(changes []Change) ([]ChangeEffect, error)
 ```
 
 And an emitter that records + publishes:
 
 ```go
-// Emit appends each effect on the scope's owner path (caused by opID) and
-// publishes it on the bus for live supervision.
-func Emit(ctx context.Context, scope *goatherd.Scope, bus *trace.EffectBus, opID string, effects []ChangeEffect) error
+// FactAppender is the seam Emit needs. *goatherd.Scope satisfies it.
+type FactAppender interface {
+    AppendFact(ctx context.Context, schemaRef, kindLabel string, payload map[string]any) (trace.AppendReceipt, error)
+    OwnerID() string
+}
+
+// Emit appends each effect on the appender's owner path (caused by opID) and
+// publishes it on the bus for live supervision. Append happens before publish,
+// so an event never points at a record that was not written. A nil bus appends
+// without publishing.
+func Emit(ctx context.Context, appender FactAppender, bus *trace.EffectBus, opID string, effects []ChangeEffect) error
 ```
 
-Schemas are **runtime-level** (`shepherd.effect.file.*.v1`) — schema refs are
-validated only for non-emptiness, so no kernel ABI change (the same pattern as
-`shepherd.run.executed.v1`).
+Schemas are **runtime-level** — `ValidateSchemaRef` (`canonical.go:786`) checks
+only non-emptiness, so introducing these refs needs no kernel ABI change. They
+use the kernel's actual `shepherd2.` prefix.
+
+### Corrections to the original text
+
+1. **`FromChanges([]croft.Change)` is not possible in a core package.** This
+   package lives in the runtime core, whose `go.mod` carries the kernel plus a
+   small non-container dependency set (`golang.org/x/text` directly; sqlite,
+   uuid and an LRU indirectly) and whose `go.sum` has zero containerd entries.
+   Taking croft's change type in the signature would pull containerd v2 and the
+   whole OCI tree into the core, destroying the reason `sandbox/croft` is a
+   nested module. **Corrected:** the package defines its own neutral `Change`,
+   and each backend converts into it.
+   This also keeps the vocabulary reusable for the Phase 2/3 carriers, which
+   produce changes too and should not have to route through a containerd type.
+
+2. **The cited precedent `shepherd.run.executed.v1` does not exist** — not in the
+   kernel, the runtime, or yaah. The conclusion it supported is still correct
+   (refs are free-form, validated only for non-emptiness), but the evidence was
+   invented. The kernel's real convention is a `shepherd2.` prefix:
+   `shepherd2.execution.created.v1`, `shepherd2.runtime.published_fact.v1`,
+   `shepherd2.execution_relation.created.v1`. **Corrected:** the new refs are
+   `shepherd2.effect.file.{created,patched,deleted}.v1`, so they match their
+   siblings and can be found by pattern.
+
+3. **"Parity" with `OverlayEffectExtractor` overstates what this delivers.**
+   Python's effects are *reversible* and carry content: `FileCreate.content`,
+   `FilePatch.old_content`/`new_content`, `FileDelete.had_content`, each with a
+   `reverse()`. That works because Python walks the overlay upper layer and reads
+   every file. A containerd change set is metadata — the daemon has already
+   classified the difference between two snapshots — so reading content back
+   would mean a round trip per file through the container boundary, a materially
+   different operation. **Corrected:** these effects are *observations*, not
+   reversible actions. Rollback in the Go stack is the workspace-state layer's
+   job (`Capture`/`Apply` on a sandbox), not the effect layer's. Anyone planning
+   to build undo on top of this needs to know that before they start.
+
+4. **`Emit` took `*goatherd.Scope`.** That would make `effect` import the runtime
+   root, coupling a leaf package to the top of the tree and risking a cycle the
+   moment the root wants to emit an effect. **Corrected:** `Emit` takes a
+   two-method `FactAppender` interface, which `*goatherd.Scope` already
+   satisfies via its exported `AppendFact` and `OwnerID`. It also makes `Emit`
+   testable against a recorder instead of a SQLite store. The test file carries a
+   compile-time `var _ FactAppender = (*goatherd.Scope)(nil)` so drift is a build
+   failure, not a runtime surprise.
+
+**Sequencing consequence of correction 1.** The croft→`effect.Change` converter
+must live in `sandbox/croft`, which is the only package allowed to import croft.
+That nested module pins *published* core versions with no `replace` (and
+release-verify fails a tagged module that has one), so the converter cannot land
+until the core is released with this package. Phase 1 is therefore two steps:
+land `effect` in the core and tag it, then bump the adapter and add its
+converter.
 
 ## 7. Phase 2 — The `copy` carrier
 
@@ -237,6 +331,16 @@ Phase 3 (clonefile, on a Mac).
   separate **ahead** item, not required for parity.
 - *Effect volume* — a large change set emits many records; bound with a summary
   effect + per-file records optionally (a knob), or emit the diff once.
+  **Not mitigated as built.** `Emit` appends one fact per effect with no cap, no
+  batching and no summary record, so a change set of N paths produces N trace
+  records and N bus events. That is the right default for correctness — every
+  change is individually attributable and none is collapsed away — but it is a
+  real cost on a large diff, and the bus drops oldest-first when a subscriber's
+  buffer fills, so a supervisor can miss events on a big change set while the
+  durable trace stays complete. Bounding it is a deliberate follow-up, not an
+  oversight: the right shape (summary record, opt-in per-file detail, or a
+  caller-supplied cap) depends on what consumers actually need, and there are
+  none yet.
 
 ## 12. Decisions
 
