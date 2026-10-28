@@ -130,7 +130,8 @@ typed records  ──►  AppendFact(...)                  (durable trace, first
 ```
 
 The conversion step is what keeps the core free of containerd: `effect` never
-names a backend type, so its `go.mod` stays kernel plus stdlib.
+names a backend type, so the core's dependency set stays free of any container
+or OCI tree.
 
 
 Because croft already classifies, this is **one adapter** plus a schema series —
@@ -211,11 +212,13 @@ use the kernel's actual `shepherd2.` prefix.
 ### Corrections to the original text
 
 1. **`FromChanges([]croft.Change)` is not possible in a core package.** This
-   package lives in the runtime core, whose `go.mod` is kernel plus stdlib and
-   whose `go.sum` has zero containerd entries. Taking croft's change type in the
-   signature would pull containerd v2 and the whole OCI tree into the core,
-   destroying the reason `sandbox/croft` is a nested module. **Corrected:** the
-   package defines its own neutral `Change`, and each backend converts into it.
+   package lives in the runtime core, whose `go.mod` carries the kernel plus a
+   small non-container dependency set (`golang.org/x/text` directly; sqlite,
+   uuid and an LRU indirectly) and whose `go.sum` has zero containerd entries.
+   Taking croft's change type in the signature would pull containerd v2 and the
+   whole OCI tree into the core, destroying the reason `sandbox/croft` is a
+   nested module. **Corrected:** the package defines its own neutral `Change`,
+   and each backend converts into it.
    This also keeps the vocabulary reusable for the Phase 2/3 carriers, which
    produce changes too and should not have to route through a containerd type.
 

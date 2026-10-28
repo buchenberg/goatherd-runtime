@@ -177,7 +177,6 @@ func TestPayload(t *testing.T) {
 	withCause := e.Payload("run:42")
 	for k, want := range map[string]any{
 		"path":      "src/main.go",
-		"is_dir":    false,
 		"mode":      "4755",
 		"size":      int64(2048),
 		"caused_by": "run:42",
@@ -186,6 +185,13 @@ func TestPayload(t *testing.T) {
 			t.Errorf("payload[%q] = %#v, want %#v", k, got, want)
 		}
 	}
+	// FromChanges omits directories, so every record is a file and an is_dir key
+	// could only ever be false. A constant key is noise at best and reads as
+	// evidence at worst; if directories ever get their own effect kind, this
+	// assertion is the reminder to put the key back with a value that varies.
+	if _, ok := withCause["is_dir"]; ok {
+		t.Errorf("payload carries is_dir = %#v, but no effect this package produces can be a directory", withCause["is_dir"])
+	}
 
 	// An unknown cause is omitted, not recorded as an empty string, so a
 	// consumer can tell "no known cause" from a cause that happened to be "".
@@ -193,8 +199,8 @@ func TestPayload(t *testing.T) {
 	if _, ok := without["caused_by"]; ok {
 		t.Errorf("caused_by must be absent when there is no cause, got %#v", without["caused_by"])
 	}
-	if len(without) != 4 {
-		t.Errorf("payload without a cause has %d keys, want 4: %#v", len(without), without)
+	if len(without) != 3 {
+		t.Errorf("payload without a cause has %d keys, want 3 (path, mode, size): %#v", len(without), without)
 	}
 }
 

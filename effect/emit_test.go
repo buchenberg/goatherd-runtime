@@ -8,15 +8,12 @@ import (
 	"testing"
 
 	trace "github.com/buchenberg/goatherd-kernel"
-
-	goatherd "github.com/buchenberg/goatherd-runtime"
 )
 
-// Compile-time proof that the runtime's Scope is a FactAppender, so Emit can be
-// called with a real scope and not just a test double. This is the assertion
-// that keeps the interface honest: if Scope's AppendFact signature drifts, the
-// package still builds but this stops compiling.
-var _ FactAppender = (*goatherd.Scope)(nil)
+// The assertion that *goatherd.Scope satisfies FactAppender lives in
+// scope_test.go, in the external test package. It cannot live here: importing
+// the runtime root from an in-package test forms a cycle the moment the root
+// imports effect, which is the integration this package exists to support.
 
 type recordedFact struct {
 	schemaRef string
@@ -31,8 +28,10 @@ type fakeAppender struct {
 
 	// errOn is the 1-based index of the append that should fail, 0 for none.
 	errOn int
-	// noIDs makes every receipt come back without a fact ID.
-	noIDs bool
+	// factIDs overrides the IDs each receipt carries. Nil means the normal
+	// single ID; an empty non-nil slice means none, which is how the "exactly
+	// one" invariant gets probed from both sides.
+	factIDs []string
 
 	seq int
 }
@@ -44,7 +43,9 @@ func (f *fakeAppender) AppendFact(_ context.Context, schemaRef, kindLabel string
 		return trace.AppendReceipt{}, errStore
 	}
 	receipt := trace.AppendReceipt{AppendIntentID: fmt.Sprintf("intent:%d", f.seq)}
-	if !f.noIDs {
+	if f.factIDs != nil {
+		receipt.FactIDs = f.factIDs
+	} else {
 		receipt.FactIDs = []string{fmt.Sprintf("fact:%d", f.seq)}
 	}
 	return receipt, nil
@@ -211,25 +212,48 @@ func TestEmit_AppendFailureStopsAndNamesThePath(t *testing.T) {
 	}
 }
 
-func TestEmit_ReceiptWithoutFactIDIsAnError(t *testing.T) {
-	// A store that accepts an append and reports no fact ID would leave a bus
-	// event pointing at a record nobody can fetch. Refusing is the fail-closed
-	// choice: better no event than an unresolvable one.
-	app := &fakeAppender{ownerID: "sub:x", noIDs: true}
-	bus := trace.NewEffectBus(8)
-	events := bus.Subscribe("t")
+func TestEmit_RequiresExactlyOneFactID(t *testing.T) {
+	// Emit appends one draft per effect, so a conforming appender returns one
+	// fact ID. Both deviations fail closed rather than publishing an event that
+	// does not correspond to one readable record:
+	//
+	//   - zero IDs means the store accepted the append and reported nothing
+	//     written, so the event would point at a record nobody can fetch;
+	//   - several means the extras would be silently absent from the bus while
+	//     the code claimed a single record was written.
+	//
+	// FactAppender is a generic seam, so an implementation could legitimately
+	// return more than one — which is exactly why the count is checked for
+	// equality rather than merely non-emptiness.
+	cases := []struct {
+		name string
+		ids  []string
+	}{
+		{"none", []string{}},
+		{"several", []string{"fact:a", "fact:b", "fact:c"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := &fakeAppender{ownerID: "sub:x", factIDs: tc.ids}
+			bus := trace.NewEffectBus(8)
+			events := bus.Subscribe("t")
 
-	err := Emit(context.Background(), app, bus, "run:1", sampleEffects()[:1])
-	if err == nil {
-		t.Fatal("a receipt with no fact ID must be an error")
-	}
-	if !strings.Contains(err.Error(), "no fact ID") {
-		t.Errorf("the error must say why, got: %v", err)
-	}
-	select {
-	case ev := <-events:
-		t.Errorf("published an event despite having no record ID: %+v", ev)
-	default:
+			err := Emit(context.Background(), app, bus, "run:1", sampleEffects()[:1])
+			if err == nil {
+				t.Fatalf("a receipt with %d fact IDs must be an error", len(tc.ids))
+			}
+			if !strings.Contains(err.Error(), "want exactly 1") {
+				t.Errorf("the error must state the invariant that broke, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), "new.txt") {
+				t.Errorf("the error must name the path, got: %v", err)
+			}
+			select {
+			case ev := <-events:
+				t.Errorf("published an event despite the bad receipt: %+v", ev)
+			default:
+			}
+		})
 	}
 }
 
@@ -272,5 +296,35 @@ func (o *orderingAppender) AppendFact(_ context.Context, _, _ string, _ map[stri
 }
 
 func (o *orderingAppender) OwnerID() string { return "sub:x" }
+
+func TestEmit_EventsDoNotShareCausalParents(t *testing.T) {
+	// The bus hands each subscriber a copy of EffectEvent, but a copy of a
+	// struct containing a slice copies the header, not the backing array. If
+	// every event in one Emit shared a single array, a consumer writing
+	// CausalParents[0] in place would corrupt the other events — and race any
+	// subscriber reading them concurrently, since the bus fans out.
+	app := &fakeAppender{ownerID: "sub:x"}
+	bus := trace.NewEffectBus(8)
+	events := bus.Subscribe("t")
+
+	if err := Emit(context.Background(), app, bus, "run:1", sampleEffects()); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+
+	got := drain(events, 3)
+	for i := range got {
+		if len(got[i].CausalParents) != 1 || got[i].CausalParents[0] != "run:1" {
+			t.Fatalf("event %d CausalParents = %v, want [run:1]", i, got[i].CausalParents)
+		}
+	}
+
+	// The exact write an aliasing implementation would let leak.
+	got[0].CausalParents[0] = "corrupted"
+	for i := 1; i < len(got); i++ {
+		if got[i].CausalParents[0] != "run:1" {
+			t.Errorf("event %d CausalParents became %q after mutating event 0 in place — the events share one backing array", i, got[i].CausalParents[0])
+		}
+	}
+}
 
 var errStore = errors.New("store unavailable")

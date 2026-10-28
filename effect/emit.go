@@ -43,6 +43,13 @@ type FactAppender interface {
 // A nil bus appends without publishing, which is the right mode for a batch or
 // test run with no live supervisor attached.
 //
+// The appender must be non-nil, and "non-nil" means a real value: because
+// FactAppender is an interface, a typed nil (an unassigned *goatherd.Scope
+// passed as the parameter) satisfies the nil check below and then panics when
+// its method is called. Detecting that would need reflection over every
+// possible underlying kind, which is not a trade worth making for a programming
+// error — so callers own it, as they do for every interface parameter in Go.
+//
 // Emission is not atomic: each effect is its own append, so a failure part way
 // through leaves the earlier effects recorded and returns the error. That is
 // preferable to the alternatives — swallowing the failure would leave a silent
@@ -68,25 +75,37 @@ func Emit(ctx context.Context, appender FactAppender, bus *trace.EffectBus, opID
 		if err != nil {
 			return fmt.Errorf("effect: append %s (%s): %w", e.Path, e.KindLabel, err)
 		}
-		// One draft per append, so one fact ID. An empty list means the store
-		// accepted the append and reported nothing written, which would leave a
-		// bus event pointing at a record nobody can fetch — fail instead.
-		if len(receipt.FactIDs) == 0 {
-			return fmt.Errorf("effect: append %s (%s) returned no fact ID; refusing to publish an event for a record that cannot be read back", e.Path, e.KindLabel)
+		// Exactly one fact ID, because this seam appends exactly one draft per
+		// effect. The check is an equality and not an emptiness test on purpose:
+		// FactAppender is generic, and an implementation that returned several
+		// IDs would otherwise have its extra records silently absent from the
+		// bus while this code claimed one record was written. Zero IDs is the
+		// same class of failure — an event pointing at a record nobody can
+		// fetch back — so both fail closed.
+		if len(receipt.FactIDs) != 1 {
+			return fmt.Errorf("effect: append %s (%s) returned %d fact IDs, want exactly 1; refusing to publish an event that does not correspond to one readable record", e.Path, e.KindLabel, len(receipt.FactIDs))
 		}
 
 		if bus == nil {
 			continue
 		}
 		bus.Publish(trace.EffectEvent{
-			RecordID:      receipt.FactIDs[0],
-			IntentID:      receipt.AppendIntentID,
-			TraceOwnerID:  ownerID,
-			Mode:          trace.Capture,
-			SchemaRef:     e.SchemaRef,
-			KindLabel:     e.KindLabel,
-			Payload:       e.Payload(opID),
-			CausalParents: causalParents,
+			RecordID:     receipt.FactIDs[0],
+			IntentID:     receipt.AppendIntentID,
+			TraceOwnerID: ownerID,
+			Mode:         trace.Capture,
+			SchemaRef:    e.SchemaRef,
+			KindLabel:    e.KindLabel,
+			// A fresh payload per event, not the one passed to AppendFact.
+			// Sharing a map between the durable record and the bus event would
+			// let a consumer mutating the event corrupt what the store holds.
+			Payload: e.Payload(opID),
+			// Copied per event. The bus fans out to subscribers that may run
+			// concurrently, and EffectEvent is copied by value — the slice
+			// header is copied but the backing array is not. Aliasing one array
+			// across every event would let a consumer writing CausalParents[0]
+			// in place corrupt the others and race the subscribers reading them.
+			CausalParents: append([]string(nil), causalParents...),
 			Timestamp:     time.Now(),
 		})
 	}

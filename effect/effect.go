@@ -27,11 +27,12 @@
 //
 // FromChanges takes []Change, defined here, rather than the change type of any
 // particular backend. That is not abstraction for its own sake: this package
-// lives in the runtime core, whose go.mod is deliberately kernel plus stdlib.
-// Taking a containerd-backed type in the signature would pull containerd v2 and
-// the whole OCI tree into the core, destroying the reason the container backend
-// is a nested module at all. Backends convert into Change; the sandbox/croft
-// adapter's EffectChanges does exactly that.
+// lives in the runtime core, whose go.mod is deliberately free of any container
+// or OCI dependency. Taking a containerd-backed type in the signature would pull
+// containerd v2 and the whole OCI tree into the core, destroying the reason the
+// container backend is a nested module at all. Backends convert into Change;
+// the sandbox/croft adapter's EffectChanges will do exactly that, once the core
+// is released with this package and the nested module can pin it.
 //
 // It also keeps the vocabulary reusable. The copy and clonefile carriers planned
 // for later phases produce changes too, and none of them should have to route
@@ -91,7 +92,9 @@ func (k Kind) SchemaRef() (string, error) {
 	case KindDeleted:
 		return SchemaFileDeleted, nil
 	}
-	return "", fmt.Errorf("effect: unknown change kind %q (valid: %q, %q, %q)", k, KindCreated, KindPatched, KindDeleted)
+	// No "effect:" prefix here: callers that wrap this add their own context,
+	// and a prefix at both layers reads as a leaked inner frame.
+	return "", fmt.Errorf("unknown change kind %q (valid: %q, %q, %q)", k, KindCreated, KindPatched, KindDeleted)
 }
 
 // KindLabel returns the human-readable label for a kind.
@@ -104,7 +107,7 @@ func (k Kind) KindLabel() (string, error) {
 	case KindDeleted:
 		return LabelFileDeleted, nil
 	}
-	return "", fmt.Errorf("effect: unknown change kind %q (valid: %q, %q, %q)", k, KindCreated, KindPatched, KindDeleted)
+	return "", fmt.Errorf("unknown change kind %q (valid: %q, %q, %q)", k, KindCreated, KindPatched, KindDeleted)
 }
 
 // Change is one classified difference between a workspace and a comparison
@@ -133,16 +136,22 @@ type Change struct {
 //
 // Splitting this from Change means the mapping is decided once, here, and a
 // caller cannot append an effect under the wrong schema by hand.
+//
+// There is deliberately no IsDir field. FromChanges omits directories, so such
+// a field could only ever be false, and a payload key that is constant across
+// every record advertises information the pipeline structurally cannot produce
+// — a consumer would be entitled to read is_dir:false as positive evidence that
+// the path is a file. If directory effects are ever added, the field comes back
+// with a kind that can actually be true.
 type ChangeEffect struct {
 	// SchemaRef is the record schema, one of the SchemaFile* constants.
 	SchemaRef string
 	// KindLabel is the human-readable label, one of the LabelFile* constants.
 	KindLabel string
-	// Path, IsDir, Mode and Size are carried through from the Change.
-	Path  string
-	IsDir bool
-	Mode  fs.FileMode
-	Size  int64
+	// Path, Mode and Size are carried through from the Change.
+	Path string
+	Mode fs.FileMode
+	Size int64
 }
 
 // FromChanges maps a change set onto typed effects.
@@ -177,7 +186,6 @@ func FromChanges(changes []Change) ([]ChangeEffect, error) {
 			SchemaRef: ref,
 			KindLabel: label,
 			Path:      c.Path,
-			IsDir:     c.IsDir,
 			Mode:      c.Mode,
 			Size:      c.Size,
 		})
@@ -214,12 +222,15 @@ func UnixOctal(m fs.FileMode) string {
 // that produced it — and is omitted when empty rather than recorded as an empty
 // string, so a consumer can distinguish "no known cause" from "the cause was
 // the empty string".
+//
+// There is no is_dir key: FromChanges omits directories, so every record this
+// produces is a file, and a key that is constant across all of them is noise at
+// best and misleading at worst.
 func (e ChangeEffect) Payload(causedBy string) map[string]any {
 	p := map[string]any{
-		"path":   e.Path,
-		"is_dir": e.IsDir,
-		"mode":   UnixOctal(e.Mode),
-		"size":   e.Size,
+		"path": e.Path,
+		"mode": UnixOctal(e.Mode),
+		"size": e.Size,
 	}
 	if causedBy != "" {
 		p["caused_by"] = causedBy
