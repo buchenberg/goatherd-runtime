@@ -10,8 +10,8 @@ github.com/buchenberg/goatherd-croft v0.8.0 h1:/OH8+SuBebMk9iyFl3TD0bi1af/8FH6rv
 github.com/buchenberg/goatherd-croft v0.8.0/go.mod h1:JPx8oRUJq8UDkOxcDxPRGljycvWrUn2GRHtpFKSAcbw=
 github.com/buchenberg/goatherd-kernel v0.18.0 h1:2JT7G8lIBsbFRJrxLcua+I5JgIr6KQo+IR04FsDZycQ=
 github.com/buchenberg/goatherd-kernel v0.18.0/go.mod h1:qi265Btsp+N1OcMtmZuAgmsp1SpGyAHAZObuJ24hvKE=
-github.com/buchenberg/goatherd-runtime v0.18.1-0.20261028124705-5721f4e6630c h1:7mh356nDtO/lHs8EUmiW1Yvi1ou/gSU7e1dgz2JnahM=
-github.com/buchenberg/goatherd-runtime v0.18.1-0.20261028124705-5721f4e6630c/go.mod h1:wKQJB9+sG+MQ5sm9yQ90zm3Sj8hPz9HahbLajGtg+dY=
+github.com/buchenberg/goatherd-runtime v0.20.0 h1:DEjl7fD+OLxTLSM+DeG2bd6pBwYdkpTxXsISCEMReA4=
+github.com/buchenberg/goatherd-runtime v0.20.0/go.mod h1:wKQJB9+sG+MQ5sm9yQ90zm3Sj8hPz9HahbLajGtg+dY=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
