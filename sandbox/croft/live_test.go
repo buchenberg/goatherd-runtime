@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ const (
 	liveEnvSnapshotter = "CROFT_CONTAINERD_SNAPSHOTTER"
 	liveEnvWorkdir     = "CROFT_CONTAINERD_WORKDIR"
 	liveEnvTimeout     = "CROFT_CONTAINERD_TIMEOUT"
+	liveEnvNetwork     = "CROFT_CONTAINERD_NETWORK"
 
 	liveDefaultImage       = "docker.io/alpine/git:latest"
 	liveDefaultNamespace   = "croft-adapter-live"
@@ -71,6 +73,11 @@ func loadLiveConfig(t *testing.T) liveConfig {
 			Namespace:   liveEnv(liveEnvNamespace, liveDefaultNamespace),
 			Snapshotter: liveEnv(liveEnvSnapshotter, liveDefaultSnapshotter),
 			Workdir:     liveEnv(liveEnvWorkdir, liveDefaultWorkdir),
+			// Empty selects croft's isolated default (an unshared netns, so
+			// loopback only). A deployment that must run host-networked sets
+			// this, which is what makes the loopback-only test's skip guard
+			// reachable rather than dead.
+			Network: liveEnv(liveEnvNetwork, ""),
 			// The client creates the stdio FIFOs itself and containerd's default
 			// directory is root-owned; a temp dir keeps this independent of that.
 			FIFODir: t.TempDir(),
@@ -319,4 +326,91 @@ func TestLiveSandbox_DeltaConflictFailsClosed(t *testing.T) {
 	if string(after) != string(before) {
 		t.Errorf("a refused merge must leave the workspace untouched: %q became %q", before, after)
 	}
+}
+
+// TestLiveSandbox_ModeOnlyChangeIsReported settles a question two repos depend
+// on: does a path whose *mode* changed but whose content did not reach a caller
+// that builds its work list from Diff?
+//
+// yaah's ApplyOut copies out exactly the paths Diff reports, taking each file's
+// mode from a Stat inside the sandbox. If containerd's differ omitted mode-only
+// changes, a chmod made inside a session would be silently dropped on accept —
+// the regression recorded as yaah bead yaah-vlwm when the git binary patch path
+// (which did carry modes) was removed. This pins the answer against a real
+// daemon instead of reasoning about the differ's metadata comparison.
+func TestLiveSandbox_ModeOnlyChangeIsReported(t *testing.T) {
+	lc := loadLiveConfig(t)
+	s := liveSandbox(t, lc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), lc.timeout)
+	defer cancel()
+	defer func() {
+		dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer dcancel()
+		_ = s.Destroy(dctx)
+	}()
+
+	if err := s.Create(ctx, sbx.SandboxSpec{Timeout: lc.timeout}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	const content = "unchanged body\n"
+	if err := s.WriteFile(ctx, "script.sh", []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	base, err := s.Capture(ctx)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+
+	// chmod only. The bytes stay identical, so anything that reports this path
+	// saw the mode change and not a content change — that is the whole point of
+	// the test.
+	abs := path.Join(lc.cfg.Workdir, "script.sh")
+	res, err := s.Exec(ctx, sbx.ExecRequest{Command: "chmod", Args: []string{"755", abs}})
+	if err != nil {
+		t.Fatalf("Exec chmod: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("chmod exit %d: %s", res.ExitCode, res.Stderr)
+	}
+	if got, rerr := s.ReadFile(ctx, "script.sh"); rerr != nil || string(got) != content {
+		t.Fatalf("content changed under a chmod: %q, %v", got, rerr)
+	}
+
+	_, files, err := s.Diff(ctx, base, 0)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if !containsPath(files, "script.sh") {
+		t.Errorf("a mode-only change is missing from Diff's file list %v — a caller copying out those paths would silently drop the chmod (yaah-vlwm would be real)", files)
+	}
+
+	changes, err := s.Changes(ctx, base)
+	if err != nil {
+		t.Fatalf("Changes: %v", err)
+	}
+	for _, c := range changes {
+		if !strings.Contains(c.Path, "script.sh") {
+			continue
+		}
+		if c.Kind != croftlib.ChangeModify {
+			t.Errorf("Changes classifies the chmod as %v, want ChangeModify", c.Kind)
+		}
+		if c.Mode.Perm() != 0o755 {
+			t.Errorf("Changes reports mode %v, want 0755 — the new mode must be carried, not the old one", c.Mode.Perm())
+		}
+		t.Logf("mode-only change reported: kind=%v mode=%v size=%d", c.Kind, c.Mode, c.Size)
+		return
+	}
+	t.Errorf("Changes does not report the mode-only change at all: %+v", changes)
+}
+
+func containsPath(paths []string, name string) bool {
+	for _, p := range paths {
+		if strings.Contains(p, name) {
+			return true
+		}
+	}
+	return false
 }

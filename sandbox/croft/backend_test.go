@@ -151,15 +151,45 @@ func TestSandbox_CreateDestroy(t *testing.T) {
 func TestSandbox_CreateHonorsSpecTimeout(t *testing.T) {
 	// A first run may pull an image, so spec.Timeout must actually bound the
 	// call rather than be ignored.
+	old := createCeiling
+	createCeiling = time.Hour
+	t.Cleanup(func() { createCeiling = old })
+
 	s, fake := newTestSandbox(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
+	start := time.Now()
 	if err := s.Create(ctx, sbx.SandboxSpec{Timeout: 30 * time.Second}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if !fake.lastCreateHadDL {
-		t.Error("Create must bound the context when spec.Timeout is set")
+	if fake.lastCreateDL.IsZero() {
+		t.Fatal("Create must bound the context when spec.Timeout is set")
+	}
+	if got := fake.lastCreateDL.Sub(start); got < 29*time.Second || got > 31*time.Second {
+		t.Errorf("deadline was %v out, want the caller's 30s (not the %v ceiling)", got, createCeiling)
+	}
+}
+
+func TestSandbox_CreateBoundedByDefaultCeiling(t *testing.T) {
+	// The Sandbox contract: spec.Timeout of zero means "the backend default",
+	// and a backend must impose one so a caller passing context.Background()
+	// cannot hang indefinitely. Create is the verb most exposed to that — a
+	// first run may pull an image from an unreachable registry.
+	old := createCeiling
+	createCeiling = 200 * time.Millisecond
+	t.Cleanup(func() { createCeiling = old })
+
+	s, fake := newTestSandbox(t)
+	start := time.Now()
+	if err := s.Create(context.Background(), sbx.SandboxSpec{}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if fake.lastCreateDL.IsZero() {
+		t.Fatal("Create must bound the context even when spec.Timeout is zero")
+	}
+	if got := fake.lastCreateDL.Sub(start); got < 100*time.Millisecond || got > 400*time.Millisecond {
+		t.Errorf("deadline was %v out, want roughly the %v ceiling", got, createCeiling)
 	}
 }
 

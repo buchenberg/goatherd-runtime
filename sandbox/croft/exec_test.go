@@ -165,6 +165,39 @@ func TestSandbox_ExecRefusesAuthorityItCannotEnforce(t *testing.T) {
 	}
 }
 
+func TestSandbox_ExecRefusesUnknownPlacement(t *testing.T) {
+	// A placement outside the vocabulary must be refused, not treated as the
+	// permissive default. containment.ResolvePlacement rejects unknown values,
+	// so accepting one here would make this backend laxer than the layer that
+	// produces placements — and a capitalisation typo would silently downgrade
+	// a request for enforcement into a request for none.
+	s, _ := newTestSandbox(t)
+
+	for _, p := range []containment.Placement{"Paddock", "PADDOCK", "paddok", "confined", "sandbox"} {
+		t.Run(string(p), func(t *testing.T) {
+			_, err := s.Exec(context.Background(), sbx.ExecRequest{Command: "true", Placement: p})
+			if err == nil {
+				t.Fatalf("placement %q is not in the vocabulary and must be refused", p)
+			}
+			// A caller bug, not an unsupported feature: it must not read as
+			// ErrUnsupported, or a capability probe would treat a typo as "this
+			// backend lacks a feature" and move on.
+			if errors.Is(err, sbx.ErrUnsupported) {
+				t.Errorf("an unknown placement is invalid, not unsupported: %v", err)
+			}
+			if !strings.Contains(err.Error(), "unknown placement") {
+				t.Errorf("error must say the value is unknown, got: %v", err)
+			}
+			// Name the valid values so the typo is fixable from the message.
+			for _, valid := range []string{"paddock", "advisory", "auto"} {
+				if !strings.Contains(err.Error(), valid) {
+					t.Errorf("error must list %q as valid, got: %v", valid, err)
+				}
+			}
+		})
+	}
+}
+
 func TestSandbox_ExecAcceptsNonPaddockPlacements(t *testing.T) {
 	// Advisory, auto and empty placements ask for no syscall-tier enforcement,
 	// so the container boundary is an honest answer and Exec must not refuse.

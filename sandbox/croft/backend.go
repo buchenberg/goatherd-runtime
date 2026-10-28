@@ -7,12 +7,24 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"time"
 
 	trace "github.com/buchenberg/goatherd-kernel"
 	sbx "github.com/buchenberg/goatherd-runtime/sandbox"
 
 	croftlib "github.com/buchenberg/goatherd-croft"
 )
+
+// createCeiling bounds a Create whose spec carries no Timeout.
+//
+// It is more generous than execCeiling because Create is the verb that may pull
+// an image, and a pull is network-bound in a way no command execution is: a
+// multi-hundred-megabyte workspace image on a cold cache is minutes of work
+// that has nothing to do with the daemon being wedged. The ceiling exists to
+// stop an unreachable registry or a hung daemon from blocking a caller that
+// passed context.Background() — the Sandbox contract's requirement — not to
+// second-guess a slow but progressing pull. A var so tests can shrink it.
+var createCeiling = 30 * time.Minute
 
 // Sandbox is a container workspace behind the runtime's Sandbox seam. It owns
 // no filesystem state of its own: every operation delegates to the croft
@@ -111,16 +123,24 @@ func (s *Sandbox) Capabilities() sbx.SandboxCapabilities {
 // Create provisions the container workspace: resolves the image rootfs,
 // prepares the base snapshot and starts the task.
 //
-// spec.Timeout bounds the operation, which matters because a first run may
-// pull an image. spec.Workdir and spec.Env are ignored: the container's root
-// and environment are fixed by Config at construction, and this backend
-// infers its own workspace path.
+// spec.Timeout bounds the operation. Zero means this backend's default, which
+// is createCeiling — the Sandbox contract asks a backend to impose its own
+// ceiling so a caller passing context.Background() cannot hang indefinitely,
+// and Create is the verb most likely to: a first run may pull an image, so a
+// slow or unreachable registry would otherwise block forever. An explicit
+// Timeout above the ceiling is honored as the caller's contract, not clamped.
+//
+// spec.Workdir and spec.Env are ignored: the container's root and environment
+// are fixed by Config at construction, and this backend infers its own
+// workspace path.
 func (s *Sandbox) Create(ctx context.Context, spec sbx.SandboxSpec) error {
-	if spec.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, spec.Timeout)
-		defer cancel()
+	timeout := spec.Timeout
+	if timeout <= 0 {
+		timeout = createCeiling
 	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	return s.inner.Create(ctx)
 }
 

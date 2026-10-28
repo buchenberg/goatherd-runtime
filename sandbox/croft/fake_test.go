@@ -56,7 +56,7 @@ type fakeCroft struct {
 	calls            []string
 	lastExecReq      croftlib.ExecRequest
 	lastExecDeadline time.Time
-	lastCreateHadDL  bool
+	lastCreateDL     time.Time
 	applied          croftlib.WorkspaceState
 	releasedStates   []croftlib.WorkspaceState
 	created, gone    bool
@@ -78,7 +78,7 @@ func (f *fakeCroft) Create(ctx context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record("create")
-	_, f.lastCreateHadDL = ctx.Deadline()
+	f.lastCreateDL, _ = ctx.Deadline()
 	if f.createErr != nil {
 		return f.createErr
 	}

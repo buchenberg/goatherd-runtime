@@ -83,16 +83,35 @@ func (s *Sandbox) Exec(ctx context.Context, req sbx.ExecRequest) (sbx.ExecResult
 // container tier cannot honor. See Exec for why this is a refusal rather than
 // a downgrade, and for the croft-ku0 decision that will revisit it.
 //
+// Placement is checked against the whole vocabulary, not matched only where it
+// must be refused. containment.ResolvePlacement — the layer that produces
+// placements — rejects an unknown value, and this backend must not be laxer
+// than the layer above it: matching only PlacementPaddock would let a typo such
+// as "Paddock" fall through to the permissive default, a fail-open hole in the
+// one path whose entire purpose is failing closed. An unknown placement is a
+// caller bug rather than an unsupported feature, so it is reported plainly,
+// matching ResolvePlacement's own wording, instead of wrapping ErrUnsupported.
+//
 // An advisory or auto placement — and an empty one, meaning "this backend's
 // default" — is accepted: neither asks for syscall-tier enforcement, so the
 // container boundary is an honest answer to them.
 func refuseUnsupportedAuthority(req sbx.ExecRequest) error {
-	switch {
-	case req.Confinement != nil:
+	if req.Confinement != nil {
 		return fmt.Errorf("croft sandbox: a confinement spec cannot be lowered into a container: the rootfs is wholly writable, so there is no writable-root set to enforce (%w; pending goatherd-croft bead croft-ku0, the container-tier authority vocabulary)", sbx.ErrUnsupported)
-	case req.Placement == containment.PlacementPaddock:
+	}
+
+	switch req.Placement {
+	case "", containment.PlacementAdvisory, containment.PlacementAuto:
+		// No syscall-tier enforcement requested; the container boundary is an
+		// honest answer.
+	case containment.PlacementPaddock:
 		return fmt.Errorf("croft sandbox: placement %q asks for the syscall paddock tier, which this backend does not provide — the container boundary is its enforcement (%w; pending goatherd-croft bead croft-ku0)", req.Placement, sbx.ErrUnsupported)
-	case req.AuthorityMatch != "":
+	default:
+		return fmt.Errorf("croft sandbox: unknown placement %q (valid: %q, %q, %q, or empty for this backend's default)",
+			req.Placement, containment.PlacementPaddock, containment.PlacementAdvisory, containment.PlacementAuto)
+	}
+
+	if req.AuthorityMatch != "" {
 		return fmt.Errorf("croft sandbox: an authority-surface digest asserts enforcement this backend cannot evidence (%w; pending goatherd-croft bead croft-ku0)", sbx.ErrUnsupported)
 	}
 	return nil
