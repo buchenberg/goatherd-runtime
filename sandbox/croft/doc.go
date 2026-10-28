@@ -24,11 +24,14 @@
 // in any case: overlayfs snapshots, bind mounts, FIFOs, and a `/bin/sh -c
 // "sleep infinity"` init process.
 //
-// Every other platform builds backend_other.go instead, which declares the
-// same exported surface (BackendName, Config, Limits, SecretMount, Sandbox,
-// New) without importing croft, and whose New returns ErrUnsupportedPlatform.
-// No backend is registered there, so OpenSandbox("containerd", ...) fails with
-// the registry's unknown-backend error naming what *is* available.
+// Every other platform builds backend_other.go instead of the Linux
+// implementation. The exported surface that is meaningful everywhere lives in
+// the untagged config.go — BackendName, Config, Limits, SecretMount,
+// ErrUnsupportedPlatform and the EffectChanger capability interface — while
+// backend_other.go supplies Sandbox and New without importing croft, and its New
+// returns ErrUnsupportedPlatform. No backend is registered there, so
+// OpenSandbox("containerd", ...) fails with the registry's unknown-backend
+// error naming what *is* available.
 //
 // That split is deliberate and load-bearing: it is what lets a host such as
 // yaah compile and ship Windows and macOS binaries while still depending on

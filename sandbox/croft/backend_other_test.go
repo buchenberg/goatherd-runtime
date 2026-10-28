@@ -87,4 +87,16 @@ func TestStub_SurfaceMatchesTheLinuxBuild(t *testing.T) {
 	if got := s.Backend(); got != BackendName {
 		t.Errorf("Backend() = %q, want %q", got, BackendName)
 	}
+
+	// EffectChanger is part of the same untagged surface, and referencing the
+	// type here is the pin: a host must be able to name the capability it probes
+	// for on every platform it builds for, even where nothing implements it.
+	// Were the interface moved into a Linux-only file, this test would stop
+	// compiling on Windows and macOS — exactly the drift it exists to catch.
+	//
+	// Deliberately a declaration and not a comparison. Converting nil to an
+	// interface type always yields a nil interface, so `EffectChanger(nil) != nil`
+	// is a compile-time constant whose branch could never run, which would read
+	// as a runtime assertion this test does not make.
+	var _ EffectChanger
 }

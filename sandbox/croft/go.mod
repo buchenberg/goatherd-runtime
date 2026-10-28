@@ -5,7 +5,7 @@ go 1.26.3
 require (
 	github.com/buchenberg/goatherd-croft v0.8.0
 	github.com/buchenberg/goatherd-kernel v0.18.0
-	github.com/buchenberg/goatherd-runtime v0.19.0
+	github.com/buchenberg/goatherd-runtime v0.20.0
 )
 
 require (
