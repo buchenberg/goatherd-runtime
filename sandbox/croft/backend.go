@@ -61,8 +61,9 @@ func newWithInner(cfg Config, inner croftlib.Sandbox) *Sandbox {
 }
 
 // toCroftConfig lowers the adapter's Config onto croft's. The mapping is
-// field-for-field; the adapter type exists so hosts never import croft, not to
-// reshape the configuration.
+// field-for-field except for ContentDigest, which the adapter forces on: it is
+// how the adapter satisfies the kernel's digest-stability contract, not a host
+// preference. The adapter type exists so hosts never import croft.
 func toCroftConfig(c Config) croftlib.Config {
 	out := croftlib.Config{
 		Address:         c.Address,
@@ -160,10 +161,13 @@ func (s *Sandbox) Destroy(ctx context.Context) error {
 // Capture commits the active layer, pins it under a lease and continues on a
 // fresh layer, returning the state as a trace.WorkspaceState.
 //
-// See the package doc: the returned digest is NOT content-stable across
-// captures of unchanged content, because croft's state identity is
-// sequence-derived. Callers must not compare two captures as content equality
-// until croft-dlb lands.
+// Since croft-dlb the returned digest is content-stable: croft diffs the active
+// layer against its parent and, when nothing changed, returns the parent's
+// state verbatim instead of minting a new key. Two captures of unchanged
+// content at an unchanged position therefore digest equally, which is what
+// settlement's select precondition compares. Content captured at a moved
+// timeline still digests differently by design; WorkspaceState.ContentDigest
+// (Data["content_digest"]) is the identity for those comparisons.
 func (s *Sandbox) Capture(ctx context.Context) (trace.WorkspaceState, error) {
 	cs, err := s.inner.Capture(ctx)
 	if err != nil {

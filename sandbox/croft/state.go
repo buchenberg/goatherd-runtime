@@ -33,6 +33,16 @@ const (
 	// (croft-dlb). It is stable across captures of identical content, so a
 	// host can compare content even when the timeline moved and the snapshot
 	// key changed.
+	//
+	// Availability: states captured by this adapter version or later carry it;
+	// a state persisted before croft-dlb rehydrates with an empty digest and
+	// can never compare content-equal to a fresh capture. Treat an empty value
+	// as "no content identity recorded", not as equality.
+	//
+	// Trust: the value is producer-computed and is not re-verified on Apply.
+	// The trace store is the trust boundary (as it is for every other state
+	// field); a state that crosses an untrusted boundary must be treated as
+	// untrusted input, not as a content check.
 	keyContentDigest = "content_digest"
 )
 

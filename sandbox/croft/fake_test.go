@@ -4,6 +4,7 @@ package croft
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -19,11 +20,10 @@ import (
 // croft's own fakes live in its fake_test.go and are not importable, but the
 // interface they satisfy is exported, so the adapter can be driven through it.
 //
-// It models the one behaviour the adapter's contract tests actually depend on:
-// Capture mints a *sequence-derived* snapshot key, exactly as real croft does,
-// so re-capturing unchanged content yields a different state identity. That is
-// the digest-stability gap the package doc records, and TestSandbox_
-// CaptureDigestIsNotContentStable asserts it rather than hiding it.
+// It models croft-dlb: Capture mints a sequence-derived key only when the tree
+// changed since the last capture. An unchanged capture returns the previous
+// state verbatim, and ContentDigest is derived from the fake's file tree, so
+// the adapter's stability and mapping tests have real signal.
 type fakeCroft struct {
 	mu sync.Mutex
 
@@ -51,6 +51,12 @@ type fakeCroft struct {
 	// error injection, one per verb.
 	createErr, destroyErr, captureErr, applyErr, execErr         error
 	readErr, writeErr, changesErr, diffErr, deltaErr, releaseErr error
+
+	// croft-dlb state: dirty marks a write/exec/apply since the last capture;
+	// lastState is what an unchanged capture returns.
+	dirty     bool
+	lastState croftlib.WorkspaceState
+	haveLast  bool
 
 	// observations
 	calls            []string
@@ -83,6 +89,8 @@ func (f *fakeCroft) Create(ctx context.Context) error {
 		return f.createErr
 	}
 	f.created = true
+	f.haveLast = false
+	f.dirty = false
 	return nil
 }
 
@@ -104,14 +112,20 @@ func (f *fakeCroft) Capture(context.Context) (croftlib.WorkspaceState, error) {
 	if f.captureErr != nil {
 		return croftlib.WorkspaceState{}, f.captureErr
 	}
+	if !f.dirty && f.haveLast {
+		return f.lastState, nil
+	}
 	f.seq++
 	ws := croftlib.WorkspaceState{
 		SnapshotKey:   fmt.Sprintf("croft-seq-%d", f.seq),
 		ParentKey:     f.parent,
 		BaseKey:       f.base,
 		Image:         f.image,
-		ContentDigest: "sha256:content-addressed",
+		ContentDigest: f.contentDigestLocked(),
 	}
+	f.lastState = ws
+	f.haveLast = true
+	f.dirty = false
 	// Snapshot the tree under the new key so a later Changes/Diff against this
 	// state has something to compare to, and pin it as a state.
 	tree := make(map[string][]byte, len(f.files))
@@ -146,6 +160,11 @@ func (f *fakeCroft) Apply(_ context.Context, ws croftlib.WorkspaceState) error {
 	f.parent = ws.SnapshotKey
 	f.base = ws.SnapshotKey
 	f.applied = ws
+	// croft-dlb: the applied state is the state, as given. A no-change capture
+	// returns it verbatim, including lineage this sandbox did not reconstruct.
+	f.lastState = ws
+	f.haveLast = true
+	f.dirty = false
 	return nil
 }
 
@@ -167,6 +186,7 @@ func (f *fakeCroft) Exec(ctx context.Context, req croftlib.ExecRequest) (croftli
 	f.record("exec")
 	f.lastExecReq = req
 	f.lastExecDeadline, _ = ctx.Deadline()
+	f.dirty = true
 	fn := f.execFn
 	err := f.execErr
 	f.mu.Unlock()
@@ -206,7 +226,24 @@ func (f *fakeCroft) WriteFile(_ context.Context, path string, data []byte, _ fs.
 		return f.writeErr
 	}
 	f.files[path] = data
+	f.dirty = true
 	return nil
+}
+
+// contentDigestLocked hashes the fake's file tree in path order.
+func (f *fakeCroft) contentDigestLocked() string {
+	paths := make([]string, 0, len(f.files))
+	for p := range f.files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	h := sha256.New()
+	for _, p := range paths {
+		fmt.Fprintf(h, "%s\x00", p)
+		h.Write(f.files[p])
+		h.Write([]byte{0})
+	}
+	return fmt.Sprintf("sha256:%x", h.Sum(nil))
 }
 
 func (f *fakeCroft) Changes(_ context.Context, ws croftlib.WorkspaceState) ([]croftlib.Change, error) {

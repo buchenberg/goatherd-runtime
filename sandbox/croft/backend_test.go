@@ -306,16 +306,17 @@ func TestSandbox_CaptureCarriesContentDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
-	if got := ws.Data[keyContentDigest]; got != "sha256:content-addressed" {
-		t.Fatalf("Data[%s] = %v, want the croft content digest", keyContentDigest, got)
+	got, _ := ws.Data[keyContentDigest].(string)
+	if !strings.HasPrefix(got, "sha256:") {
+		t.Fatalf("Data[%s] = %v, want the croft content digest", keyContentDigest, ws.Data[keyContentDigest])
 	}
 
 	back, err := fromTraceState(ws)
 	if err != nil {
 		t.Fatalf("fromTraceState: %v", err)
 	}
-	if back.ContentDigest != "sha256:content-addressed" {
-		t.Fatalf("ContentDigest round trip = %q", back.ContentDigest)
+	if back.ContentDigest != got {
+		t.Fatalf("ContentDigest round trip = %q, want %q", back.ContentDigest, got)
 	}
 }
 
