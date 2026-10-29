@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	trace "github.com/buchenberg/goatherd-kernel"
 	"path"
 	"strings"
+
+	trace "github.com/buchenberg/goatherd-kernel"
 )
 
 // Merge gate schema refs for trace recording (plan 04 §1).
@@ -18,11 +19,6 @@ const (
 	// owner path, citing the proposed record as its causal parent.
 	SchemaSupervisorDecision = "goatherd.supervisor.decision.v1"
 )
-
-// DefaultProposalDiffLines bounds the diff a CommitMerge proposal carries
-// when the caller has not chosen a bound. It is deliberately generous: the
-// reviewer sees the change, and the trace only stores the digest.
-const DefaultProposalDiffLines = 1000
 
 // Proposed change kinds.
 const (
@@ -62,9 +58,9 @@ type MergeProposal struct {
 // reason recorded in the trace and carried on SupervisorDeniedError.
 type MergeReviewer func(proposal MergeProposal) error
 
-// SupervisorDeniedError is returned by CommitMerge when the reviewer denied
-// the merge. The child scope has been discarded; the parent's workspace was
-// never touched.
+// SupervisorDeniedError is returned by review-gated callers when a reviewer
+// denied a proposal. The child scope has been discarded; the parent's
+// workspace was never touched.
 type SupervisorDeniedError struct {
 	// Reason is the reviewer's error text.
 	Reason string
@@ -135,83 +131,58 @@ func (m *ScopeManager) ProposeMerge(ctx context.Context, childID string, maxDiff
 	}, nil
 }
 
-// CommitMerge runs the check-at-commit gate: propose, record, review, then
-// merge or discard.
+// RecordMergeProposal records a proposal for review on the child's owner
+// path. It is the first half of the explicit review provenance pair: the
+// caller runs ProposeMerge, records the proposal here, then records the
+// decision with RecordMergeDecision when it settles or rejects the work.
 //
-// The sequence is:
-//
-//  1. ProposeMerge builds the proposal from the child's current workspace
-//     diffed against the fork baseline.
-//  2. A goatherd.merge.proposed.v1 capture is recorded on the child's owner
-//     path (change paths, kinds, count, and the diff digest — never the diff
-//     body).
-//  3. review(proposal) decides.
-//  4. Approval records goatherd.supervisor.decision.v1 {approved: true} on
-//     the parent's path and merges the child (the plain, ungated Merge).
-//     Denial records the decision with the reason, discards the child —
-//     never merges — and returns *SupervisorDeniedError.
-//
-// Merge is causal-only: it never rewrites the parent's workspace. CommitMerge
-// is therefore for children that share the parent's sandbox — their work is
-// already in the parent's tree, and a denial's rollback is the caller's
-// checkpoint restore. A child with an isolated sandbox (a worktree) is
-// refused with an error pointing at Seal + SettleSelect: merging it would
-// causally record an approval and then destroy the worktree, losing the work
-// the reviewer just approved. Settlement owns physical propagation for
-// isolated children.
-//
-// A nil reviewer is rejected: skipping review is what plain Merge is for,
-// and an accidental nil must not become an accidental approve.
-func (m *ScopeManager) CommitMerge(ctx context.Context, childID string, review MergeReviewer) error {
-	if review == nil {
-		return fmt.Errorf("CommitMerge requires a reviewer; to skip review deliberately, call Merge")
+// Recording is hard, not advisory: a trace that cannot carry the proposal
+// must not carry a decision about work that was never recorded as proposed.
+// The proposal itself is never stored in full — changes, count, baseline and
+// diff digest only.
+func (m *ScopeManager) RecordMergeProposal(ctx context.Context, proposal *MergeProposal) (string, error) {
+	if proposal == nil {
+		return "", errors.New("RecordMergeProposal: nil proposal")
 	}
-
 	m.mu.RLock()
-	child, ok := m.scopes[childID]
+	child, ok := m.scopes[proposal.ChildScopeID]
 	m.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("scope %s not found", childID)
+		return "", fmt.Errorf("scope %s not found", proposal.ChildScopeID)
 	}
-
-	if sb := child.Sandbox(); sb != nil && sb.Capabilities().Isolated {
-		return fmt.Errorf("CommitMerge refuses scope %s: its %s sandbox is isolated, so Merge would destroy the work the reviewer approved; seal the scope and SettleSelect its output instead", childID, sb.Backend())
+	if child.State() != ScopeActive {
+		return "", fmt.Errorf("cannot record a proposal for scope %s in state %s", proposal.ChildScopeID, child.State())
 	}
+	return recordMergeProposed(ctx, child, proposal)
+}
 
+// RecordMergeDecision records the review outcome on the parent's owner path,
+// citing the proposal record. It is the second half of the provenance pair and
+// works for both a causal merge and a settlement: action names what the caller
+// did (for example "selected", "applied", "discarded", or "released").
+//
+// The child may already be terminal when this runs — settlement consumes it —
+// so unlike RecordMergeProposal this deliberately does not require active
+// state. The decision is still parent-owned and causally joined to the
+// proposal.
+func (m *ScopeManager) RecordMergeDecision(ctx context.Context, proposal *MergeProposal, approved bool, reason, action, proposedFactID string) (string, error) {
+	if proposal == nil {
+		return "", errors.New("RecordMergeDecision: nil proposal")
+	}
+	if proposedFactID == "" {
+		return "", errors.New("RecordMergeDecision: a proposal fact id is required")
+	}
+	m.mu.RLock()
+	child, ok := m.scopes[proposal.ChildScopeID]
+	m.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("scope %s not found", proposal.ChildScopeID)
+	}
 	parent := child.Parent()
 	if parent == nil {
-		return fmt.Errorf("scope %s has no parent (root scope)", childID)
+		return "", fmt.Errorf("scope %s has no parent (root scope)", proposal.ChildScopeID)
 	}
-
-	proposal, err := m.ProposeMerge(ctx, childID, DefaultProposalDiffLines)
-	if err != nil {
-		return fmt.Errorf("commit merge for %s: %w", childID, err)
-	}
-
-	proposedFactID, err := recordMergeProposed(ctx, child, proposal)
-	if err != nil {
-		return err
-	}
-
-	reason := review(*proposal)
-	if reason != nil {
-		denyErr := &SupervisorDeniedError{Reason: reason.Error(), Changes: proposal.Changes}
-		if err := recordSupervisorDecision(ctx, parent, proposal, false, reason.Error(), proposedFactID); err != nil {
-			return errors.Join(denyErr, err)
-		}
-		// Deny → Discard, never Merge. The child's sandbox, if it owns one,
-		// is destroyed by Discard, which is what makes a denial a physical
-		// rollback for an isolating backend.
-		if err := parent.Discard(child); err != nil {
-			return errors.Join(denyErr, fmt.Errorf("discard denied scope %s: %w", childID, err))
-		}
-		return denyErr
-	}
-
-	if err := recordSupervisorDecision(ctx, parent, proposal, true, "", proposedFactID); err != nil {
-		return err
-	}
-	return parent.Merge(child)
+	return recordSupervisorDecision(ctx, parent, proposal, approved, reason, action, proposedFactID)
 }
 
 // recordMergeProposed appends the proposal record on the child's owner path.
@@ -267,34 +238,38 @@ func recordMergeProposed(ctx context.Context, child *Scope, proposal *MergePropo
 }
 
 // recordSupervisorDecision appends the review outcome on the parent's owner
-// path, citing the proposal record. Like the proposal record, the append is
-// hard: it precedes the physical merge or discard it authorizes.
+// path, citing the proposal record. The caller may record it before or after
+// the physical integration; action names what actually happened, and the
+// append is hard either way.
 func recordSupervisorDecision(
 	ctx context.Context,
 	parent *Scope,
 	proposal *MergeProposal,
 	approved bool,
 	reason string,
-	causedBy string,
-) error {
+	action string,
+	proposedFactID string,
+) (string, error) {
 	parent.mu.RLock()
 	ownerID := parent.ownerID
 	parent.mu.RUnlock()
 
 	payload := map[string]any{
-		"approved":    approved,
-		"child_scope": proposal.ChildScopeID,
+		"approved":     approved,
+		"child_scope":  proposal.ChildScopeID,
+		"action":       action,
+		"change_count": len(proposal.Changes),
 	}
-	if !approved && reason != "" {
+	if reason != "" {
 		payload["reason"] = reason
 	}
 
 	causalParents := []string{}
-	if causedBy != "" {
-		causalParents = []string{causedBy}
+	if proposedFactID != "" {
+		causalParents = []string{proposedFactID}
 	}
 
-	_, err := parent.store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
+	receipt, err := parent.store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:merge-decision:%d", ownerID, nextCheckpointSeq.Add(1)),
 		Groups: []trace.AppendGroup{{
 			TraceOwnerID:  ownerID,
@@ -308,9 +283,12 @@ func recordSupervisorDecision(
 		}},
 	})
 	if err != nil {
-		return fmt.Errorf("record supervisor decision: %w", err)
+		return "", fmt.Errorf("record supervisor decision: %w", err)
 	}
-	return nil
+	if len(receipt.FactIDs) != 1 {
+		return "", fmt.Errorf("record supervisor decision: append returned %d facts, want 1", len(receipt.FactIDs))
+	}
+	return receipt.FactIDs[0], nil
 }
 
 // classifyChanges turns a unified diff plus its changed-file list into the
@@ -503,29 +481,6 @@ func stripDiffPath(p, prefix string) string {
 }
 
 // --- Built-in reviewers ---
-
-// DraftsOnlyReviewer denies any change outside prefix — the Go analogue of
-// the reference drafts_only_supervisor. prefix is a directory: "out" matches
-// "out" and "out/anything", but not "outline.txt". An empty prefix approves
-// everything (useful as a chain element, not as a gate).
-func DraftsOnlyReviewer(prefix string) MergeReviewer {
-	return func(p MergeProposal) error {
-		for _, c := range p.Changes {
-			if !pathWithin(c.Path, prefix) {
-				return fmt.Errorf("change to %q is outside the drafts prefix %q", c.Path, prefix)
-			}
-		}
-		return nil
-	}
-}
-
-// pathWithin reports whether p is prefix itself or inside prefix/.
-func pathWithin(p, prefix string) bool {
-	if prefix == "" {
-		return true
-	}
-	return p == prefix || strings.HasPrefix(p, prefix+"/")
-}
 
 // DestructivePathReviewer denies any change touching a path that matches one
 // of the given patterns. A pattern is matched against the workspace-relative

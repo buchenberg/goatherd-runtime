@@ -15,9 +15,13 @@
 > **Status:** all four phases are implemented in
 > [`run/reversible.go`](../../run/reversible.go) and
 > [`fact.go`](../../fact.go) — 20 passing tests. Merge propagates
-> physically via `Seal` + `SettleSelect`/`SettleApply` — `CommitMerge` refuses
-> isolated children (§9). `authority_merge` (Phase 4) is the `DecisionProvider`
-> gate (Plan 3 Phase 4).
+> physically via `Seal` + `SettleSelect`/`SettleApply`. `authority_merge`
+> (Phase 4) is the `DecisionProvider` gate (Plan 3 Phase 4).
+>
+> **Historical note:** this plan referenced `CommitMerge`; that helper was
+> removed in `shepherd-runtime-go-s3u` because it only applied to shared-sandbox
+> children. Review now records the explicit
+> `RecordMergeProposal` / `RecordMergeDecision` pair.
 
 ## 1. Objective & Context
 
@@ -65,7 +69,7 @@ Go substrate this composes with (already implemented):
 | capture/restore | `(*Scope).CaptureWorkspace/ApplyWorkspace(ctx) (trace.WorkspaceState, error)` |
 | seal | `(*ScopeManager).Seal(ctx, scopeID string) (*RetainedOutput, error)` |
 | settle | `(*ScopeManager).Settle(ctx, outputID string, action SettlementAction) error` — `SettleSelect`/`SettleApply`/`SettleRelease`/`SettleDiscard` |
-| review-gated merge | `(*ScopeManager).CommitMerge(ctx, childID string, review MergeReviewer) error` (+ `ProposeMerge`, `SupervisorDeniedError`) |
+| review-gated merge | `(*ScopeManager).ProposeMerge` + `RecordMergeProposal` / `RecordMergeDecision` (+ `SupervisorDeniedError`) |
 | discard | `(*ScopeManager).Discard(childID string) error` |
 | confined exec | `containment.LaunchConfined`, `containment.Capability`, `git.WithExec` |
 
@@ -249,10 +253,9 @@ trace.TrustedAppendContext, trace.AppendBatch{...})` returning an
 - **Merge (default):** for an isolated run this is **physical propagation via
   settlement** — `mgr.Seal(ctx, runScope.ID())` then
   `mgr.Settle(ctx, out.ID(), SettleSelect)`, falling back to `SettleApply` when
-  the parent moved. `CommitMerge` is *not* used: it refuses isolated children
-  (their physical propagation belongs to settlement). The review gate runs via
-  `ProposeMerge` before sealing; a denial discards the run and returns
-  `*SupervisorDeniedError`.
+  the parent moved. The review gate runs via `ProposeMerge` before sealing and
+  records the explicit proposal/decision pair; a denial discards the run and
+  returns `*SupervisorDeniedError`.
 - **Seal:** `out := mgr.Seal(ctx, runScope.ID())`; the caller settles later
   (`SettleSelect`/`Apply`), enabling fork-and-choose (`Outcome.Output`).
 - **`authority_merge`:** the `DecisionProvider` gate (Plan 3 Phase 4) — the run's

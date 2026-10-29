@@ -30,9 +30,16 @@
 //   - github.com/buchenberg/goatherd-runtime/task — the task runtime:
 //     StartTaskSync/StartTask, Run, TaskControl, ChildHandle with spawn/
 //     adopt/abandon relations
+//   - github.com/buchenberg/goatherd-runtime/run — the reference reversible
+//     run composition: fork, handler, review, seal/settle
 //   - github.com/buchenberg/goatherd-runtime/supervisor — the rules
 //     engine that observes the effect bus and can inject, fork, discard,
 //     halt, or deny
+//
+// task, materialize, and substrate are landed public primitives, fully tested,
+// but no default host composition uses them yet. run is the reference composed
+// path; the runtime does not promise a single integrated pipeline for the
+// primitives until a real caller lands.
 //
 // Compatibility: the record digests, canonical JSON, and the vector
 // fixtures are frozen ABI surface shared with the Python reference; the

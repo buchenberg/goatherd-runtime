@@ -152,10 +152,10 @@ func TestExample_BestOfN(t *testing.T) {
 	}
 }
 
-// TestExample_RetryUntilAcceptable: loop fork → work → checkpoint →
-// CommitMerge with a drafts-only reviewer → deny → discard → restore → retry
-// with injected guidance, until approved. CheckCall's pre-tool deny and the
-// merge gate's commit deny appear in one flow.
+// TestExample_RetryUntilAcceptable: loop fork → work → checkpoint → propose →
+// review → deny/discard → restore → retry with injected guidance, until
+// approved. The proposal and decision records are the explicit provenance pair;
+// the physical rollback is the caller's checkpoint restore.
 func TestExample_RetryUntilAcceptable(t *testing.T) {
 	store := rttest.NewMemStore(t)
 	mgr := goatherd.NewScopeManager(store)
@@ -167,16 +167,23 @@ func TestExample_RetryUntilAcceptable(t *testing.T) {
 	}
 
 	// The supervision surface: supervisor.DestructiveToolGuard denies calls before
-	// execution; goatherd.DraftsOnlyReviewer denies merges at commit time.
+	// execution; the reviewer denies work outside out/.
 	sup := supervisor.NewSupervisor(mgr, nil)
 	sup.AddRule(supervisor.DestructiveToolGuard())
-	reviewer := goatherd.DraftsOnlyReviewer("out")
+	reviewer := func(p goatherd.MergeProposal) error {
+		for _, c := range p.Changes {
+			if c.Path != "out/final.txt" {
+				return fmt.Errorf("change to %q is outside out/", c.Path)
+			}
+		}
+		return nil
+	}
 
 	const maxAttempts = 3
 	denied := 0
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		// goatherd.Checkpoint before the attempt: a denial's rollback is the caller's
+		// Checkpoint before the attempt: a denial's rollback is the caller's
 		// restore of the shared workspace.
 		cp, err := mgr.CreateCheckpoint(ctx, parent.ID(), []byte("conversation"))
 		if err != nil {
@@ -221,24 +228,39 @@ func TestExample_RetryUntilAcceptable(t *testing.T) {
 			t.Fatalf("attempt %d write: %v", attempt, err)
 		}
 
-		lastErr = mgr.CommitMerge(ctx, child.ID(), reviewer)
-		var deniedErr *goatherd.SupervisorDeniedError
-		if errors.As(lastErr, &deniedErr) {
+		proposal, err := mgr.ProposeMerge(ctx, child.ID(), 100)
+		if err != nil {
+			t.Fatalf("attempt %d ProposeMerge: %v", attempt, err)
+		}
+		proposedID, err := mgr.RecordMergeProposal(ctx, proposal)
+		if err != nil {
+			t.Fatalf("attempt %d RecordMergeProposal: %v", attempt, err)
+		}
+		if deny := reviewer(*proposal); deny != nil {
 			denied++
-			// Deny → child discarded (CommitMerge does it); the caller
-			// restores the shared workspace from the checkpoint.
+			if _, err := mgr.RecordMergeDecision(ctx, proposal, false, deny.Error(), "discarded", proposedID); err != nil {
+				t.Fatalf("attempt %d RecordMergeDecision: %v", attempt, err)
+			}
+			if err := mgr.Discard(child.ID()); err != nil {
+				t.Fatalf("attempt %d discard: %v", attempt, err)
+			}
 			if _, err := mgr.RestoreCheckpoint(ctx, cp.ID); err != nil {
 				t.Fatalf("attempt %d restore: %v", attempt, err)
 			}
 			if fileExistsT(t, repo, filepath.FromSlash(target)) {
 				t.Errorf("attempt %d: denied work survived the restore", attempt)
 			}
+			lastErr = deny
 			continue
 		}
-		if lastErr != nil {
-			t.Fatalf("attempt %d CommitMerge: %v", attempt, lastErr)
+		if _, err := mgr.RecordMergeDecision(ctx, proposal, true, "", "merged", proposedID); err != nil {
+			t.Fatalf("attempt %d RecordMergeDecision: %v", attempt, err)
 		}
-		break // approved and merged
+		if err := parent.Merge(child); err != nil {
+			t.Fatalf("attempt %d merge: %v", attempt, err)
+		}
+		lastErr = nil
+		break
 	}
 
 	if denied != maxAttempts-1 {

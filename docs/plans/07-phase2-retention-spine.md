@@ -24,7 +24,7 @@ machine, and `yaah` already imports it:
 | `ScopeManager.Settle(ctx, outputID, action)` | settle **once**: `SettleSelect` / `SettleApply` / `SettleRelease` / `SettleDiscard` |
 | `ErrOutputConsumed` | consume-once guard (a second settle refuses) |
 | `ErrApplyConflict` | `SettleApply` refuses overlapping paths |
-| `MergePolicy` / `CommitMerge` | the merge gate (approve/deny a settlement) |
+| `ProposeMerge` / `RecordMergeProposal` / `RecordMergeDecision` | explicit review provenance: proposal on the child, verdict on the parent |
 
 **yaah already drives all of it — in exactly one place:** `forkVariants` /
 `chooseVariant` in `internal/tools/supervised_session.go`. `provisionVariant`

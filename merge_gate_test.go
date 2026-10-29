@@ -2,7 +2,6 @@ package goatherd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	trace "github.com/buchenberg/goatherd-kernel"
 	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
@@ -258,11 +257,11 @@ func TestProposeMerge_ClassifiesChildChanges(t *testing.T) {
 	}
 }
 
-// TestCommitMerge_DenyingReviewer covers T3.3's deny path on a shared-sandbox
-// child — the shape CommitMerge exists for: the child's work is in the
-// parent's tree, denial discards the child causally, and the rollback of the
-// shared workspace is the caller's checkpoint restore.
-func TestCommitMerge_DenyingReviewer(t *testing.T) {
+// TestRecordMergeProposal_Denied covers the explicit provenance pair on a
+// shared-sandbox child: the proposal is recorded before review, the denial is
+// recorded on the parent, and the caller discards and restores its own
+// checkpoint. This replaces the old CommitMerge gate.
+func TestRecordMergeProposal_Denied(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
@@ -274,7 +273,6 @@ func TestCommitMerge_DenyingReviewer(t *testing.T) {
 		t.Fatalf("checkpoint: %v", err)
 	}
 
-	// A shared-sandbox child works directly in the parent's tree.
 	child, err := mgr.Fork(parent.ID(), "gate:deny-child", nil)
 	if err != nil {
 		t.Fatalf("fork: %v", err)
@@ -283,35 +281,30 @@ func TestCommitMerge_DenyingReviewer(t *testing.T) {
 		t.Fatalf("write outside: %v", err)
 	}
 
-	err = mgr.CommitMerge(ctx, child.ID(), DraftsOnlyReviewer("drafts"))
-	if err == nil {
-		t.Fatal("CommitMerge with a change outside the drafts prefix should deny")
+	proposal, err := mgr.ProposeMerge(ctx, child.ID(), 100)
+	if err != nil {
+		t.Fatalf("ProposeMerge: %v", err)
 	}
-	var denied *SupervisorDeniedError
-	if !errors.As(err, &denied) {
-		t.Fatalf("CommitMerge error = %T (%v), want *SupervisorDeniedError", err, err)
+	proposedID, err := mgr.RecordMergeProposal(ctx, proposal)
+	if err != nil {
+		t.Fatalf("RecordMergeProposal: %v", err)
 	}
-	if !strings.Contains(denied.Error(), "outside the drafts prefix") {
-		t.Errorf("denial text = %q, want it to carry the reviewer's reason", denied.Error())
+	if proposedID == "" {
+		t.Fatal("RecordMergeProposal returned no fact id")
 	}
-	if !strings.Contains(denied.Error(), "outside.txt") {
-		t.Errorf("denial text = %q, want it to name the denied path", denied.Error())
+	if _, err := mgr.RecordMergeDecision(ctx, proposal, false, "outside the drafts prefix", "discarded", proposedID); err != nil {
+		t.Fatalf("RecordMergeDecision: %v", err)
 	}
-
-	// Child discarded causally; the shared sandbox is inherited, not owned,
-	// so nothing is destroyed — the caller rolls the workspace back.
-	if child.State() != ScopeDiscarded {
-		t.Errorf("child state = %s, want discarded", child.State())
+	if err := parent.Discard(child); err != nil {
+		t.Fatalf("discard: %v", err)
 	}
 	if _, err := mgr.RestoreCheckpoint(ctx, cp.ID); err != nil {
 		t.Fatalf("restore after denial: %v", err)
 	}
-	if fileExists(t, repo, "outside.txt") {
-		t.Error("denied work must be gone from the parent workspace after the caller's restore")
-	}
-	// Trace: proposal on the child's path, denied decision on the parent's.
-	if recs := findRecords(t, store, "gate:deny-child", SchemaMergeProposed); len(recs) != 1 {
-		t.Errorf("proposed records on child path: %d, want 1", len(recs))
+
+	proposals := findRecords(t, store, "gate:deny-child", SchemaMergeProposed)
+	if len(proposals) != 1 {
+		t.Fatalf("proposed records on child path: %d, want 1", len(proposals))
 	}
 	decisions := findRecords(t, store, "gate:deny-parent", SchemaSupervisorDecision)
 	if len(decisions) != 1 {
@@ -323,14 +316,17 @@ func TestCommitMerge_DenyingReviewer(t *testing.T) {
 	if fmt.Sprint(decisions[0].Body.Payload["reason"]) == "" {
 		t.Error("denied decision should record the reason")
 	}
+	if fmt.Sprint(decisions[0].Body.Payload["action"]) != "discarded" {
+		t.Errorf("decision action = %v, want discarded", decisions[0].Body.Payload["action"])
+	}
 	if recs := findRecords(t, store, "gate:deny-parent", SchemaScopeMerged); len(recs) != 0 {
 		t.Errorf("denied merge must not record scope:merged, found %d", len(recs))
 	}
 }
 
-// TestCommitMerge_ApprovingReviewer covers the approve path on a shared-sandbox
-// child: both records, the causal merge, and no worktree to destroy.
-func TestCommitMerge_ApprovingReviewer(t *testing.T) {
+// TestRecordMergeProposal_Approved covers the approval half: proposal and
+// decision records exist before the causal merge, and the merge proceeds.
+func TestRecordMergeProposal_Approved(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
@@ -348,8 +344,19 @@ func TestCommitMerge_ApprovingReviewer(t *testing.T) {
 		t.Fatalf("write good: %v", err)
 	}
 
-	if err := mgr.CommitMerge(ctx, child.ID(), DraftsOnlyReviewer("drafts")); err != nil {
-		t.Fatalf("CommitMerge (approve): %v", err)
+	proposal, err := mgr.ProposeMerge(ctx, child.ID(), 100)
+	if err != nil {
+		t.Fatalf("ProposeMerge: %v", err)
+	}
+	proposedID, err := mgr.RecordMergeProposal(ctx, proposal)
+	if err != nil {
+		t.Fatalf("RecordMergeProposal: %v", err)
+	}
+	if _, err := mgr.RecordMergeDecision(ctx, proposal, true, "", "merged", proposedID); err != nil {
+		t.Fatalf("RecordMergeDecision: %v", err)
+	}
+	if err := parent.Merge(child); err != nil {
+		t.Fatalf("merge: %v", err)
 	}
 
 	if child.State() != ScopeMerged {
@@ -365,50 +372,33 @@ func TestCommitMerge_ApprovingReviewer(t *testing.T) {
 	if len(decisions) != 1 || fmt.Sprint(decisions[0].Body.Payload["approved"]) != "true" {
 		t.Errorf("decisions: %+v, want one approved", decisions)
 	}
-	if recs := findRecords(t, store, "gate:ok-parent", SchemaScopeMerged); len(recs) != 1 {
-		t.Errorf("merged records: %d, want 1", len(recs))
+	if fmt.Sprint(decisions[0].Body.Payload["action"]) != "merged" {
+		t.Errorf("decision action = %v, want merged", decisions[0].Body.Payload["action"])
 	}
 }
 
-// TestCommitMerge_IsolatedChildRefused guards the data-loss footgun: merging
-// an isolated child would record approval and destroy the worktree holding
-// the approved work. Settlement owns that transfer.
-func TestCommitMerge_IsolatedChildRefused(t *testing.T) {
-	store := newMemStore(t)
-	mgr := NewScopeManager(store)
-	repo := newTestRepo(t)
-	parent, _ := mgr.Create("gate:iso-parent", git.NewLocalGitSandbox(repo))
-
-	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "gate:iso-child", repo, "wt")
-	if err := os.WriteFile(filepath.Join(wtPath, "feature.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatalf("write feature: %v", err)
-	}
-
-	err := mgr.CommitMerge(context.Background(), child.ID(), DraftsOnlyReviewer(""))
-	if err == nil {
-		t.Fatal("CommitMerge on an isolated child must be refused")
-	}
-	if !strings.Contains(err.Error(), "SettleSelect") {
-		t.Errorf("refusal text = %q, want it to point at Seal + SettleSelect", err.Error())
-	}
-	// Refused before any side effect: child active, worktree intact, no records.
-	if child.State() != ScopeActive {
-		t.Errorf("child state = %s, want active", child.State())
-	}
-	if _, statErr := os.Stat(wtPath); statErr != nil {
-		t.Errorf("worktree must survive the refusal: %v", statErr)
-	}
-	if recs := findRecords(t, store, "gate:iso-child", SchemaMergeProposed); len(recs) != 0 {
-		t.Errorf("refused CommitMerge recorded %d proposals, want 0", len(recs))
-	}
-}
-
-// TestCommitMerge_RequiresReviewer guards the guard: a nil reviewer must not
-// silently become an approval — skipping review is what plain Merge is for.
-func TestCommitMerge_RequiresReviewer(t *testing.T) {
+// TestRecordMergeProposal_RequiresActiveChild pins the provenance boundary:
+// a proposal cannot be recorded for an already-terminal scope, so a decision
+// can never cite work that was never reviewable.
+func TestRecordMergeProposal_RequiresActiveChild(t *testing.T) {
 	mgr := NewScopeManager(newMemStore(t))
-	if err := mgr.CommitMerge(context.Background(), "scope:none", nil); err == nil {
-		t.Fatal("nil reviewer must be rejected")
+	if _, err := mgr.RecordMergeProposal(context.Background(), nil); err == nil {
+		t.Fatal("nil proposal must be rejected")
+	}
+	if _, err := mgr.RecordMergeDecision(context.Background(), &MergeProposal{}, false, "", "discarded", ""); err == nil {
+		t.Fatal("a decision without a proposal fact id must be rejected")
+	}
+
+	parent, _ := mgr.Create("gate:terminal-parent", nil)
+	child, err := mgr.Fork(parent.ID(), "gate:terminal-child", nil)
+	if err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	if err := mgr.Discard(child.ID()); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+	if _, err := mgr.RecordMergeProposal(context.Background(), &MergeProposal{ChildScopeID: child.ID()}); err == nil {
+		t.Fatal("a proposal for a terminal child must be rejected")
 	}
 }
 

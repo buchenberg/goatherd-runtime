@@ -3,6 +3,7 @@ package run
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,7 +20,29 @@ import (
 
 func newManager(t *testing.T) *goatherd.ScopeManager {
 	t.Helper()
-	return goatherd.NewScopeManager(rttest.NewMemStore(t))
+	mgr, _ := newManagerWithStore(t)
+	return mgr
+}
+
+func newManagerWithStore(t *testing.T) (*goatherd.ScopeManager, *trace.SQLiteTraceStore) {
+	t.Helper()
+	store := rttest.NewMemStore(t)
+	return goatherd.NewScopeManager(store), store
+}
+
+func findRunRecords(t *testing.T, store *trace.SQLiteTraceStore, ownerID, schemaRef string) []trace.Record {
+	t.Helper()
+	slice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, ownerID, 999, trace.ModeBoth)
+	if err != nil {
+		t.Fatalf("read trace for %s: %v", ownerID, err)
+	}
+	var found []trace.Record
+	for _, id := range slice.FactIDs() {
+		if rec, ok := slice.FactsByID[id].(trace.Record); ok && rec.Envelope.SchemaRef == schemaRef {
+			found = append(found, rec)
+		}
+	}
+	return found
 }
 
 func newParent(t *testing.T, mgr *goatherd.ScopeManager, owner string) (*goatherd.Scope, string) {
@@ -279,6 +302,68 @@ func TestReversible_MergeDeniedByReviewer(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, "denied.txt")); !os.IsNotExist(err) {
 		t.Fatal("a denied run must not reach the parent workspace")
+	}
+}
+
+func TestReversible_ReviewProvenance(t *testing.T) {
+	mgr, store := newManagerWithStore(t)
+	parent, repo := newParent(t, mgr, "run:prov-main")
+
+	out, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:    "run:prov-1",
+		NewSandbox: worktreeFactory(t, repo),
+		Reviewer: func(p goatherd.MergeProposal) error {
+			if len(p.Changes) != 1 {
+				t.Errorf("reviewer saw %d changes, want 1", len(p.Changes))
+			}
+			return nil
+		},
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		return Result{}, writeIn(rc, "reviewed.txt", "ok")
+	})
+	if err != nil {
+		t.Fatalf("Reversible: %v", err)
+	}
+	if out.Output == nil || out.Output.State() != goatherd.OutputSelected {
+		t.Fatalf("output = %+v, want a selected sealed output", out.Output)
+	}
+
+	proposals := findRunRecords(t, store, "run:prov-1", goatherd.SchemaMergeProposed)
+	if len(proposals) != 1 {
+		t.Fatalf("proposal records = %d, want 1", len(proposals))
+	}
+	decisions := findRunRecords(t, store, "run:prov-main", goatherd.SchemaSupervisorDecision)
+	if len(decisions) != 1 {
+		t.Fatalf("decision records = %d, want 1", len(decisions))
+	}
+	if fmt.Sprint(decisions[0].Body.Payload["approved"]) != "true" {
+		t.Errorf("decision approved = %v, want true", decisions[0].Body.Payload["approved"])
+	}
+	if fmt.Sprint(decisions[0].Body.Payload["action"]) != string(goatherd.SettleSelect) {
+		t.Errorf("decision action = %v, want %s", decisions[0].Body.Payload["action"], goatherd.SettleSelect)
+	}
+}
+
+func TestReversible_DeniedReviewProvenance(t *testing.T) {
+	mgr, store := newManagerWithStore(t)
+	parent, repo := newParent(t, mgr, "run:provd-main")
+
+	_, err := Reversible(context.Background(), mgr, parent, Options{
+		OwnerID:    "run:provd-1",
+		NewSandbox: worktreeFactory(t, repo),
+		Reviewer: func(goatherd.MergeProposal) error {
+			return errors.New("denied by policy")
+		},
+	}, func(_ context.Context, rc *RunContext) (Result, error) {
+		return Result{}, writeIn(rc, "denied.txt", "no")
+	})
+	var denied *goatherd.SupervisorDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("want *SupervisorDeniedError, got %v", err)
+	}
+	if decisions := findRunRecords(t, store, "run:provd-main", goatherd.SchemaSupervisorDecision); len(decisions) != 1 ||
+		fmt.Sprint(decisions[0].Body.Payload["approved"]) != "false" {
+		t.Fatalf("denied decision = %+v, want one denied", decisions)
 	}
 }
 

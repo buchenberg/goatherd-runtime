@@ -4,6 +4,31 @@ Notable changes to `goatherd-runtime`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [v0.21.0] - 2026-10-29
+
+### Added
+- **Explicit review provenance**: `ScopeManager.RecordMergeProposal` and
+  `ScopeManager.RecordMergeDecision` write the proposal on the child's owner
+  path and the verdict on the parent's owner path, causally joined. The pair is
+  independent of physical integration, so a shared-sandbox merge and an
+  isolated Seal + Settle can carry the same trace shape. `run.Reversible` now
+  records both halves when its reviewer or authority decision runs, and
+  `run.ErrReviewDecisionUnrecorded` distinguishes an integrated run whose
+  approval fact could not be appended from a failed integration.
+
+### Removed
+- **`ScopeManager.CommitMerge`**, `DraftsOnlyReviewer`, and
+  `DefaultProposalDiffLines`. `CommitMerge` had no production caller and only
+  supported shared-sandbox children; every isolated run must propagate through
+  Seal + Settle. Review is now an explicit propose → record → review → decide
+  sequence, not a helper that also merges. This is a breaking pre-1.0 removal.
+
+### Changed
+- **Package support is explicit**: `run` is the reference composed path (fork →
+  review → seal/settle). `task`, `materialize`, and `substrate` are landed
+  public primitives with tests/examples, but no default host composition uses
+  them yet; README and `doc.go` now say so and list `run` in the package index.
+
 ## [v0.20.0] - 2026-10-28
 
 ### Added

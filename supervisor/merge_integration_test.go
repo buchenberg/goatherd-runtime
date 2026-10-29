@@ -30,8 +30,8 @@ func withinDrafts(p string) bool {
 }
 
 // TestSupervisor_ReviewMerge covers T3.4: rule engines get merge proposals as
-// events, supervisor.InterventionDiscard gains a live emitter, and wiring the verdict
-// into CommitMerge denies without merging.
+// events, supervisor.InterventionDiscard gains a live emitter, and wiring the
+// verdict into the explicit proposal/decision pair denies without merging.
 
 // fileExists reports whether a path exists in the test repo.
 func fileExists(t *testing.T, dir, name string) bool {
@@ -85,13 +85,26 @@ func TestSupervisor_ReviewMerge(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	err = mgr.CommitMerge(context.Background(), child.ID(), reviewer)
-	var denied *goatherd.SupervisorDeniedError
-	if !errors.As(err, &denied) {
-		t.Fatalf("CommitMerge via ReviewMerge: err = %T (%v), want goatherd.SupervisorDeniedError", err, err)
+	proposal, err := mgr.ProposeMerge(context.Background(), child.ID(), 100)
+	if err != nil {
+		t.Fatalf("ProposeMerge: %v", err)
 	}
-	if !strings.Contains(denied.Error(), "drafts/") {
-		t.Errorf("denial text = %q, want the rule's payload as the reason", denied.Error())
+	proposedID, err := mgr.RecordMergeProposal(context.Background(), proposal)
+	if err != nil {
+		t.Fatalf("RecordMergeProposal: %v", err)
+	}
+	reviewErr := reviewer(*proposal)
+	if reviewErr == nil {
+		t.Fatal("ReviewMerge should have denied the out-of-prefix child")
+	}
+	if _, err := mgr.RecordMergeDecision(context.Background(), proposal, false, reviewErr.Error(), "discarded", proposedID); err != nil {
+		t.Fatalf("RecordMergeDecision: %v", err)
+	}
+	if err := mgr.Discard(child.ID()); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+	if !strings.Contains(reviewErr.Error(), "drafts/") {
+		t.Errorf("denial text = %q, want the rule's payload as the reason", reviewErr.Error())
 	}
 	if child.State() != goatherd.ScopeDiscarded {
 		t.Errorf("child state = %s, want discarded", child.State())

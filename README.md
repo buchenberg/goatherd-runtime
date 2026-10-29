@@ -16,7 +16,13 @@ It composes [`github.com/buchenberg/goatherd-kernel`](https://github.com/buchenb
 | `substrate` | the `Substrate` contract, the registry (unknown substrate refs fail the materialization), the echo/KV/workspace substrates |
 | `materialize` | the materialize orchestrator (owns the append; substrates never do) |
 | `task` | the task runtime — `StartTask`/`StartTaskSync`, `Run`, `TaskControl`, the task `Registry`, `ChildHandle` |
+| `run` | the reference reversible-run composition — fork, handler, review, seal/settle |
 | `supervisor` | the rules engine — `Supervisor`, `SupervisionRule`, the built-in rules (`DestructiveToolRule`, `HighErrorRateRule`, `StuckDetectionRule`, `DestructiveToolGuard`) |
+
+`run` is the reference composed path (reversible fork → review → seal/settle).
+`task`, `materialize`, and `substrate` are **landed public primitives**, fully
+tested, but no default host composition uses them yet. They are not a promised
+integrated pipeline until a real caller lands.
 
 ## Containment backends
 
@@ -164,20 +170,30 @@ for iv := range sup.Interventions() {
 
 ### Review before merge / settle outputs
 
-Nothing from a child reaches the parent without passing a review gate.
-`CommitMerge` proposes the child's diff (against the baseline captured at
-fork time), records it, runs your reviewer, and either merges or discards —
-a denial returns `*SupervisorDeniedError` and never touches the parent:
+Review is an explicit two-part provenance record, not an implicit side effect
+of a merge helper. `ProposeMerge` is the query; `RecordMergeProposal` writes
+the child's proposal; the caller reviews; `RecordMergeDecision` writes the
+verdict on the parent. Integration remains `Merge` for shared-sandbox children
+and `Seal` + `SettleSelect`/`SettleApply` for isolated ones.
 
 ```go
-// Commit-time review: shared-sandbox child, rollback via checkpoint restore.
-err := mgr.CommitMerge(ctx, child.ID(), goatherd.DraftsOnlyReviewer("drafts"))
-var denied *goatherd.SupervisorDeniedError
-if errors.As(err, &denied) {
-    _, _ = mgr.RestoreCheckpoint(ctx, cp.ID) // roll the shared workspace back
+proposal, err := mgr.ProposeMerge(ctx, child.ID(), 1000)
+proposedID, err := mgr.RecordMergeProposal(ctx, proposal)
+if deny := reviewer(*proposal); deny != nil {
+    _, _ = mgr.RecordMergeDecision(ctx, proposal, false, deny.Error(), "discarded", proposedID)
+    _ = mgr.Discard(child.ID())
+    _, _ = mgr.RestoreCheckpoint(ctx, cp.ID) // shared-sandbox rollback
     // retry with the denial reason injected as guidance
+} else {
+    _, _ = mgr.RecordMergeDecision(ctx, proposal, true, "", "merged", proposedID)
+    _ = parent.Merge(child)
 }
 ```
+
+`run.Reversible` does this pair automatically for its reviewer/authority
+paths; an isolated approval records the settlement action (`selected` or
+`applied`) as the decision action. A denial returns
+`*SupervisorDeniedError` and never touches the parent.
 
 For isolated children (worktrees), physical propagation belongs to
 settlement: seal each output, compare the frozen `Changes`, then settle
@@ -378,10 +394,11 @@ snapshot, err := mgr.RestoreCheckpoint(ctx, cp.ID)
 latest := mgr.LatestCheckpoint("scope-id")
 mgr.PruneCheckpoints(ctx, "scope-id")                 // also deletes persisted blobs
 
-// Merge gate (plan 04): propose, review, commit-or-discard
+// Merge gate (plan 04): propose, record, review, decide
 proposal, err := mgr.ProposeMerge(ctx, "child-scope-id", 2000)      // query; classifies create/modify/delete
-err = mgr.CommitMerge(ctx, "child-scope-id", goatherd.DraftsOnlyReviewer("drafts"))
-// deny -> *SupervisorDeniedError, child discarded; isolated children are refused (use Seal + Settle)
+proposedID, err := mgr.RecordMergeProposal(ctx, proposal)
+// reviewer decides; then RecordMergeDecision(approved, reason, action, proposedID)
+// and Merge (shared sandbox) or Seal + Settle (isolated)
 
 // Retained outputs: seal, then settle exactly once
 out, err := mgr.Seal(ctx, "scope-id")                              // scope stays active
