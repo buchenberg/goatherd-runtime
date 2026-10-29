@@ -106,10 +106,11 @@ func (f *fakeCroft) Capture(context.Context) (croftlib.WorkspaceState, error) {
 	}
 	f.seq++
 	ws := croftlib.WorkspaceState{
-		SnapshotKey: fmt.Sprintf("croft-seq-%d", f.seq),
-		ParentKey:   f.parent,
-		BaseKey:     f.base,
-		Image:       f.image,
+		SnapshotKey:   fmt.Sprintf("croft-seq-%d", f.seq),
+		ParentKey:     f.parent,
+		BaseKey:       f.base,
+		Image:         f.image,
+		ContentDigest: "sha256:content-addressed",
 	}
 	// Snapshot the tree under the new key so a later Changes/Diff against this
 	// state has something to compare to, and pin it as a state.

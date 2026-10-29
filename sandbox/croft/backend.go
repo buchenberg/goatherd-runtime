@@ -77,6 +77,11 @@ func toCroftConfig(c Config) croftlib.Config {
 		FIFODir:         c.FIFODir,
 		Network:         c.Network,
 		StagingDir:      c.StagingDir,
+		// Settlement's select precondition compares state digests as content
+		// equality. The fast path (croft-dlb) makes unchanged captures equal;
+		// the content digest additionally lets a host compare identical
+		// content across a moved timeline.
+		ContentDigest: true,
 	}
 	if c.Limits != nil {
 		out.Limits = &croftlib.Limits{
