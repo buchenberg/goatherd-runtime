@@ -37,11 +37,10 @@ func renderSBPL(doc profileDoc) string {
 		b.WriteString("(deny network-outbound)\n")
 	case modeBroker:
 		b.WriteString("(deny network-outbound)\n")
-		// Admit the broker by name and by numeric loopback address: a profile
-		// compiled with only "localhost" can miss a client that connects to
-		// 127.0.0.1 directly, and the broker is a loopback listener.
+		// SBPL accepts only "*" or "localhost" as the host in a network
+		// address; a numeric address is a profile error. "localhost" is the
+		// loopback host the broker listens on.
 		fmt.Fprintf(&b, "(allow network-outbound (remote ip \"localhost:%d\"))\n", doc.Net.Port)
-		fmt.Fprintf(&b, "(allow network-outbound (remote ip \"127.0.0.1:%d\"))\n", doc.Net.Port)
 	}
 
 	for _, root := range doc.Roots {

@@ -125,9 +125,10 @@ func (b *Backend) Launch(profile string, req containment.LaunchRequest) (contain
 matching the Landlock and winacl members. The profile is rendered to SBPL at
 probe/launch time: deny all writes, re-allow each canonical writable root and
 `/dev`, and deny writes beneath each root's `.git`. `deny_all` adds
-`(deny network-outbound)`; `broker` adds that deny plus allow rules for
-`localhost:<port>` and `127.0.0.1:<port>`, so the broker's port is
-kernel-pinned while its host allowlist stays cooperative. `Launch` runs
+`(deny network-outbound)`; `broker` adds that deny plus an allow rule for
+`localhost:<port>` (SBPL accepts only `*` or `localhost` as a network host), so
+the broker's port is kernel-pinned while its host allowlist stays cooperative.
+`Launch` runs
 `sandbox-exec -p <profile> <command>` directly — Seatbelt applies the profile to
 the child, so the self-reexec trampoline Landlock and winacl need is not used
 here. Caveat: `sandbox-exec` is deprecated by Apple (still present) — the same

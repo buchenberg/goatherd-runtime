@@ -51,7 +51,6 @@ func TestRenderSBPLBrokerPinsLoopbackPort(t *testing.T) {
 	for _, want := range []string{
 		"(deny network-outbound)\n",
 		"(allow network-outbound (remote ip \"localhost:8080\"))\n",
-		"(allow network-outbound (remote ip \"127.0.0.1:8080\"))\n",
 	} {
 		if !strings.Contains(profile, want) {
 			t.Fatalf("broker profile does not contain %q:\n%s", want, profile)
