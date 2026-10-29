@@ -11,9 +11,11 @@
 //
 // Merge semantics: an isolated run (the default) propagates physically through
 // settlement, not Scope.Merge — `Seal` then `SettleSelect` (fast-forward) or
-// `SettleApply` (three-way). `ScopeManager.CommitMerge` is for children that
-// share the parent's sandbox and refuses isolated ones; the reviewer gate here
-// runs against the sealed-eligible child via `ProposeMerge`.
+// `SettleApply` (three-way). A reviewer or authority decision runs against the
+// child via `ProposeMerge` and records the explicit proposal/decision pair
+// (`RecordMergeProposal` / `RecordMergeDecision`) before integration. Shared-
+// sandbox children are integrated with Scope.Merge by their own host; this
+// package does not use the removed CommitMerge gate.
 package run
 
 import (
@@ -289,31 +291,59 @@ func Reversible(ctx context.Context, mgr *goatherd.ScopeManager, parent *goather
 	}
 
 	// Gate: a merge may be reviewed; an authority merge is decided. Both deny by
-	// discarding the run, never integrating.
-	if disposition == DispositionMerge && opts.Reviewer != nil {
+	// discarding the run, never integrating. When a reviewer runs, the proposal
+	// and its decision are recorded as a provenance pair independent of the
+	// physical settlement (RecordMergeProposal / RecordMergeDecision).
+	var reviewProposal *goatherd.MergeProposal
+	var reviewFactID string
+	recordProposal := func() error {
 		proposal, err := mgr.ProposeMerge(ctx, runScope.ID(), opts.MaxDiffLines)
 		if err != nil {
-			_ = mgr.Discard(runScope.ID())
-			return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition},
-				fmt.Errorf("run: propose merge: %w", err)
+			return fmt.Errorf("run: propose merge: %w", err)
 		}
-		if deny := opts.Reviewer(*proposal); deny != nil {
+		factID, err := mgr.RecordMergeProposal(ctx, proposal)
+		if err != nil {
+			return fmt.Errorf("run: record merge proposal: %w", err)
+		}
+		reviewProposal, reviewFactID = proposal, factID
+		return nil
+	}
+	recordDecision := func(approved bool, reason, action string) error {
+		if reviewProposal == nil {
+			return nil
+		}
+		_, err := mgr.RecordMergeDecision(ctx, reviewProposal, approved, reason, action, reviewFactID)
+		if err != nil {
+			return fmt.Errorf("run: record merge decision: %w", err)
+		}
+		return nil
+	}
+	reject := func(reason string) (Outcome, error) {
+		recErr := recordDecision(false, reason, "discarded")
+		_ = mgr.Discard(runScope.ID())
+		denyErr := &goatherd.SupervisorDeniedError{Reason: reason, Changes: reviewProposal.Changes}
+		if recErr != nil {
+			return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition}, errors.Join(denyErr, recErr)
+		}
+		return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition}, denyErr
+	}
+
+	if disposition == DispositionMerge && opts.Reviewer != nil {
+		if err := recordProposal(); err != nil {
 			_ = mgr.Discard(runScope.ID())
-			return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition},
-				&goatherd.SupervisorDeniedError{Reason: deny.Error(), Changes: proposal.Changes}
+			return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition}, err
+		}
+		if deny := opts.Reviewer(*reviewProposal); deny != nil {
+			return reject(deny.Error())
 		}
 	}
 	if disposition == DispositionAuthorityMerge {
-		proposal, err := mgr.ProposeMerge(ctx, runScope.ID(), opts.MaxDiffLines)
-		if err != nil {
+		if err := recordProposal(); err != nil {
 			_ = mgr.Discard(runScope.ID())
-			return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition},
-				fmt.Errorf("run: propose merge: %w", err)
+			return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition}, err
 		}
-		if deny := opts.Decision(ctx, *proposal); deny != nil {
-			_ = mgr.Discard(runScope.ID())
-			return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition},
-				&goatherd.SupervisorDeniedError{Reason: deny.Error(), Changes: proposal.Changes}
+		if deny := opts.Decision(ctx, *reviewProposal); deny != nil {
+			return reject(deny.Error())
 		}
 	}
 
@@ -330,10 +360,15 @@ func Reversible(ctx context.Context, mgr *goatherd.ScopeManager, parent *goather
 	}
 
 	// Merge: fast-forward, or three-way when the parent moved since the fork.
-	if err := mgr.Settle(ctx, sealed.ID(), goatherd.SettleSelect); err != nil {
-		if aerr := mgr.Settle(ctx, sealed.ID(), goatherd.SettleApply); aerr != nil {
+	action := goatherd.SettleSelect
+	if err := mgr.Settle(ctx, sealed.ID(), action); err != nil {
+		action = goatherd.SettleApply
+		if aerr := mgr.Settle(ctx, sealed.ID(), action); aerr != nil {
 			return out, fmt.Errorf("run: settle: select failed (%v) and apply failed: %w", err, aerr)
 		}
+	}
+	if err := recordDecision(true, "", string(action)); err != nil {
+		return out, err
 	}
 	return out, nil
 }

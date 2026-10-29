@@ -226,9 +226,9 @@ func (s *Supervisor) Halt(scopeID string) error {
 
 // ReviewMerge evaluates the supervisor's rules against a merge proposal and
 // returns the intervention a rule produced, or nil for approval. It is how a
-// rule engine participates in the check-at-commit gate: the caller passes
-// the result to CommitMerge's reviewer, typically denying on
-// InterventionDiscard or InterventionDeny.
+// rule engine participates in the review gate: the caller passes the result to
+// its reviewer, records the decision with RecordMergeDecision, and then
+// integrates or discards the child.
 //
 // The proposal is presented to the rules as a synthetic effect event — Mode
 // Declaration, SchemaRef goatherd.merge.proposed.v1, KindLabel
