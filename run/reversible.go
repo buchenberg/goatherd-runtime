@@ -31,12 +31,12 @@ import (
 	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
-// Disposition is what a successful reversible run does with its isolated work.
 // ErrReviewDecisionUnrecorded reports that the run's work integrated but its
 // approval decision could not be appended. The work is on the parent; the
 // failure is a provenance gap, not a failed integration.
 var ErrReviewDecisionUnrecorded = errors.New("run: work integrated but review decision was not recorded")
 
+// Disposition is what a successful reversible run does with its isolated work.
 type Disposition string
 
 const (
@@ -379,7 +379,7 @@ func Reversible(ctx context.Context, mgr *goatherd.ScopeManager, parent *goather
 		}
 	}
 	if err := recordDecision(true, "", string(action)); err != nil {
-		return out, fmt.Errorf("%w: %v", ErrReviewDecisionUnrecorded, err)
+		return out, fmt.Errorf("%w: %w", ErrReviewDecisionUnrecorded, err)
 	}
 	return out, nil
 }
