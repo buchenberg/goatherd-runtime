@@ -169,6 +169,9 @@ func (m *ScopeManager) RecordMergeDecision(ctx context.Context, proposal *MergeP
 	if proposal == nil {
 		return "", errors.New("RecordMergeDecision: nil proposal")
 	}
+	if proposedFactID == "" {
+		return "", errors.New("RecordMergeDecision: a proposal fact id is required")
+	}
 	m.mu.RLock()
 	child, ok := m.scopes[proposal.ChildScopeID]
 	m.mu.RUnlock()

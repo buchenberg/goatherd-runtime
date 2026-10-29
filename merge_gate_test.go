@@ -385,6 +385,21 @@ func TestRecordMergeProposal_RequiresActiveChild(t *testing.T) {
 	if _, err := mgr.RecordMergeProposal(context.Background(), nil); err == nil {
 		t.Fatal("nil proposal must be rejected")
 	}
+	if _, err := mgr.RecordMergeDecision(context.Background(), &MergeProposal{}, false, "", "discarded", ""); err == nil {
+		t.Fatal("a decision without a proposal fact id must be rejected")
+	}
+
+	parent, _ := mgr.Create("gate:terminal-parent", nil)
+	child, err := mgr.Fork(parent.ID(), "gate:terminal-child", nil)
+	if err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	if err := mgr.Discard(child.ID()); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+	if _, err := mgr.RecordMergeProposal(context.Background(), &MergeProposal{ChildScopeID: child.ID()}); err == nil {
+		t.Fatal("a proposal for a terminal child must be rejected")
+	}
 }
 
 // TestDestructivePathReviewer covers the pattern-matching reviewer.

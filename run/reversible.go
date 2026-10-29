@@ -12,10 +12,12 @@
 // Merge semantics: an isolated run (the default) propagates physically through
 // settlement, not Scope.Merge — `Seal` then `SettleSelect` (fast-forward) or
 // `SettleApply` (three-way). A reviewer or authority decision runs against the
-// child via `ProposeMerge` and records the explicit proposal/decision pair
-// (`RecordMergeProposal` / `RecordMergeDecision`) before integration. Shared-
-// sandbox children are integrated with Scope.Merge by their own host; this
-// package does not use the removed CommitMerge gate.
+// child via `ProposeMerge`; the proposal is recorded before review, and the
+// decision is recorded when the outcome is known (after settlement for an
+// approval, before discard for a denial) via `RecordMergeProposal` /
+// `RecordMergeDecision`. Shared-sandbox children are integrated with
+// Scope.Merge by their own host; this package does not use the removed
+// CommitMerge gate.
 package run
 
 import (
@@ -30,6 +32,11 @@ import (
 )
 
 // Disposition is what a successful reversible run does with its isolated work.
+// ErrReviewDecisionUnrecorded reports that the run's work integrated but its
+// approval decision could not be appended. The work is on the parent; the
+// failure is a provenance gap, not a failed integration.
+var ErrReviewDecisionUnrecorded = errors.New("run: work integrated but review decision was not recorded")
+
 type Disposition string
 
 const (
@@ -321,7 +328,11 @@ func Reversible(ctx context.Context, mgr *goatherd.ScopeManager, parent *goather
 	reject := func(reason string) (Outcome, error) {
 		recErr := recordDecision(false, reason, "discarded")
 		_ = mgr.Discard(runScope.ID())
-		denyErr := &goatherd.SupervisorDeniedError{Reason: reason, Changes: reviewProposal.Changes}
+		var changes []goatherd.ProposedChange
+		if reviewProposal != nil {
+			changes = reviewProposal.Changes
+		}
+		denyErr := &goatherd.SupervisorDeniedError{Reason: reason, Changes: changes}
 		if recErr != nil {
 			return Outcome{Scope: runScope, Result: result, Isolation: isolation, Disposition: disposition}, errors.Join(denyErr, recErr)
 		}
@@ -368,7 +379,7 @@ func Reversible(ctx context.Context, mgr *goatherd.ScopeManager, parent *goather
 		}
 	}
 	if err := recordDecision(true, "", string(action)); err != nil {
-		return out, err
+		return out, fmt.Errorf("%w: %v", ErrReviewDecisionUnrecorded, err)
 	}
 	return out, nil
 }

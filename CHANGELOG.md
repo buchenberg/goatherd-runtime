@@ -12,7 +12,9 @@ contain breaking changes, which are called out below.
   path and the verdict on the parent's owner path, causally joined. The pair is
   independent of physical integration, so a shared-sandbox merge and an
   isolated Seal + Settle can carry the same trace shape. `run.Reversible` now
-  records both halves when its reviewer or authority decision runs.
+  records both halves when its reviewer or authority decision runs, and
+  `run.ErrReviewDecisionUnrecorded` distinguishes an integrated run whose
+  approval fact could not be appended from a failed integration.
 
 ### Removed
 - **`ScopeManager.CommitMerge`**, `DraftsOnlyReviewer`, and
