@@ -320,6 +320,42 @@ func TestSandbox_CaptureCarriesContentDigest(t *testing.T) {
 	}
 }
 
+// TestSandbox_CaptureUnchangedIsStable pins the adapter end of croft-dlb: with
+// a fake that models the no-change fast path, two captures of unchanged
+// content digest equally, and a write breaks the equality.
+func TestSandbox_CaptureUnchangedIsStable(t *testing.T) {
+	s, _ := newTestSandbox(t)
+	ctx := context.Background()
+	if err := s.Create(ctx, sbx.SandboxSpec{}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	first, err := s.Capture(ctx)
+	if err != nil {
+		t.Fatalf("first Capture: %v", err)
+	}
+	second, err := s.Capture(ctx)
+	if err != nil {
+		t.Fatalf("second Capture: %v", err)
+	}
+	d1, _ := first.Digest()
+	d2, _ := second.Digest()
+	if d1 != d2 {
+		t.Fatalf("unchanged content must digest equally: %s vs %s", d1, d2)
+	}
+
+	if err := s.WriteFile(ctx, "/workspace/changed.txt", []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	third, err := s.Capture(ctx)
+	if err != nil {
+		t.Fatalf("third Capture: %v", err)
+	}
+	d3, _ := third.Digest()
+	if d3 == d1 {
+		t.Fatal("a changed tree must not digest like the unchanged one")
+	}
+}
+
 func TestSandbox_CapturePropagatesError(t *testing.T) {
 	s, fake := newTestSandbox(t)
 	fake.captureErr = errors.New("commit failed")
