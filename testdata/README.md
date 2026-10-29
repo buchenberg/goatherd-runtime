@@ -9,6 +9,6 @@ boundary:
 - `materialize_vectors_v0.json` — the materialize request digests and
   declare → materialize sequences, replayed by `materialize/`.
 
-The kernel (`github.com/buchenberg/shepherd-kernel-go`) is the source of truth:
+The kernel (`github.com/buchenberg/goatherd-kernel`) is the source of truth:
 `testkit/golden_provenance_test.go` pins their SHA-256 in the kernel module. If
 the kernel regenerates a vector, copy the new file here in the same change.

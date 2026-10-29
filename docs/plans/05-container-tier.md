@@ -13,6 +13,14 @@
 > 3. The **`clonefile` carrier** (macOS APFS copy-on-write).
 > 4. *(Non-goals:)* remote/cloud providers and the macOS VM-overlay path.
 
+> **Status (2026-10-28).** The real gap — overlay changes → typed,
+> causally-linked effects — is closed: `sandbox/croft` v0.1.3 converts changes via
+> `EffectChanges`, and yaah records accepted container changes as
+> `shepherd2.effect.file.{created,patched,deleted}.v1` records. The `copy` and
+> `clonefile` carriers remain pending. Container sessions still produce no
+> retained output: `Retain` is gated off until `croft-dlb` gives croft states a
+> content-stable identity (tracked as `yaah-ihfh.3`).
+
 ## 1. Objective & Context
 
 `croft` is a library over containerd v2's overlayfs snapshotter: `Create`,
