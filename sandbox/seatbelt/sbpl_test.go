@@ -56,6 +56,21 @@ func TestRenderSBPLBrokerPinsLoopbackPort(t *testing.T) {
 			t.Fatalf("broker profile does not contain %q:\n%s", want, profile)
 		}
 	}
+	// SBPL accepts only "*" or "localhost" as a network host: a numeric host
+	// makes sandbox-exec reject the whole profile (exit 65), so the pin must
+	// stay on the localhost token. Pin that removal with an assertion rather
+	// than relying on review.
+	if got := strings.Count(profile, "(allow network-outbound"); got != 1 {
+		t.Fatalf("broker profile carries %d network-outbound allows, want 1:\n%s", got, profile)
+	}
+	for _, line := range strings.Split(profile, "\n") {
+		if !strings.Contains(line, "(allow network-outbound") {
+			continue
+		}
+		if !strings.Contains(line, `(remote ip "localhost:8080")`) {
+			t.Fatalf("unexpected network-outbound allow (numeric or wildcard host): %q", line)
+		}
+	}
 }
 
 func TestSBPLStringEscapes(t *testing.T) {

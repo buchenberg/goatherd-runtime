@@ -208,6 +208,11 @@ func probeNetwork(sbpl string, doc profileDoc, workingRoot string) error {
 
 		// The pinned port must be admitted. Bind it when it is free; when it is
 		// already held, assume the broker is listening and connect to it.
+		//
+		// The profile names the host with SBPL's "localhost" token, while
+		// netProbe dials the numeric loopback address. sbpl_test.go pins the
+		// rendered profile to that token, and the darwin broker test proves the
+		// token admits a 127.0.0.1 dial on macOS.
 		pinned := doc.Net.Port
 		if ln, err := net.Listen("tcp", loopbackAddr(pinned)); err == nil {
 			defer ln.Close()

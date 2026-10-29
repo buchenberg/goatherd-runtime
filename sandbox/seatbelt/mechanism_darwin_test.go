@@ -217,6 +217,9 @@ func TestSeatbelt_NetworkBrokerPinsLoopbackPort(t *testing.T) {
 	wd := canonicalTempDir(t)
 	pinned := listenPort(t)
 	other := listenPort(t)
+	// The profile names the host with SBPL's "localhost" token. Dialing the
+	// numeric loopback address (nc uses 127.0.0.1) proves the token admits it,
+	// which is what keeps the probe's positive pin check honest.
 	spec := confinement.ConfinementSpec{Network: confinement.NetworkPolicy{
 		Mode:       confinement.NetBroker,
 		BrokerPort: pinned,
