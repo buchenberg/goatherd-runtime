@@ -2,9 +2,10 @@
 
 > **Scope.** This is **Plan 4** of the containment/execution work. Plans 1–3
 > shipped the Linux filesystem paddock (the syscall deny) and the authority spine.
-> The containment axis has two gaps left:
+> The containment axis had two gaps:
 >
-> 1. **macOS** — Python's `SeatbeltContainmentBackend`; the Go port has no macOS jail.
+> 1. **macOS** — Python's `SeatbeltContainmentBackend`; now ported to
+>    `sandbox/seatbelt`.
 > 2. **Network egress** — the jail is host-blind; a *broker* evaluates the
 >    host predicate the jail could not, and egress is *pinned* so the broker is
 >    the only route out.
@@ -17,15 +18,16 @@
 >
 > **Status:** Phase 2 (the portable egress broker, `sandbox/egress`) and Phase
 > 3's **Linux** half (Landlock net pinning in `sandbox/landlock`) are implemented
-> and kernel-verified. Phase 1 (Seatbelt, macOS) and the strong netns/`croft` pin
-> remain — Phase 1 is being built on a Mac.
+> and kernel-verified. Phase 1 (Seatbelt, macOS) is implemented in the nested
+> module `sandbox/seatbelt`; macOS CI verification and a versioned release
+> remain before yaah registers `darwin`. The strong netns/`croft` pin remains.
 >
 > **Contract note (Phase 3).** The `containment.Backend` interface evolved:
 > `ProfileFor(roots []string, network NetworkPolicy) string` (was `(roots,
 > allowNetwork bool)`) and a new `SupportsNetwork(mode NetMode) bool` fail-closed
 > gate. The backend-private profile is now a JSON object
-> (`{"roots":[…],"net":{"mode":…,"port":…}}`). A Seatbelt backend must implement
-> the same contract.
+> (`{"roots":[…],"net":{"mode":…,"port":…}}`); `sandbox/seatbelt` implements the
+> same contract.
 
 ## 1. Objective & Context
 
@@ -103,26 +105,34 @@ The pin is what makes the broker **unbypassable by construction**.
 
 ## 6. Phase 1 — The Seatbelt backend (macOS)
 
-Python execs `/usr/bin/sandbox-exec -p <SBPL profile>` via `subprocess`; **no cgo
-is needed** — Go execs the same binary with a profile string. A new **nested
-module** `sandbox/seatbelt` (darwin build-tagged), mirroring `sandbox/landlock`:
+**Implemented** in the nested module `sandbox/seatbelt`. Python execs
+`/usr/bin/sandbox-exec -p <SBPL profile>` via `subprocess`; **no cgo is
+needed** — Go execs the same binary with a profile string. The module mirrors
+`sandbox/landlock` and `sandbox/winacl`:
 
 ```go
 type Backend struct{}
 func New() *Backend
 func (b *Backend) Name() string            { return "seatbelt" }
-func (b *Backend) EnforcementTier() string { return "native-syscall-deny" }
-func (b *Backend) Available() (bool, string)          // /usr/bin/sandbox-exec present
-func (b *Backend) ProfileFor(roots []string, network containment.NetworkPolicy) string // SBPL
+func (b *Backend) EnforcementTier() string { return "native-sandbox-deny" }
+func (b *Backend) Available() (bool, string)          // /usr/bin/sandbox-exec present and executable
+func (b *Backend) ProfileFor(roots []string, network confinement.NetworkPolicy) string // backend-private JSON
 func (b *Backend) Probe(profile, workingRoot string, roots []string) error
 func (b *Backend) Launch(profile string, req containment.LaunchRequest) (containment.LaunchResult, error)
 ```
 
-`ProfileFor` lowers writable roots to `(allow file-write* (subpath "…"))` plus a
-deny-default, and adds `(deny network-outbound)` when `allowNetwork` is false —
-the SBPL lowering the reference tests assert (`test_containment_backend.py:39-60`).
-`Launch` runs `sandbox-exec -p <profile> <command>`. Caveat: `sandbox-exec` is
-deprecated by Apple (still present) — the same risk the reference carries.
+`ProfileFor` returns a backend-private JSON profile (`{"roots":…,"net":…}`),
+matching the Landlock and winacl members. The profile is rendered to SBPL at
+probe/launch time: deny all writes, re-allow each canonical writable root and
+`/dev`, and deny writes beneath each root's `.git`. `deny_all` adds
+`(deny network-outbound)`; `broker` adds that deny plus an allow rule for
+`localhost:<port>` (SBPL accepts only `*` or `localhost` as a network host), so
+the broker's port is kernel-pinned while its host allowlist stays cooperative.
+`Launch` runs
+`sandbox-exec -p <profile> <command>` directly — Seatbelt applies the profile to
+the child, so the self-reexec trampoline Landlock and winacl need is not used
+here. Caveat: `sandbox-exec` is deprecated by Apple (still present) — the same
+risk the reference carries.
 
 ## 7. Phase 2 — The egress broker (portable) — **implemented**
 
@@ -173,7 +183,7 @@ New package `sandbox/egress` (root module; stdlib only). A faithful port of
 | 3 ✅ | `TestLandlock_NetworkPinned` | ABI ≥ 4; pin a port | the pinned port admits; others denied |
 | 3 ✅ | `TestLandlock_ProbeNetwork` | deny_all / broker profiles | the probe validates the pin fail-closed |
 | 2+3 ✅ | `TestE2E_ReversibleBrokerEgress` | reversible run + worktree + broker + pin | a through-broker CONNECT is admitted (200) and the broker records an allow; a direct connect bypassing the broker is refused by the pin |
-| 1 | `TestSeatbelt_*` | macOS | deny/allow as the reference asserts (on a Mac) |
+| 1 ✅ | `TestSeatbelt_*` | macOS | deny/allow as the reference asserts; `.git` deny, broker port pin, and the fail-closed probe |
 
 ## 10. Parity Comparison: Network & macOS
 
@@ -182,8 +192,8 @@ New package `sandbox/egress` (root module; stdlib only). A faithful port of
 | Egress broker | `_egress_broker.py` (stdlib sockets) | **Parity**: `sandbox/egress` (stdlib) |
 | Policy evaluation order | union, deny-wins, default-deny, escalate→deny-loud | **Parity** |
 | Egress *pinning*, Linux | ❌ (FS-only jail) | ✅ **Ahead**: Landlock ≥ ABI 4 net rules (port-scoped), kernel-verified |
-| Egress *pinning*, macOS | Seatbelt `(deny network-outbound)` | **Parity**: `sandbox/seatbelt` |
-| macOS jail | `_seatbelt_containment.py` | **Parity**: `sandbox/seatbelt` (nested module) |
+| Egress *pinning*, macOS | Seatbelt `(deny network-outbound)` | **Parity**: `sandbox/seatbelt` (deny-all; broker port pinned) |
+| macOS jail | `_seatbelt_containment.py` | **Parity**: `sandbox/seatbelt` (nested module, tier `native-sandbox-deny`) |
 | Strong (address-scoped) pin | — | netns via `croft` |
 | SOCKS5 / DNS stub / escalate→supervisor | backlog (increments 2–3) | **Non-goal** (matches reference) |
 
@@ -209,7 +219,7 @@ for the Landlock net constants (already pinned).
 1. **Broker package**: `sandbox/egress` (proposed) vs part of `containment`.
    *Recommend `sandbox/egress` — it is a distinct axis.*
 2. **Seatbelt module**: nested module `sandbox/seatbelt` mirroring `landlock`.
-   *Recommend yes.*
+   *Resolved: yes, implemented.*
 3. **Landlock net**: extend the existing ruleset vs a separate `net` profile.
    *Recommend extending the ruleset (one `handled_access_net`, one rule per pin).*
 4. **Escalate**: keep deny-loud (parity), or wire a supervisor path.

@@ -1,11 +1,11 @@
 # Implementation Plan: Windows Write-Restricted Containment for Shepherd Go
 
-> **Status: planned (spike-validated).** The mechanism is proven on a real,
-> non-elevated Windows host (spike evidence in §11). This plan defines the
-> Windows member of the `ContainmentBackend` family: the Win32 engine, the
-> fail-closed probe, the backend, the placement wiring, and the honest
-> capability reporting. It is a **self-contained component** (module boundary in
-> §13); host integration (`yaah`) is a follow-on, exactly as Plan 1's §10.3 was.
+> **Status: implemented in `goatherd-runtime` v0.18.0 as `sandbox/winacl`.** The
+> mechanism was proven on a real, non-elevated Windows host before the port (spike
+> evidence in §11); the shipped backend implements the same
+> `containment.Backend` contract as Landlock and reports the
+> `native-access-check-deny` tier. yaah registers it for `GOOS=windows`. This
+> document is retained as the design record.
 
 ## 1. Objective & Context
 

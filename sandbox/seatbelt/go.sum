@@ -1,0 +1,4 @@
+github.com/buchenberg/goatherd-runtime v0.20.0 h1:DEjl7fD+OLxTLSM+DeG2bd6pBwYdkpTxXsISCEMReA4=
+github.com/buchenberg/goatherd-runtime v0.20.0/go.mod h1:wKQJB9+sG+MQ5sm9yQ90zm3Sj8hPz9HahbLajGtg+dY=
+golang.org/x/text v0.21.0 h1:zyQAAkrwaneQ066sspRyJaG9VNi/YJ1NfzcGB3hZ/qo=
+golang.org/x/text v0.21.0/go.mod h1:4IBbMaMmOPCJ8SecivzSH54+73PCFmPWxNTLm+vZkEQ=

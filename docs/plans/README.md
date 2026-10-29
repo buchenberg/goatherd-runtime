@@ -7,9 +7,10 @@ and the optional syscall filter (Plan 6) and the host integration (Plan 7).
 
 Each plan follows the same discipline: a parity checklist mapping Python symbols
 to Go targets with a covering test, an explicit scope/non-goals section, and a
-test matrix. Plans 1–5, 7, and 8 are written: 1–3 implemented; 4 Linux-side done
-(Seatbelt planned); 5 scoped; 7 phases 0–4 done; 8 planned with the mechanism
-spike-validated on a real non-elevated Windows host.
+test matrix. Plans 1–5, 7, and 8 are written: 1–3 implemented; 4 implemented on
+both enforcement surfaces (Seatbelt module landed, macOS verification + release
+pending); 5's adapter and effect converter landed, retained container
+settlement pending; 7 phases 0–4 done; 8 implemented.
 
 > **Vocabulary — "paddock".** The Go code renames Python Shepherd's `jail` to
 > **`paddock`** (an enclosed livestock area — it fits the shepherd/croft theme;
@@ -29,11 +30,11 @@ spike-validated on a real non-elevated Windows host.
 | **1** | Linux Landlock containment | paddock, contract, probe, may=/grants lowering, placement, evidence, denial classification | [`01-landlock-containment.md`](01-landlock-containment.md) | ✅ implemented |
 | **2** | Reversible execution runs | fork-isolated-by-default, capability-after-fork, discard-on-failure, merge/seal, recorded run operation, authority merge | [`02-reversible-runs.md`](02-reversible-runs.md) | ✅ implemented |
 | **3** | Authority declarations & permission-plan compiler | `May[…]`/grant authoring, paddock **+ carrier** monitor compiler, `authority_merge`, evidence persistence | [`03-authority-and-plan-compiler.md`](03-authority-and-plan-compiler.md) | ✅ implemented |
-| **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | [`04-egress-and-seatbelt.md`](04-egress-and-seatbelt.md) | 🚧 Phases 2–3 (Linux) done; 1 (Seatbelt) planned |
-| **5** | Container-tier parity | overlay changes → typed effects, the `copy` carrier, the `clonefile` carrier | [`05-container-tier.md`](05-container-tier.md) | 🚧 Phase 1 `effect` package landed; adapter converter + Phases 2–3 pending |
+| **4** | Second enforcement surface | Seatbelt (macOS), egress broker, egress pinning (Landlock v4 net / Seatbelt) | [`04-egress-and-seatbelt.md`](04-egress-and-seatbelt.md) | 🚧 Phases 2–3 done; Seatbelt module landed, macOS verification + release pending |
+| **5** | Container-tier parity | overlay changes → typed effects, the `copy` carrier, the `clonefile` carrier | [`05-container-tier.md`](05-container-tier.md) | 🚧 Adapter + effect converter landed (`sandbox/croft` v0.1.3); carriers pending; retained settlement blocked on `croft-dlb` |
 | **6** | Syscall filter | seccomp-bpf tier (optional; reference does not implement it) | — | 💤 signposted |
 | **7** | yaah integration | **retained sub-agents** (the proposal/settlement spine) + Landlock confinement on that one path (orchestrator stays host-normal); placement config + `doctor` probe | [`07-yaah-integration.md`](07-yaah-integration.md) | ✅ Phases 0–3 done (defaults on); Phase 4 removed |
-| **8** | Windows containment | native Windows tier: write-restricted token + per-root capability SIDs + Low integrity label; contract parity with the Landlock member | [`08-windows-containment.md`](08-windows-containment.md) | 📝 planned (mechanism spike-validated) |
+| **8** | Windows containment | native Windows tier: write-restricted token + per-root capability SIDs + Low integrity label; contract parity with the Landlock member | [`08-windows-containment.md`](08-windows-containment.md) | ✅ implemented (`sandbox/winacl`, v0.18.0) |
 
 ## Plan 1 — Linux Landlock containment (done)
 
@@ -87,12 +88,16 @@ Depends on Plan 2.
 
 **Gaps closed:** macOS containment and network/egress enforcement.
 
-- **4a — Seatbelt backend (macOS).** Python's macOS jail is `/usr/bin/sandbox-exec
-  -p <SBPL profile>` via `subprocess` — **no cgo needed**. Deliverable: a
-  darwin build-tagged backend (`available` = sandbox-exec present; `ProfileFor` =
-  the SBPL lowering; `Probe` = `touch` canary; `Launch` = exec sandbox-exec),
-  mirroring `_seatbelt_containment.py`. Caveat: `sandbox-exec` is deprecated
-  (same risk the reference carries).
+- **4a — Seatbelt backend (macOS) — implemented in `sandbox/seatbelt`.** A
+  nested module mirroring `_seatbelt_containment.py`, with no cgo: `ProfileFor`
+  lowers to a backend-private JSON profile (`{"roots":…,"net":…}`), rendered to
+  SBPL at probe/launch time; `Probe` is exit-code-aware (warm-up + liveness +
+  per-root + deny-closed + network pin); `Launch` execs `/usr/bin/sandbox-exec
+  -p <SBPL> <command>` directly. The profile denies writes beneath each root's
+  `.git`, pins the broker's loopback port under `broker`, and reports the
+  distinct tier `native-sandbox-deny`. Caveat: `sandbox-exec` is deprecated
+  (same risk the reference carries). macOS CI verification and a versioned
+  release remain before yaah can register `darwin`.
 - **4b — Egress broker (Go).** A local CONNECT/HTTP proxy with a host allowlist,
   porting `_egress_broker.py` (`HostGrant`/`EgressPolicy`/`EgressBroker`) onto
   `net`/`net/http`. Consumes `ConfinementSpec.Network.AllowedHosts` (the
@@ -100,10 +105,11 @@ Depends on Plan 2.
 - **4c — Egress pinning.** Pin the sandbox's egress to the broker so it cannot
   bypass it. On Linux, extend the ruleset with `handled_access_net` +
   `LANDLOCK_ACCESS_NET_CONNECT_TCP` rules when ABI ≥ 4 (this host reports ABI 11)
-  — **ahead of the reference**, whose Linux jail is FS-only. On macOS, Seatbelt's
-  `(deny network-outbound)` + broker. Note: Landlock net rules are **port-scoped,
-  not address-scoped**; true loopback-only pinning needs a network namespace
-  (`croft`) — best-effort otherwise.
+  — **ahead of the reference**, whose Linux jail is FS-only. On macOS, the
+  Seatbelt profile denies `network-outbound` and admits only the broker's
+  loopback port; the broker's host allowlist stays cooperative. Note: Landlock
+  net rules are **port-scoped, not address-scoped**; true loopback-only pinning
+  needs a network namespace (`croft`) — best-effort otherwise.
 
 Depends on Plan 1 (spec/NetworkPolicy) and Plan 3 (network-axis lowering).
 
@@ -272,8 +278,8 @@ boundary means it cannot govern every file effect.
 | Capability proof-carrying / after-fork | ✅ | Plan 2 |
 | ExecutionBoundDriver / negotiation | ✅ | Plan 2 (adapted) |
 | Sandbox file IO | ✅ | implemented (symlink-safe) |
-| Seatbelt (macOS) | ❌ | Plan 4a |
-| **Windows containment (native tier)** | ❌ | **Plan 8** (mechanism spike-validated) |
+| Seatbelt (macOS) | 🚧 implemented (`sandbox/seatbelt`); macOS verification + release pending | Plan 4a |
+| **Windows containment (native tier)** | ✅ | **Plan 8** (`sandbox/winacl`) |
 | Egress broker | ✅ | Plan 4b (`sandbox/egress`) |
 | Egress pinning (Linux) | ✅ (ahead of ref) | Plan 4c |
 | seccomp | ➖ not a gap | Plan 6 (optional) |
