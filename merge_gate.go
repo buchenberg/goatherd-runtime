@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	trace "github.com/buchenberg/goatherd-kernel"
 	"path"
 	"strings"
+
+	trace "github.com/buchenberg/goatherd-kernel"
 )
 
 // Merge gate schema refs for trace recording (plan 04 §1).
@@ -234,8 +235,9 @@ func recordMergeProposed(ctx context.Context, child *Scope, proposal *MergePropo
 }
 
 // recordSupervisorDecision appends the review outcome on the parent's owner
-// path, citing the proposal record. Like the proposal record, the append is
-// hard: it precedes the physical merge or discard it authorizes.
+// path, citing the proposal record. The caller may record it before or after
+// the physical integration; action names what actually happened, and the
+// append is hard either way.
 func recordSupervisorDecision(
 	ctx context.Context,
 	parent *Scope,

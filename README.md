@@ -16,6 +16,7 @@ It composes [`github.com/buchenberg/goatherd-kernel`](https://github.com/buchenb
 | `substrate` | the `Substrate` contract, the registry (unknown substrate refs fail the materialization), the echo/KV/workspace substrates |
 | `materialize` | the materialize orchestrator (owns the append; substrates never do) |
 | `task` | the task runtime — `StartTask`/`StartTaskSync`, `Run`, `TaskControl`, the task `Registry`, `ChildHandle` |
+| `run` | the reference reversible-run composition — fork, handler, review, seal/settle |
 | `supervisor` | the rules engine — `Supervisor`, `SupervisionRule`, the built-in rules (`DestructiveToolRule`, `HighErrorRateRule`, `StuckDetectionRule`, `DestructiveToolGuard`) |
 
 `run` is the reference composed path (reversible fork → review → seal/settle).
