@@ -40,24 +40,23 @@
 // containerd backend, and the sandbox/landlock precedent of stubbing
 // non-Linux paths rather than letting them fail to compile.
 //
-// # Digest stability — a known, recorded gap
+// # Digest stability
 //
 // sandbox.Sandbox.Capture requires that two captures of identical content at
 // an unchanged timeline position produce equal WorkspaceState digests, because
 // settlement's select precondition compares digests as content equality.
 //
-// This backend does NOT satisfy that, and cannot until goatherd-croft ships
-// content-derived state identity (croft bead croft-dlb: a no-change capture
-// fast path plus an exposed ContentDigest). Croft states are sequence-keyed —
-// Capture unconditionally commits a fresh layer and mints a new SnapshotKey,
-// even when the active layer is unchanged. Hashing the state's fields does not
-// help: the inputs themselves differ on every capture, so any hash of them
-// differs too. croft-broker's four-field sha256 is a stable *name* for a given
-// state, not content equality, and is deliberately not reproduced here.
+// croft-dlb gives croft that property. Capture diffs the active layer against
+// its parent and, when the change set is empty, returns the parent's
+// remembered state verbatim instead of committing a fresh sequence-keyed
+// layer — so Revision and the lineage fields are equal by construction,
+// including across an Apply (the applied state is remembered as given).
+// Unchanged content at a moved timeline still digests differently, which is the
+// contract's intent: select treats it as moved and apply merges.
 //
-// The gap is safe today only because settlement never sees a container state:
-// yaah gates retained outputs on `sessionSandbox == nil`, so a container
-// session produces none. Enabling retained outputs in container mode requires
-// croft-dlb first. Per the Capture contract's own instruction, the gap is
-// recorded here rather than papered over.
+// WorkspaceState.ContentDigest rides in the kernel state's Data. It is the
+// daemon differ's content-addressed digest of the workspace against the image
+// rootfs, so a host can compare content across a moved timeline when it wants
+// content equality rather than timeline identity. The adapter always asks
+// croft for it; the no-change fast path does not need it.
 package croft

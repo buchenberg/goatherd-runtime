@@ -71,6 +71,7 @@ func TestNew_LowersConfigOntoCroft(t *testing.T) {
 		FIFODir:         "/tmp/fifo",
 		Network:         "none",
 		StagingDir:      "/tmp/staging",
+		ContentDigest:   true,
 		Limits:          &croftlib.Limits{CPUShares: 1024, CPUQuota: 50000, MemoryBytes: 1 << 30, Pids: 256},
 		Secrets:         []croftlib.SecretMount{{Source: "/host/token", Destination: "/run/token"}},
 	}
@@ -273,10 +274,14 @@ func TestSandbox_CaptureDigestIsDeterministic(t *testing.T) {
 		}
 	}
 	// A re-ordered Data map must digest identically.
+	shuffledData := make(map[string]any, len(ws.Data))
+	for _, k := range []string{"content_digest", "parent_key", "image", "base_key"} {
+		shuffledData[k] = ws.Data[k]
+	}
 	shuffled := trace.WorkspaceState{
 		Backend:  ws.Backend,
 		Revision: ws.Revision,
-		Data:     map[string]any{"image": ws.Data["image"], "base_key": ws.Data["base_key"], "parent_key": ws.Data["parent_key"]},
+		Data:     shuffledData,
 	}
 	got, err := shuffled.Digest()
 	if err != nil {
@@ -287,59 +292,77 @@ func TestSandbox_CaptureDigestIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestSandbox_CaptureDigestIsNotContentStable pins the known gap rather than
-// asserting false stability.
-//
-// sandbox.Sandbox.Capture requires two captures of identical content at an
-// unchanged position to digest equally, because settlement's select
-// precondition compares digests as content equality. Croft's state identity is
-// sequence-derived — Capture mints a fresh snapshot key even when nothing
-// changed — so this backend cannot satisfy that contract yet.
-//
-// This test is the executable form of the package doc's warning. It must keep
-// failing-closed: when goatherd-croft bead croft-dlb lands (no-change capture
-// fast path plus an exposed ContentDigest), this test should be *inverted* to
-// assert equality, and the package doc updated with it.
-//
-// The gap is safe today only because settlement never sees a container state:
-// yaah gates retained outputs on sessionSandbox == nil, so container sessions
-// produce none.
-func TestSandbox_CaptureDigestIsNotContentStable(t *testing.T) {
+// TestSandbox_CaptureCarriesContentDigest pins the adapter half of croft-dlb:
+// the content digest rides the kernel state's Data and survives a round trip.
+// Digest stability itself is croft's contract (goatherd-croft's fast path);
+// this package only maps it.
+func TestSandbox_CaptureCarriesContentDigest(t *testing.T) {
 	s, _ := newTestSandbox(t)
 	ctx := context.Background()
 	if err := s.Create(ctx, sbx.SandboxSpec{}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-
-	// Nothing is written between the two captures: the content is identical.
-	first, err := s.Capture(ctx)
+	ws, err := s.Capture(ctx)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
+	}
+	got, _ := ws.Data[keyContentDigest].(string)
+	if !strings.HasPrefix(got, "sha256:") {
+		t.Fatalf("Data[%s] = %v, want the croft content digest", keyContentDigest, ws.Data[keyContentDigest])
+	}
+
+	back, err := fromTraceState(ws)
+	if err != nil {
+		t.Fatalf("fromTraceState: %v", err)
+	}
+	if back.ContentDigest != got {
+		t.Fatalf("ContentDigest round trip = %q, want %q", back.ContentDigest, got)
+	}
+}
+
+// TestSandbox_CaptureUnchangedIsStable pins the adapter end of croft-dlb: with
+// a fake that models the no-change fast path, two captures of unchanged
+// content digest equally, and a write breaks the equality.
+func TestSandbox_CaptureUnchangedIsStable(t *testing.T) {
+	s, _ := newTestSandbox(t)
+	ctx := context.Background()
+	if err := s.Create(ctx, sbx.SandboxSpec{}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	first, err := s.Capture(ctx)
+	if err != nil {
+		t.Fatalf("first Capture: %v", err)
 	}
 	second, err := s.Capture(ctx)
 	if err != nil {
-		t.Fatalf("Capture: %v", err)
+		t.Fatalf("second Capture: %v", err)
 	}
-
 	d1, err := first.Digest()
 	if err != nil {
-		t.Fatalf("Digest: %v", err)
+		t.Fatalf("Digest first: %v", err)
 	}
 	d2, err := second.Digest()
 	if err != nil {
-		t.Fatalf("Digest: %v", err)
+		t.Fatalf("Digest second: %v", err)
+	}
+	if d1 != d2 {
+		t.Fatalf("unchanged content must digest equally: %s vs %s", d1, d2)
 	}
 
-	if d1 == d2 {
-		// If this fires, croft has gained content-derived identity: invert this
-		// test to require equality and delete the gap from the package doc.
-		t.Logf("digest stability now holds — croft-dlb appears to have landed; invert this test")
-		return
+	if err := s.WriteFile(ctx, "/workspace/changed.txt", []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
 	}
-	if first.Revision == second.Revision {
-		t.Error("two captures of unchanged content returned the same snapshot key; croft's identity model changed")
+	third, err := s.Capture(ctx)
+	if err != nil {
+		t.Fatalf("third Capture: %v", err)
 	}
-	t.Logf("confirmed gap: unchanged content digests differently (%s vs %s) because croft keys are sequence-derived", d1[:12], d2[:12])
+	d3, err := third.Digest()
+	if err != nil {
+		t.Fatalf("Digest third: %v", err)
+	}
+	if d3 == d1 {
+		t.Fatal("a changed tree must not digest like the unchanged one")
+	}
 }
 
 func TestSandbox_CapturePropagatesError(t *testing.T) {

@@ -29,6 +29,21 @@ const (
 	keyBaseKey = "base_key"
 	// keyImage is the image the workspace was provisioned from.
 	keyImage = "image"
+	// keyContentDigest is the content-addressed digest of the workspace tree
+	// (croft-dlb). It is stable across captures of identical content, so a
+	// host can compare content even when the timeline moved and the snapshot
+	// key changed.
+	//
+	// Availability: states captured by this adapter version or later carry it;
+	// a state persisted before croft-dlb rehydrates with an empty digest and
+	// can never compare content-equal to a fresh capture. Treat an empty value
+	// as "no content identity recorded", not as equality.
+	//
+	// Trust: the value is producer-computed and is not re-verified on Apply.
+	// The trace store is the trust boundary (as it is for every other state
+	// field); a state that crosses an untrusted boundary must be treated as
+	// untrusted input, not as a content check.
+	keyContentDigest = "content_digest"
 )
 
 // toTraceState lifts a croft state into the kernel's workspace state.
@@ -36,16 +51,20 @@ const (
 // Revision carries the snapshot key, so a state's identity survives a round
 // trip through the trace exactly as a git state's HEAD does. Digest comes from
 // the kernel's own CanonicalDigest, which sorts keys at every nesting level —
-// the adapter must not hand-roll a hash (see the package doc on why hashing
-// croft's fields cannot produce content equality).
+// the adapter must not hand-roll a hash. Since croft-dlb the state is
+// digest-stable for unchanged content: Capture returns the previous state
+// verbatim when nothing changed, so Revision and the lineage fields are equal
+// too. ContentDigest rides in Data for hosts that want content equality across
+// a moved timeline.
 func toTraceState(cs croftlib.WorkspaceState) trace.WorkspaceState {
 	return trace.WorkspaceState{
 		Backend:  BackendName,
 		Revision: cs.SnapshotKey,
 		Data: map[string]any{
-			keyParentKey: cs.ParentKey,
-			keyBaseKey:   cs.BaseKey,
-			keyImage:     cs.Image,
+			keyParentKey:     cs.ParentKey,
+			keyBaseKey:       cs.BaseKey,
+			keyImage:         cs.Image,
+			keyContentDigest: cs.ContentDigest,
 		},
 	}
 }
@@ -68,10 +87,11 @@ func fromTraceState(ws trace.WorkspaceState) (croftlib.WorkspaceState, error) {
 		return croftlib.WorkspaceState{}, fmt.Errorf("croft sandbox: workspace state is missing a snapshot key")
 	}
 	return croftlib.WorkspaceState{
-		SnapshotKey: ws.Revision,
-		ParentKey:   stringFromData(ws.Data, keyParentKey),
-		BaseKey:     stringFromData(ws.Data, keyBaseKey),
-		Image:       stringFromData(ws.Data, keyImage),
+		SnapshotKey:   ws.Revision,
+		ParentKey:     stringFromData(ws.Data, keyParentKey),
+		BaseKey:       stringFromData(ws.Data, keyBaseKey),
+		Image:         stringFromData(ws.Data, keyImage),
+		ContentDigest: stringFromData(ws.Data, keyContentDigest),
 	}, nil
 }
 
