@@ -15,9 +15,13 @@
 > **Status:** all four phases are implemented in
 > [`run/reversible.go`](../../run/reversible.go) and
 > [`fact.go`](../../fact.go) — 20 passing tests. Merge propagates
-> physically via `Seal` + `SettleSelect`/`SettleApply` — `CommitMerge` refuses
-> isolated children (§9). `authority_merge` (Phase 4) is the `DecisionProvider`
-> gate (Plan 3 Phase 4).
+> physically via `Seal` + `SettleSelect`/`SettleApply`. `authority_merge`
+> (Phase 4) is the `DecisionProvider` gate (Plan 3 Phase 4).
+>
+> **Historical note:** this plan referenced `CommitMerge`; that helper was
+> removed in `shepherd-runtime-go-s3u` because it only applied to shared-sandbox
+> children. Review now records the explicit
+> `RecordMergeProposal` / `RecordMergeDecision` pair.
 
 ## 1. Objective & Context
 
