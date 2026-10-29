@@ -3,7 +3,7 @@ module github.com/buchenberg/goatherd-runtime/sandbox/croft
 go 1.26.3
 
 require (
-	github.com/buchenberg/goatherd-croft v0.9.0
+	github.com/buchenberg/goatherd-croft v0.9.1
 	github.com/buchenberg/goatherd-kernel v0.18.0
 	github.com/buchenberg/goatherd-runtime v0.20.0
 )

@@ -337,8 +337,14 @@ func TestSandbox_CaptureUnchangedIsStable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Capture: %v", err)
 	}
-	d1, _ := first.Digest()
-	d2, _ := second.Digest()
+	d1, err := first.Digest()
+	if err != nil {
+		t.Fatalf("Digest first: %v", err)
+	}
+	d2, err := second.Digest()
+	if err != nil {
+		t.Fatalf("Digest second: %v", err)
+	}
 	if d1 != d2 {
 		t.Fatalf("unchanged content must digest equally: %s vs %s", d1, d2)
 	}
@@ -350,7 +356,10 @@ func TestSandbox_CaptureUnchangedIsStable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("third Capture: %v", err)
 	}
-	d3, _ := third.Digest()
+	d3, err := third.Digest()
+	if err != nil {
+		t.Fatalf("Digest third: %v", err)
+	}
 	if d3 == d1 {
 		t.Fatal("a changed tree must not digest like the unchanged one")
 	}
