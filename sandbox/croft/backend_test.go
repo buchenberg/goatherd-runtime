@@ -71,7 +71,6 @@ func TestNew_LowersConfigOntoCroft(t *testing.T) {
 		FIFODir:         "/tmp/fifo",
 		Network:         "none",
 		StagingDir:      "/tmp/staging",
-		ContentDigest:   true,
 		Limits:          &croftlib.Limits{CPUShares: 1024, CPUQuota: 50000, MemoryBytes: 1 << 30, Pids: 256},
 		Secrets:         []croftlib.SecretMount{{Source: "/host/token", Destination: "/run/token"}},
 	}
@@ -275,7 +274,7 @@ func TestSandbox_CaptureDigestIsDeterministic(t *testing.T) {
 	}
 	// A re-ordered Data map must digest identically.
 	shuffledData := make(map[string]any, len(ws.Data))
-	for _, k := range []string{"content_digest", "parent_key", "image", "base_key"} {
+	for _, k := range []string{"parent_key", "image", "base_key"} {
 		shuffledData[k] = ws.Data[k]
 	}
 	shuffled := trace.WorkspaceState{
@@ -292,11 +291,10 @@ func TestSandbox_CaptureDigestIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestSandbox_CaptureCarriesContentDigest pins the adapter half of croft-dlb:
-// the content digest rides the kernel state's Data and survives a round trip.
-// Digest stability itself is croft's contract (goatherd-croft's fast path);
-// this package only maps it.
-func TestSandbox_CaptureCarriesContentDigest(t *testing.T) {
+// TestSandbox_CaptureDoesNotCarryContentDigest pins the deliberate omission:
+// the adapter does not force croft's per-capture full-tree diff on, because no
+// consumer reads the field and the kernel digest includes Revision anyway.
+func TestSandbox_CaptureDoesNotCarryContentDigest(t *testing.T) {
 	s, _ := newTestSandbox(t)
 	ctx := context.Background()
 	if err := s.Create(ctx, sbx.SandboxSpec{}); err != nil {
@@ -306,17 +304,15 @@ func TestSandbox_CaptureCarriesContentDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
-	got, _ := ws.Data[keyContentDigest].(string)
-	if !strings.HasPrefix(got, "sha256:") {
-		t.Fatalf("Data[%s] = %v, want the croft content digest", keyContentDigest, ws.Data[keyContentDigest])
+	if _, ok := ws.Data["content_digest"]; ok {
+		t.Fatalf("state Data carries content_digest = %v, want the adapter not to map it", ws.Data["content_digest"])
 	}
-
 	back, err := fromTraceState(ws)
 	if err != nil {
 		t.Fatalf("fromTraceState: %v", err)
 	}
-	if back.ContentDigest != got {
-		t.Fatalf("ContentDigest round trip = %q, want %q", back.ContentDigest, got)
+	if back.ContentDigest != "" {
+		t.Fatalf("ContentDigest = %q, want empty", back.ContentDigest)
 	}
 }
 
@@ -634,3 +630,31 @@ func TestSandbox_ImplementsContracts(t *testing.T) {
 // configEqual compares two croft configs, which carry slices and pointers and
 // so are not comparable with ==.
 func configEqual(a, b croftlib.Config) bool { return reflect.DeepEqual(a, b) }
+
+// TestFromTraceState_IgnoresLegacyContentDigest pins upgrade compatibility at
+// the state boundary: a state persisted by the previous adapter still carries
+// content_digest, and it must remain applyable. The key is ignored; only a host
+// that compares its Digest across the version boundary needs a migration (see
+// the envelope schema history note in state.go).
+func TestFromTraceState_IgnoresLegacyContentDigest(t *testing.T) {
+	legacy := trace.WorkspaceState{
+		Backend:  BackendName,
+		Revision: "snap-1",
+		Data: map[string]any{
+			"parent_key":     "snap-0",
+			"base_key":       "snap-0",
+			"image":          testImage,
+			"content_digest": "sha256:legacy",
+		},
+	}
+	got, err := fromTraceState(legacy)
+	if err != nil {
+		t.Fatalf("fromTraceState: %v", err)
+	}
+	if got.SnapshotKey != "snap-1" || got.ParentKey != "snap-0" || got.BaseKey != "snap-0" || got.Image != testImage {
+		t.Errorf("legacy state lost a mapped field: %+v", got)
+	}
+	if got.ContentDigest != "" {
+		t.Errorf("ContentDigest = %q, want the legacy value to be ignored", got.ContentDigest)
+	}
+}

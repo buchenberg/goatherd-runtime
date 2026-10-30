@@ -54,9 +54,10 @@
 // Unchanged content at a moved timeline still digests differently, which is the
 // contract's intent: select treats it as moved and apply merges.
 //
-// WorkspaceState.ContentDigest rides in the kernel state's Data. It is the
-// daemon differ's content-addressed digest of the workspace against the image
-// rootfs, so a host can compare content across a moved timeline when it wants
-// content equality rather than timeline identity. The adapter always asks
-// croft for it; the no-change fast path does not need it.
+// WorkspaceState.ContentDigest is not carried. Producing it costs a full-tree
+// daemon diff on every capture, and the kernel's Digest already includes
+// Revision, so it cannot express "same content, moved timeline" through a state
+// digest. The no-change fast path above is what digest stability needs; a host
+// that wants cross-timeline content equality can opt into croft's ContentDigest
+// with an explicit config field when it has a consumer for it.
 package croft
