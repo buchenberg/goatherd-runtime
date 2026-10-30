@@ -16,8 +16,9 @@ import (
 // opaque Data map — and its doc names both halves of this mapping: Backend is
 // "git", "containerd", ... and Revision is "the git HEAD SHA for the git
 // backend, a snapshot key for a snapshot-backed backend". Croft's state fits
-// that shape without loss: SnapshotKey is the timeline position, and the
-// remaining fields are lineage the merge and the image check need.
+// that shape, carrying everything except the deliberately-unmapped
+// ContentDigest: SnapshotKey is the timeline position, and the remaining fields
+// are lineage the merge and the image check need.
 const (
 	// keyParentKey is the snapshot this state's layer was prepared from — the
 	// layer lineage.
@@ -30,6 +31,24 @@ const (
 	// keyImage is the image the workspace was provisioned from.
 	keyImage = "image"
 )
+
+// # Envelope schema history
+//
+// Adapter versions before this one mapped Croft's ContentDigest to a fourth
+// Data key, "content_digest". This version does not. Because the kernel's
+// WorkspaceState.Digest hashes Data, a state persisted by the old adapter and a
+// fresh capture of the same logical content at the same Revision digest
+// differently across that version boundary. A host that persists state digests
+// and compares them across an adapter upgrade must drop the old key (treating
+// the upgrade as a state-shape migration) or treat the state as moved; there is
+// no normalization here because the adapter cannot rewrite a state another
+// process already persisted.
+//
+// No consumer in this stack does that comparison today: the runtime does not
+// persist a state digest for later comparison, yaah recomputes both sides of a
+// persisted proposal basis from the same artifact and adapter version, and
+// session-target proposals are not rehydrated. The note exists so a future host
+// that does persist digests sees the boundary rather than rediscovering it.
 
 // toTraceState lifts a croft state into the kernel's workspace state.
 //

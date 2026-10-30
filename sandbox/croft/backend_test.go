@@ -630,3 +630,31 @@ func TestSandbox_ImplementsContracts(t *testing.T) {
 // configEqual compares two croft configs, which carry slices and pointers and
 // so are not comparable with ==.
 func configEqual(a, b croftlib.Config) bool { return reflect.DeepEqual(a, b) }
+
+// TestFromTraceState_IgnoresLegacyContentDigest pins upgrade compatibility at
+// the state boundary: a state persisted by the previous adapter still carries
+// content_digest, and it must remain applyable. The key is ignored; only a host
+// that compares its Digest across the version boundary needs a migration (see
+// the envelope schema history note in state.go).
+func TestFromTraceState_IgnoresLegacyContentDigest(t *testing.T) {
+	legacy := trace.WorkspaceState{
+		Backend:  BackendName,
+		Revision: "snap-1",
+		Data: map[string]any{
+			"parent_key":     "snap-0",
+			"base_key":       "snap-0",
+			"image":          testImage,
+			"content_digest": "sha256:legacy",
+		},
+	}
+	got, err := fromTraceState(legacy)
+	if err != nil {
+		t.Fatalf("fromTraceState: %v", err)
+	}
+	if got.SnapshotKey != "snap-1" || got.ParentKey != "snap-0" || got.BaseKey != "snap-0" || got.Image != testImage {
+		t.Errorf("legacy state lost a mapped field: %+v", got)
+	}
+	if got.ContentDigest != "" {
+		t.Errorf("ContentDigest = %q, want the legacy value to be ignored", got.ContentDigest)
+	}
+}
