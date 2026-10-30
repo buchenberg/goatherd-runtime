@@ -61,9 +61,15 @@ func newWithInner(cfg Config, inner croftlib.Sandbox) *Sandbox {
 }
 
 // toCroftConfig lowers the adapter's Config onto croft's. The mapping is
-// field-for-field except for ContentDigest, which the adapter forces on: it is
-// how the adapter satisfies the kernel's digest-stability contract, not a host
-// preference. The adapter type exists so hosts never import croft.
+// field-for-field. The adapter type exists so hosts never import croft.
+//
+// ContentDigest is deliberately not enabled. It makes Capture run a full-tree
+// daemon diff against the image rootfs on every capture, and it cannot buy the
+// kernel's digest-stability contract: WorkspaceState.Digest includes Revision,
+// so a moved timeline still digests differently. Digest stability for unchanged
+// content comes from croft-dlb's no-change fast path, which returns the parent
+// state verbatim. A host that needs content equality across a moved timeline
+// can add an explicit opt-in later; no current consumer reads the field.
 func toCroftConfig(c Config) croftlib.Config {
 	out := croftlib.Config{
 		Address:         c.Address,
@@ -78,11 +84,6 @@ func toCroftConfig(c Config) croftlib.Config {
 		FIFODir:         c.FIFODir,
 		Network:         c.Network,
 		StagingDir:      c.StagingDir,
-		// Settlement's select precondition compares state digests as content
-		// equality. The fast path (croft-dlb) makes unchanged captures equal;
-		// the content digest additionally lets a host compare identical
-		// content across a moved timeline.
-		ContentDigest: true,
 	}
 	if c.Limits != nil {
 		out.Limits = &croftlib.Limits{
@@ -166,8 +167,10 @@ func (s *Sandbox) Destroy(ctx context.Context) error {
 // state verbatim instead of minting a new key. Two captures of unchanged
 // content at an unchanged position therefore digest equally, which is what
 // settlement's select precondition compares. Content captured at a moved
-// timeline still digests differently by design; WorkspaceState.ContentDigest
-// (Data["content_digest"]) is the identity for those comparisons.
+// timeline still digests differently by design; the kernel's Digest includes
+// Revision, so content equality across a moved timeline is not what a state
+// digest expresses (and this adapter does not enable croft's extra content
+// digest per capture).
 func (s *Sandbox) Capture(ctx context.Context) (trace.WorkspaceState, error) {
 	cs, err := s.inner.Capture(ctx)
 	if err != nil {

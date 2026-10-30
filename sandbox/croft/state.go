@@ -15,9 +15,9 @@ import (
 // The kernel type carries a backend-agnostic shape — Backend, Revision and an
 // opaque Data map — and its doc names both halves of this mapping: Backend is
 // "git", "containerd", ... and Revision is "the git HEAD SHA for the git
-// backend, a snapshot key for a snapshot-backed backend". Croft's four-field
-// state fits that shape without loss: SnapshotKey is the timeline position,
-// and the remaining three are lineage the merge and the image check need.
+// backend, a snapshot key for a snapshot-backed backend". Croft's state fits
+// that shape without loss: SnapshotKey is the timeline position, and the
+// remaining fields are lineage the merge and the image check need.
 const (
 	// keyParentKey is the snapshot this state's layer was prepared from — the
 	// layer lineage.
@@ -29,21 +29,6 @@ const (
 	keyBaseKey = "base_key"
 	// keyImage is the image the workspace was provisioned from.
 	keyImage = "image"
-	// keyContentDigest is the content-addressed digest of the workspace tree
-	// (croft-dlb). It is stable across captures of identical content, so a
-	// host can compare content even when the timeline moved and the snapshot
-	// key changed.
-	//
-	// Availability: states captured by this adapter version or later carry it;
-	// a state persisted before croft-dlb rehydrates with an empty digest and
-	// can never compare content-equal to a fresh capture. Treat an empty value
-	// as "no content identity recorded", not as equality.
-	//
-	// Trust: the value is producer-computed and is not re-verified on Apply.
-	// The trace store is the trust boundary (as it is for every other state
-	// field); a state that crosses an untrusted boundary must be treated as
-	// untrusted input, not as a content check.
-	keyContentDigest = "content_digest"
 )
 
 // toTraceState lifts a croft state into the kernel's workspace state.
@@ -54,17 +39,18 @@ const (
 // the adapter must not hand-roll a hash. Since croft-dlb the state is
 // digest-stable for unchanged content: Capture returns the previous state
 // verbatim when nothing changed, so Revision and the lineage fields are equal
-// too. ContentDigest rides in Data for hosts that want content equality across
-// a moved timeline.
+// too. Croft's ContentDigest is deliberately not carried: the adapter does not
+// enable the per-capture full-tree diff that produces it, and the kernel's
+// digest includes Revision, so it cannot express cross-timeline content
+// equality anyway.
 func toTraceState(cs croftlib.WorkspaceState) trace.WorkspaceState {
 	return trace.WorkspaceState{
 		Backend:  BackendName,
 		Revision: cs.SnapshotKey,
 		Data: map[string]any{
-			keyParentKey:     cs.ParentKey,
-			keyBaseKey:       cs.BaseKey,
-			keyImage:         cs.Image,
-			keyContentDigest: cs.ContentDigest,
+			keyParentKey: cs.ParentKey,
+			keyBaseKey:   cs.BaseKey,
+			keyImage:     cs.Image,
 		},
 	}
 }
@@ -87,11 +73,10 @@ func fromTraceState(ws trace.WorkspaceState) (croftlib.WorkspaceState, error) {
 		return croftlib.WorkspaceState{}, fmt.Errorf("croft sandbox: workspace state is missing a snapshot key")
 	}
 	return croftlib.WorkspaceState{
-		SnapshotKey:   ws.Revision,
-		ParentKey:     stringFromData(ws.Data, keyParentKey),
-		BaseKey:       stringFromData(ws.Data, keyBaseKey),
-		Image:         stringFromData(ws.Data, keyImage),
-		ContentDigest: stringFromData(ws.Data, keyContentDigest),
+		SnapshotKey: ws.Revision,
+		ParentKey:   stringFromData(ws.Data, keyParentKey),
+		BaseKey:     stringFromData(ws.Data, keyBaseKey),
+		Image:       stringFromData(ws.Data, keyImage),
 	}, nil
 }
 
