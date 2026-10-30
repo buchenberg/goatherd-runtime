@@ -44,11 +44,21 @@ const (
 // no normalization here because the adapter cannot rewrite a state another
 // process already persisted.
 //
-// No consumer in this stack does that comparison today: the runtime does not
-// persist a state digest for later comparison, yaah recomputes both sides of a
-// persisted proposal basis from the same artifact and adapter version, and
-// session-target proposals are not rehydrated. The note exists so a future host
-// that does persist digests sees the boundary rather than rediscovering it.
+// The runtime does make this comparison, so this is a real migration case, not
+// a hypothetical one: settlement's select recomputes the sealed baseline's
+// Digest and compares it to a fresh parent capture (settlement.go's
+// SettleSelect), MergeProposal.BaselineDigest is derived from a fork baseline
+// the same way, and recovery rebuilds the baseline from the persisted payload.
+// A croft adapter upgrade between fork and select therefore leaves the old
+// baseline carrying content_digest while the fresh capture omits it, and an
+// unchanged parent reads as moved: select refuses with "parent workspace has
+// moved since the fork baseline; use SettleApply".
+//
+// Migrate by dropping "content_digest" from persisted workspace states before
+// comparing across the upgrade, or by treating the upgrade as a moved state.
+// This stack is greenfield, so no live retained output spans the boundary; the
+// note exists so a host or recovery path that does persist states sees the
+// required normalization rather than rediscovering it through a failed select.
 
 // toTraceState lifts a croft state into the kernel's workspace state.
 //
