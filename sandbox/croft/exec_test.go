@@ -271,3 +271,21 @@ func TestSandbox_ExecAcceptsMatchingConfiguredAuthority(t *testing.T) {
 		t.Fatalf("mismatched roots must be unsupported, got %v", err)
 	}
 }
+
+func TestSandbox_ExecAcceptsReadOnlyMask(t *testing.T) {
+	// MaskWorkspace is how an all-read-only declaration is distinguished
+	// from the unshaped legacy posture. A matching empty-root spec is
+	// enforceable; the same spec against an unshaped config is not.
+	fake := newFakeCroft(testImage)
+	s := newWithInner(Config{Image: testImage, MaskWorkspace: true}, fake)
+	spec := &confinement.ConfinementSpec{}
+
+	if _, err := s.Exec(context.Background(), sbx.ExecRequest{Command: "true", Confinement: spec}); err != nil {
+		t.Fatalf("Exec with a matching read-only mask: %v", err)
+	}
+
+	unshaped := newWithInner(Config{Image: testImage}, fake)
+	if _, err := unshaped.Exec(context.Background(), sbx.ExecRequest{Command: "true", Confinement: spec}); !errors.Is(err, sbx.ErrUnsupported) {
+		t.Fatalf("a read-only spec against an unshaped container must be unsupported, got %v", err)
+	}
+}

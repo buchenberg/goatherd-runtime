@@ -103,10 +103,9 @@ func checkAuthority(req sbx.ExecRequest, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("croft sandbox: resolve confinement: %w", err)
 	}
-	if len(roots) == 0 {
-		// Config.WritableRoots == nil is the historical unshaped workspace,
-		// not an all-read-only shape. A read-only ConfinementSpec therefore
-		// cannot be honored without a separate shaped flag.
+	if len(roots) == 0 && !cfg.MaskWorkspace {
+		// Empty WritableRoots without MaskWorkspace is the historical
+		// unshaped workspace, not an all-read-only shape.
 		return fmt.Errorf("croft sandbox: a read-only confinement request cannot be lowered into an unshaped container workspace (%w)", sbx.ErrUnsupported)
 	}
 	if !sameRoots(roots, cfg.WritableRoots) {

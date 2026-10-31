@@ -109,10 +109,16 @@ type Config struct {
 	// means deny all. It has no effect under another posture.
 	BrokerHosts []string
 	// WritableRoots is the container-path grant set. Empty keeps the
-	// historical whole-workspace writable posture; a non-empty set is the
-	// shaped container view (read-only workspace plus these writable
-	// subtrees).
+	// historical whole-workspace writable posture unless MaskWorkspace is
+	// set; a non-empty set is the shaped container view (read-only workspace
+	// plus these writable subtrees).
 	WritableRoots []string
+	// MaskWorkspace makes the workspace read-only without granting any
+	// writable subtree. It is how an all-read-only grant declaration is
+	// distinguished from the historical unshaped posture (empty
+	// WritableRoots). It has no additional effect when WritableRoots is
+	// non-empty.
+	MaskWorkspace bool
 	// Secrets are host files bind-mounted read-only into the container. A
 	// token arrives as a file, never in argv or the process environment.
 	Secrets []SecretMount
