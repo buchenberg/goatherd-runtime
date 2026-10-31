@@ -40,13 +40,14 @@ var execCeiling = 10 * time.Minute
 //
 // # Authority requests
 //
-// The shaping is fixed at construction: Config.WritableRoots and Config.Network
-// determine the container's mounts and egress before the task starts. A
-// ConfinementSpec on Exec is therefore checked against that configured shape
-// rather than silently ignored. A matching spec is accepted; a mismatched one
-// is refused. An empty writable-root set is not enforceable as read-only
-// because empty Config.WritableRoots means the historical unshaped workspace,
-// so a read-only request is refused rather than downgraded.
+// The shaping is fixed at construction: Config.WritableRoots,
+// Config.MaskWorkspace, and Config.Network determine the container's mounts and
+// egress before the task starts. A ConfinementSpec on Exec is therefore checked
+// against that configured shape rather than silently ignored. A matching spec
+// is accepted; a mismatched one is refused. An empty writable-root set is
+// enforceable as read-only only when Config.MaskWorkspace is set; empty
+// WritableRoots without the mask means the historical unshaped workspace, so a
+// read-only request is refused rather than downgraded.
 func (s *Sandbox) Exec(ctx context.Context, req sbx.ExecRequest) (sbx.ExecResult, error) {
 	if err := checkAuthority(req, s.cfg); err != nil {
 		return sbx.ExecResult{}, err

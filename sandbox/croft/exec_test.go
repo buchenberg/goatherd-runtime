@@ -289,3 +289,24 @@ func TestSandbox_ExecAcceptsReadOnlyMask(t *testing.T) {
 		t.Fatalf("a read-only spec against an unshaped container must be unsupported, got %v", err)
 	}
 }
+
+func TestSandbox_ExecMaskWithWritableRootsStillChecksTheRoots(t *testing.T) {
+	// MaskWorkspace has no additional effect when roots are granted: the
+	// roots remain the comparable shape, and a spec naming different roots is
+	// still a mismatch rather than being accepted because the mask is set.
+	fake := newFakeCroft(testImage)
+	s := newWithInner(Config{
+		Image:         testImage,
+		MaskWorkspace: true,
+		WritableRoots: []string{"/workspace/src"},
+	}, fake)
+
+	spec := &confinement.ConfinementSpec{WritableRoots: []string{"/workspace/src"}}
+	if _, err := s.Exec(context.Background(), sbx.ExecRequest{Command: "true", Confinement: spec}); err != nil {
+		t.Fatalf("matching roots with a mask: %v", err)
+	}
+	spec.WritableRoots = []string{"/workspace/other"}
+	if _, err := s.Exec(context.Background(), sbx.ExecRequest{Command: "true", Confinement: spec}); !errors.Is(err, sbx.ErrUnsupported) {
+		t.Fatalf("mismatched roots with a mask must be unsupported, got %v", err)
+	}
+}
