@@ -5,7 +5,6 @@ package croft
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -116,7 +115,7 @@ func checkAuthority(req sbx.ExecRequest, cfg Config) error {
 	if !sameNetwork(network, cfg) {
 		return fmt.Errorf("croft sandbox: requested network %q does not match the configured container posture %q (%w)", network.Mode, cfg.Network, sbx.ErrUnsupported)
 	}
-	if !sameHosts(network.AllowedHosts, cfg.BrokerHosts) {
+	if network.Mode == confinement.NetBroker && !sameHosts(network.AllowedHosts, cfg.BrokerHosts) {
 		return fmt.Errorf("croft sandbox: requested broker hosts %v do not match the configured allowlist %v (%w)", network.AllowedHosts, cfg.BrokerHosts, sbx.ErrUnsupported)
 	}
 	return nil
@@ -129,10 +128,10 @@ func sameRoots(got, want []string) bool {
 	a := make([]string, len(got))
 	b := make([]string, len(want))
 	for i, p := range got {
-		a[i] = filepath.Clean(p)
+		a[i] = confinement.Canonical(p)
 	}
 	for i, p := range want {
-		b[i] = filepath.Clean(p)
+		b[i] = confinement.Canonical(p)
 	}
 	sort.Strings(a)
 	sort.Strings(b)
@@ -146,6 +145,9 @@ func sameNetwork(network confinement.NetworkPolicy, cfg Config) bool {
 	case confinement.NetDenyAll:
 		return cfg.Network == "" || cfg.Network == "none"
 	case confinement.NetBroker:
+		// The container creates its own pinned broker port at startup; the
+		// spec's BrokerPort is the worktree broker's pin, not a port inside
+		// this container. The posture and allowlist are the comparable parts.
 		return cfg.Network == "broker"
 	default:
 		return false

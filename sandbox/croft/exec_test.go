@@ -144,10 +144,11 @@ func TestSandbox_ExecRefusesAuthorityItCannotEnforce(t *testing.T) {
 	cases := []struct {
 		name string
 		req  sbx.ExecRequest
+		want string
 	}{
-		{"confinement spec", sbx.ExecRequest{Command: "true", Confinement: spec}},
-		{"paddock placement", sbx.ExecRequest{Command: "true", Placement: containment.PlacementPaddock}},
-		{"authority match", sbx.ExecRequest{Command: "true", AuthorityMatch: "sha256:deadbeef"}},
+		{"confinement spec", sbx.ExecRequest{Command: "true", Confinement: spec}, "read-only confinement"},
+		{"paddock placement", sbx.ExecRequest{Command: "true", Placement: containment.PlacementPaddock}, "paddock"},
+		{"authority match", sbx.ExecRequest{Command: "true", AuthorityMatch: "sha256:deadbeef"}, "authority-surface"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -158,8 +159,8 @@ func TestSandbox_ExecRefusesAuthorityItCannotEnforce(t *testing.T) {
 			if !errors.Is(err, sbx.ErrUnsupported) {
 				t.Errorf("errors.Is(err, sandbox.ErrUnsupported) = false; a caller probing capabilities cannot classify this: %v", err)
 			}
-			if !strings.Contains(err.Error(), "cannot") && !strings.Contains(err.Error(), "does not provide") && !strings.Contains(err.Error(), "cannot evidence") {
-				t.Errorf("error must explain the refusal, got: %v", err)
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error must mention %q, got: %v", tc.want, err)
 			}
 		})
 	}
