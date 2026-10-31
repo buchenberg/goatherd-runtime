@@ -11,8 +11,16 @@ It composes [`github.com/buchenberg/goatherd-kernel`](https://github.com/buchenb
 | Package | Contents |
 |---|---|
 | `goatherd` (module root) | the runtime hub — `Scope`, `ScopeManager`, checkpoints, workspace operations, the merge gate, settlement (`Seal`, `Settle`, `RetainedOutput`), recovery (`RecoverScopes`) |
+| `effect` | typed workspace-change records and effect-bus emission |
 | `sandbox` | the `Sandbox` interface and the backend registry |
+| `sandbox/confinement` | authority declarations, grants, confinement specs, and network-policy lowering |
+| `sandbox/containment` | the syscall-deny paddock contract and placement tiers |
+| `sandbox/egress` | the allowlist egress policy and loopback CONNECT broker |
 | `sandbox/git` | the git backend (in-place, worktree); self-registers as `"git"` |
+| `sandbox/croft` | the containerd backend (nested module); self-registers as `"containerd"` |
+| `sandbox/landlock` | the Linux containment backend (nested module) |
+| `sandbox/winacl` | the Windows containment backend (nested module) |
+| `sandbox/seatbelt` | the macOS containment backend (nested module) |
 | `substrate` | the `Substrate` contract, the registry (unknown substrate refs fail the materialization), the echo/KV/workspace substrates |
 | `materialize` | the materialize orchestrator (owns the append; substrates never do) |
 | `task` | the task runtime — `StartTask`/`StartTaskSync`, `Run`, `TaskControl`, the task `Registry`, `ChildHandle` |
@@ -26,14 +34,15 @@ integrated pipeline until a real caller lands.
 
 ## Containment backends
 
-The execution boundary is enforced by **containment backends**: each lowers a set of writable roots to an OS-specific profile, probes it fail-closed, and launches a command confined by it. Each lives in its own nested module, so the root runtime keeps its "kernel + stdlib" dependency footprint.
+The execution boundary is enforced by **containment backends**: each lowers a set of writable roots to an OS-specific profile, probes it fail-closed, and launches a command confined by it. Each lives in its own nested module, so the root runtime keeps a small dependency footprint.
 
 | Module | Platform | Mechanism | Enforcement tier |
 |---|---|---|---|
 | `sandbox/landlock` | Linux | an unprivileged kernel LSM (Landlock): self-restrict, then exec | `native-syscall-deny` |
 | `sandbox/winacl` | Windows | a write-restricted token, per-root capability SIDs, a Low integrity level, and a mandatory label | `native-access-check-deny` |
+| `sandbox/seatbelt` | macOS | a per-process Seatbelt SBPL profile applied by `sandbox-exec`, with a probe-first launch | `native-sandbox-deny` |
 
-Both implement the same `containment.Backend` contract, so a host picks a backend per platform and passes it to the sandbox constructor — the root module does not change:
+All three implement the same `containment.Backend` contract, so a host picks a backend per platform and passes it to the sandbox constructor — the root module does not change:
 
 ```go
 sb := git.NewLocalGitSandbox(repoPath, git.WithExec(backend, confinement.PlacementPaddock))
@@ -41,15 +50,17 @@ sb := git.NewLocalGitSandbox(repoPath, git.WithExec(backend, confinement.Placeme
 
 A backend that cannot enforce the requested network mode refuses it rather than running with the axis silently ignored. Each backend's own package documentation states what it does *not* confine.
 
+`sandbox/croft` is the separate **world** backend, not a containment member: it puts containerd behind the same `Sandbox` seam and reports `contained`, because namespaces/cgroups are its boundary. Do not layer Landlock inside the container; the container profile may block the Landlock syscalls and the namespace already supplies the boundary.
+
 ## Dependency
 
 The runtime requires the kernel for the trace store, the record vocabulary, and the shared public `testkit` package:
 
 ```
-require github.com/buchenberg/goatherd-kernel v0.17.0
+require github.com/buchenberg/goatherd-kernel v0.18.0
 ```
 
-The kernel is the only external dependency family it pulls in; the runtime carries no other third-party dependency. The module carries no `replace` directive, so it resolves from the module proxy like any other dependency.
+The root module also has one direct non-kernel dependency, `golang.org/x/text`, used by confinement path normalization. The root module's SQLite driver and support modules are indirect. The platform containment backends and `sandbox/croft` live in nested modules and carry their own dependency sets; `sandbox/git` ships in the root module. `sandbox/croft` is the one that pulls containerd and the OCI tree. The root carries no `replace` directive, so modules resolve from the proxy like any other dependency.
 
 ## What You Can Do With It
 
@@ -335,15 +346,17 @@ type Sandbox interface {
 
 Backends need not implement everything. `Capabilities()` reports what is available, and unimplemented operations return `ErrUnsupported` rather than pretending to succeed. `Capture` and `Diff` are **non-mutating**: the caller's git index is left as it was found.
 
-Two backend modes ship, packaged on purpose:
+Three backend modes ship, packaged on purpose:
 
 | Backend | Mode | Lifecycle | Isolated | Containment | Package |
 |---|---|---|---|---|---|
 | `git` | in-place (`git.NewLocalGitSandbox`) | No — validates only | No | `uncontained` | `sandbox/git` |
 | `git` | worktree (`git.NewWorktreeSandbox`) | Yes — real worktrees | Yes | `buffered` | `sandbox/git` |
+| `containerd` | container (`croft.New(Config{...})`) | Yes — container task and snapshots | Yes | `contained` | `sandbox/croft` |
 
-A backend is a materializer, not necessarily an isolation boundary; the git
-backends have zero external dependencies and work on any platform.
+A backend is a materializer or an isolation boundary, not necessarily both; the
+git backends have zero external dependencies and work on any platform, while the
+containerd backend is Linux-only and requires a reachable daemon.
 
 Any type implementing the `Sandbox` interface is swappable in — the
 runtime never inspects a backend beyond the opaque
