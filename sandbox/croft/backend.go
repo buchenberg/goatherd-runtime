@@ -85,6 +85,7 @@ func toCroftConfig(c Config) croftlib.Config {
 		Network:         c.Network,
 		BrokerHosts:     append([]string(nil), c.BrokerHosts...),
 		WritableRoots:   append([]string(nil), c.WritableRoots...),
+		MaskWorkspace:   c.MaskWorkspace,
 		StagingDir:      c.StagingDir,
 	}
 	if c.Limits != nil {

@@ -271,3 +271,42 @@ func TestSandbox_ExecAcceptsMatchingConfiguredAuthority(t *testing.T) {
 		t.Fatalf("mismatched roots must be unsupported, got %v", err)
 	}
 }
+
+func TestSandbox_ExecAcceptsReadOnlyMask(t *testing.T) {
+	// MaskWorkspace is how an all-read-only declaration is distinguished
+	// from the unshaped legacy posture. A matching empty-root spec is
+	// enforceable; the same spec against an unshaped config is not.
+	fake := newFakeCroft(testImage)
+	s := newWithInner(Config{Image: testImage, MaskWorkspace: true}, fake)
+	spec := &confinement.ConfinementSpec{}
+
+	if _, err := s.Exec(context.Background(), sbx.ExecRequest{Command: "true", Confinement: spec}); err != nil {
+		t.Fatalf("Exec with a matching read-only mask: %v", err)
+	}
+
+	unshaped := newWithInner(Config{Image: testImage}, fake)
+	if _, err := unshaped.Exec(context.Background(), sbx.ExecRequest{Command: "true", Confinement: spec}); !errors.Is(err, sbx.ErrUnsupported) {
+		t.Fatalf("a read-only spec against an unshaped container must be unsupported, got %v", err)
+	}
+}
+
+func TestSandbox_ExecMaskWithWritableRootsStillChecksTheRoots(t *testing.T) {
+	// MaskWorkspace has no additional effect when roots are granted: the
+	// roots remain the comparable shape, and a spec naming different roots is
+	// still a mismatch rather than being accepted because the mask is set.
+	fake := newFakeCroft(testImage)
+	s := newWithInner(Config{
+		Image:         testImage,
+		MaskWorkspace: true,
+		WritableRoots: []string{"/workspace/src"},
+	}, fake)
+
+	spec := &confinement.ConfinementSpec{WritableRoots: []string{"/workspace/src"}}
+	if _, err := s.Exec(context.Background(), sbx.ExecRequest{Command: "true", Confinement: spec}); err != nil {
+		t.Fatalf("matching roots with a mask: %v", err)
+	}
+	spec.WritableRoots = []string{"/workspace/other"}
+	if _, err := s.Exec(context.Background(), sbx.ExecRequest{Command: "true", Confinement: spec}); !errors.Is(err, sbx.ErrUnsupported) {
+		t.Fatalf("mismatched roots with a mask must be unsupported, got %v", err)
+	}
+}
