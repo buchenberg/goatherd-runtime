@@ -60,7 +60,7 @@ The runtime requires the kernel for the trace store, the record vocabulary, and 
 require github.com/buchenberg/goatherd-kernel v0.18.0
 ```
 
-The root module also has one direct non-kernel dependency, `golang.org/x/text`, used by confinement path normalization. The root module's SQLite driver and support modules are indirect. The sandbox backends live in nested modules and carry their own dependency sets — `sandbox/croft` is the one that pulls containerd and the OCI tree. The root carries no `replace` directive, so modules resolve from the proxy like any other dependency.
+The root module also has one direct non-kernel dependency, `golang.org/x/text`, used by confinement path normalization. The root module's SQLite driver and support modules are indirect. The platform containment backends and `sandbox/croft` live in nested modules and carry their own dependency sets; `sandbox/git` ships in the root module. `sandbox/croft` is the one that pulls containerd and the OCI tree. The root carries no `replace` directive, so modules resolve from the proxy like any other dependency.
 
 ## What You Can Do With It
 
