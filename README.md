@@ -18,6 +18,9 @@ It composes [`github.com/buchenberg/goatherd-kernel`](https://github.com/buchenb
 | `sandbox/egress` | the allowlist egress policy and loopback CONNECT broker |
 | `sandbox/git` | the git backend (in-place, worktree); self-registers as `"git"` |
 | `sandbox/croft` | the containerd backend (nested module); self-registers as `"containerd"` |
+| `sandbox/landlock` | the Linux containment backend (nested module) |
+| `sandbox/winacl` | the Windows containment backend (nested module) |
+| `sandbox/seatbelt` | the macOS containment backend (nested module) |
 | `substrate` | the `Substrate` contract, the registry (unknown substrate refs fail the materialization), the echo/KV/workspace substrates |
 | `materialize` | the materialize orchestrator (owns the append; substrates never do) |
 | `task` | the task runtime — `StartTask`/`StartTaskSync`, `Run`, `TaskControl`, the task `Registry`, `ChildHandle` |
@@ -57,7 +60,7 @@ The runtime requires the kernel for the trace store, the record vocabulary, and 
 require github.com/buchenberg/goatherd-kernel v0.18.0
 ```
 
-The root module also has one direct non-kernel dependency, `golang.org/x/text`, used by confinement path normalization; its SQLite driver and support modules are indirect. The sandbox backends live in nested modules and carry their own dependency sets — `sandbox/croft` is the one that pulls containerd and the OCI tree. The root carries no `replace` directive, so modules resolve from the proxy like any other dependency.
+The root module also has one direct non-kernel dependency, `golang.org/x/text`, used by confinement path normalization. The root module's SQLite driver and support modules are indirect. The sandbox backends live in nested modules and carry their own dependency sets — `sandbox/croft` is the one that pulls containerd and the OCI tree. The root carries no `replace` directive, so modules resolve from the proxy like any other dependency.
 
 ## What You Can Do With It
 
