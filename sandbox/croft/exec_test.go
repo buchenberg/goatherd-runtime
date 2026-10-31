@@ -158,8 +158,8 @@ func TestSandbox_ExecRefusesAuthorityItCannotEnforce(t *testing.T) {
 			if !errors.Is(err, sbx.ErrUnsupported) {
 				t.Errorf("errors.Is(err, sandbox.ErrUnsupported) = false; a caller probing capabilities cannot classify this: %v", err)
 			}
-			if !strings.Contains(err.Error(), "croft-ku0") {
-				t.Errorf("error must point at the open decision so the refusal is traceable, got: %v", err)
+			if !strings.Contains(err.Error(), "cannot") && !strings.Contains(err.Error(), "does not provide") && !strings.Contains(err.Error(), "cannot evidence") {
+				t.Errorf("error must explain the refusal, got: %v", err)
 			}
 		})
 	}
@@ -240,5 +240,33 @@ func TestSandbox_ExecDeadlineSurfacesAsContextError(t *testing.T) {
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("errors.Is(err, context.DeadlineExceeded) = false; wrapping lost the cause: %v", err)
+	}
+}
+
+func TestSandbox_ExecAcceptsMatchingConfiguredAuthority(t *testing.T) {
+	fake := newFakeCroft(testImage)
+	s := newWithInner(Config{
+		Image:         testImage,
+		WritableRoots: []string{"/workspace/src"},
+		Network:       "broker",
+		BrokerHosts:   []string{"api.example.com"},
+	}, fake)
+
+	spec := &confinement.ConfinementSpec{
+		WritableRoots: []string{"/workspace/src"},
+		Network: confinement.NetworkPolicy{
+			Mode:         confinement.NetBroker,
+			BrokerPort:   3128,
+			AllowedHosts: []string{"api.example.com"},
+		},
+	}
+	if _, err := s.Exec(context.Background(), sbx.ExecRequest{Command: "true", Confinement: spec}); err != nil {
+		t.Fatalf("Exec with a matching confinement spec: %v", err)
+	}
+
+	// A different root or posture is a mismatch, not a silent reshape.
+	spec.WritableRoots = []string{"/workspace/other"}
+	if _, err := s.Exec(context.Background(), sbx.ExecRequest{Command: "true", Confinement: spec}); !errors.Is(err, sbx.ErrUnsupported) {
+		t.Fatalf("mismatched roots must be unsupported, got %v", err)
 	}
 }

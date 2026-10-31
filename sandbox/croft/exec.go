@@ -5,9 +5,14 @@ package croft
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
 	"time"
 
 	sbx "github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 
 	croftlib "github.com/buchenberg/goatherd-croft"
@@ -34,22 +39,17 @@ var execCeiling = 10 * time.Minute
 // otherwise execCeiling. A run the deadline kills surfaces as a
 // context-deadline error rather than a result with a negative exit code.
 //
-// # Authority requests are refused, not downgraded
+// # Authority requests
 //
-// A non-nil Confinement, an explicit paddock Placement, or a non-empty
-// AuthorityMatch all ask for enforcement this tier cannot provide: croft's
-// container rootfs is wholly writable, so a ConfinementSpec's writable-root
-// set has nothing to lower into. Silently satisfying such a request with the
-// container boundary would report a grant-shaped authority as enforced when it
-// was not.
-//
-// This is deliberately provisional. Whether the container tier should grow
-// shaped authority (read-only rootfs plus explicit writable mounts) or stay a
-// coarse boundary that fails loudly is an open design decision tracked as
-// goatherd-croft bead croft-ku0; this refusal is the fail-closed placeholder
-// until it is settled, and must be revisited then.
+// The shaping is fixed at construction: Config.WritableRoots and Config.Network
+// determine the container's mounts and egress before the task starts. A
+// ConfinementSpec on Exec is therefore checked against that configured shape
+// rather than silently ignored. A matching spec is accepted; a mismatched one
+// is refused. An empty writable-root set is not enforceable as read-only
+// because empty Config.WritableRoots means the historical unshaped workspace,
+// so a read-only request is refused rather than downgraded.
 func (s *Sandbox) Exec(ctx context.Context, req sbx.ExecRequest) (sbx.ExecResult, error) {
-	if err := refuseUnsupportedAuthority(req); err != nil {
+	if err := checkAuthority(req, s.cfg); err != nil {
 		return sbx.ExecResult{}, err
 	}
 
@@ -79,40 +79,89 @@ func (s *Sandbox) Exec(ctx context.Context, req sbx.ExecRequest) (sbx.ExecResult
 	}, nil
 }
 
-// refuseUnsupportedAuthority fails closed on an authority request the
-// container tier cannot honor. See Exec for why this is a refusal rather than
-// a downgrade, and for the croft-ku0 decision that will revisit it.
-//
-// Placement is checked against the whole vocabulary, not matched only where it
-// must be refused. containment.ResolvePlacement — the layer that produces
-// placements — rejects an unknown value, and this backend must not be laxer
-// than the layer above it: matching only PlacementPaddock would let a typo such
-// as "Paddock" fall through to the permissive default, a fail-open hole in the
-// one path whose entire purpose is failing closed. An unknown placement is a
-// caller bug rather than an unsupported feature, so it is reported plainly,
-// matching ResolvePlacement's own wording, instead of wrapping ErrUnsupported.
-//
-// An advisory or auto placement — and an empty one, meaning "this backend's
-// default" — is accepted: neither asks for syscall-tier enforcement, so the
-// container boundary is an honest answer to them.
-func refuseUnsupportedAuthority(req sbx.ExecRequest) error {
-	if req.Confinement != nil {
-		return fmt.Errorf("croft sandbox: a confinement spec cannot be lowered into a container: the rootfs is wholly writable, so there is no writable-root set to enforce (%w; pending goatherd-croft bead croft-ku0, the container-tier authority vocabulary)", sbx.ErrUnsupported)
-	}
-
+// checkAuthority rejects requests the configured container shape cannot honor.
+// It accepts a matching ConfinementSpec, because Config already lowered that
+// declaration into mounts/network; it refuses a mismatch rather than pretending
+// the running container changed shape.
+func checkAuthority(req sbx.ExecRequest, cfg Config) error {
 	switch req.Placement {
 	case "", containment.PlacementAdvisory, containment.PlacementAuto:
 		// No syscall-tier enforcement requested; the container boundary is an
 		// honest answer.
 	case containment.PlacementPaddock:
-		return fmt.Errorf("croft sandbox: placement %q asks for the syscall paddock tier, which this backend does not provide — the container boundary is its enforcement (%w; pending goatherd-croft bead croft-ku0)", req.Placement, sbx.ErrUnsupported)
+		return fmt.Errorf("croft sandbox: placement %q asks for the syscall paddock tier, which this backend does not provide — the container boundary is its enforcement (%w)", req.Placement, sbx.ErrUnsupported)
 	default:
 		return fmt.Errorf("croft sandbox: unknown placement %q (valid: %q, %q, %q, or empty for this backend's default)",
 			req.Placement, containment.PlacementPaddock, containment.PlacementAdvisory, containment.PlacementAuto)
 	}
-
 	if req.AuthorityMatch != "" {
-		return fmt.Errorf("croft sandbox: an authority-surface digest asserts enforcement this backend cannot evidence (%w; pending goatherd-croft bead croft-ku0)", sbx.ErrUnsupported)
+		return fmt.Errorf("croft sandbox: an authority-surface digest asserts enforcement this backend cannot evidence (%w)", sbx.ErrUnsupported)
+	}
+	if req.Confinement == nil {
+		return nil
+	}
+	roots, network, err := confinement.ResolveSpec(*req.Confinement)
+	if err != nil {
+		return fmt.Errorf("croft sandbox: resolve confinement: %w", err)
+	}
+	if len(roots) == 0 {
+		// Config.WritableRoots == nil is the historical unshaped workspace,
+		// not an all-read-only shape. A read-only ConfinementSpec therefore
+		// cannot be honored without a separate shaped flag.
+		return fmt.Errorf("croft sandbox: a read-only confinement request cannot be lowered into an unshaped container workspace (%w)", sbx.ErrUnsupported)
+	}
+	if !sameRoots(roots, cfg.WritableRoots) {
+		return fmt.Errorf("croft sandbox: requested writable roots %v do not match the configured container shape %v (%w)", roots, cfg.WritableRoots, sbx.ErrUnsupported)
+	}
+	if !sameNetwork(network, cfg) {
+		return fmt.Errorf("croft sandbox: requested network %q does not match the configured container posture %q (%w)", network.Mode, cfg.Network, sbx.ErrUnsupported)
+	}
+	if !sameHosts(network.AllowedHosts, cfg.BrokerHosts) {
+		return fmt.Errorf("croft sandbox: requested broker hosts %v do not match the configured allowlist %v (%w)", network.AllowedHosts, cfg.BrokerHosts, sbx.ErrUnsupported)
 	}
 	return nil
+}
+
+func sameRoots(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	a := make([]string, len(got))
+	b := make([]string, len(want))
+	for i, p := range got {
+		a[i] = filepath.Clean(p)
+	}
+	for i, p := range want {
+		b[i] = filepath.Clean(p)
+	}
+	sort.Strings(a)
+	sort.Strings(b)
+	return slices.Equal(a, b)
+}
+
+func sameNetwork(network confinement.NetworkPolicy, cfg Config) bool {
+	switch network.Mode {
+	case confinement.NetAllowAll:
+		return cfg.Network == "host"
+	case confinement.NetDenyAll:
+		return cfg.Network == "" || cfg.Network == "none"
+	case confinement.NetBroker:
+		return cfg.Network == "broker"
+	default:
+		return false
+	}
+}
+
+func sameHosts(got, want []string) bool {
+	a := make([]string, len(got))
+	b := make([]string, len(want))
+	for i, h := range got {
+		a[i] = strings.ToLower(strings.TrimSpace(h))
+	}
+	for i, h := range want {
+		b[i] = strings.ToLower(strings.TrimSpace(h))
+	}
+	sort.Strings(a)
+	sort.Strings(b)
+	return slices.Equal(a, b)
 }
