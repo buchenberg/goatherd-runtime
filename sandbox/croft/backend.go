@@ -83,6 +83,8 @@ func toCroftConfig(c Config) croftlib.Config {
 		MaxOutputBytes:  c.MaxOutputBytes,
 		FIFODir:         c.FIFODir,
 		Network:         c.Network,
+		BrokerHosts:     append([]string(nil), c.BrokerHosts...),
+		WritableRoots:   append([]string(nil), c.WritableRoots...),
 		StagingDir:      c.StagingDir,
 	}
 	if c.Limits != nil {

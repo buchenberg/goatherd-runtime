@@ -101,8 +101,18 @@ type Config struct {
 	// container's own unshared namespace — loopback only, no egress, DNS fails
 	// fast, which is the default and the container lane's egress answer.
 	// "host" is the explicit opt-in that shares the daemon host's network.
+	// "broker" gives the container a veth with no default route and a
+	// single-port host proxy that admits BrokerHosts.
 	// Unknown values are rejected by croft at every generation-starting entry.
 	Network string
+	// BrokerHosts is the exact-host allowlist for Network: "broker". Empty
+	// means deny all. It has no effect under another posture.
+	BrokerHosts []string
+	// WritableRoots is the container-path grant set. Empty keeps the
+	// historical whole-workspace writable posture; a non-empty set is the
+	// shaped container view (read-only workspace plus these writable
+	// subtrees).
+	WritableRoots []string
 	// Secrets are host files bind-mounted read-only into the container. A
 	// token arrives as a file, never in argv or the process environment.
 	Secrets []SecretMount

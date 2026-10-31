@@ -8,6 +8,8 @@ github.com/Microsoft/hcsshim v0.15.0-rc.1 h1:FbbwtQmiD+BVHynGkx5S65JkLyhkEiiTP8n
 github.com/Microsoft/hcsshim v0.15.0-rc.1/go.mod h1:HWvvUPIy9HF6LotILj1G4VyS065rcLQ6tqj6tMUdOfI=
 github.com/buchenberg/goatherd-croft v0.9.1 h1:b4h8j4VCBbh5eg4tiJ5Ij22B1khUXMgNG8abzWphwWA=
 github.com/buchenberg/goatherd-croft v0.9.1/go.mod h1:JPx8oRUJq8UDkOxcDxPRGljycvWrUn2GRHtpFKSAcbw=
+github.com/buchenberg/goatherd-croft v0.9.2-0.20261031174429-0c19f6857318 h1:gKDgoLxO5q6nRaH+D2GvUcEP84Jo27NRfVZaLwqAao0=
+github.com/buchenberg/goatherd-croft v0.9.2-0.20261031174429-0c19f6857318/go.mod h1:JPx8oRUJq8UDkOxcDxPRGljycvWrUn2GRHtpFKSAcbw=
 github.com/buchenberg/goatherd-kernel v0.18.0 h1:2JT7G8lIBsbFRJrxLcua+I5JgIr6KQo+IR04FsDZycQ=
 github.com/buchenberg/goatherd-kernel v0.18.0/go.mod h1:qi265Btsp+N1OcMtmZuAgmsp1SpGyAHAZObuJ24hvKE=
 github.com/buchenberg/goatherd-runtime v0.20.0 h1:DEjl7fD+OLxTLSM+DeG2bd6pBwYdkpTxXsISCEMReA4=
