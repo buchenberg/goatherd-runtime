@@ -87,8 +87,15 @@ func receiptFromJSON(payload string) (MaterializationReceipt, error) {
 	// orchestrator would silently stop holding.
 	dec := json.NewDecoder(strings.NewReader(payload))
 	dec.UseNumber()
+	dec.DisallowUnknownFields()
 	if err := dec.Decode(&stored); err != nil {
 		return MaterializationReceipt{}, fmt.Errorf("materialization receipt decode: %w", err)
+	}
+	// Replay is the idempotency commit point: a stored receipt whose outcome
+	// drifted out of the vocabulary (or was never written) must fail the
+	// replay loudly instead of surfacing zero values to the caller.
+	if !isValidOutcome(substrate.MaterializationOutcome(stored.Outcome)) {
+		return MaterializationReceipt{}, fmt.Errorf("materialization receipt decode: unknown outcome %q", stored.Outcome)
 	}
 	return MaterializationReceipt{
 		Outcome:           substrate.MaterializationOutcome(stored.Outcome),

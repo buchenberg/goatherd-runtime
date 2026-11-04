@@ -97,13 +97,13 @@ func Materialize(ctx context.Context, store *trace.SQLiteTraceStore, opCtx trace
 	// Completed-intent ledger: same intent + same digest replays the stored
 	// receipt without touching the substrate; same intent + different digest
 	// is a conflict.
-	if existingDigest, receiptJSON, found, err := trace.ReadCompletedMaterialization(store, req.AppendIntentID); err != nil {
+	if existingDigest, storedReceiptJSON, found, err := trace.ReadCompletedMaterialization(store, req.AppendIntentID); err != nil {
 		return MaterializationReceipt{}, err
 	} else if found {
 		if existingDigest != digest {
 			return MaterializationReceipt{}, trace.NewAppendIntentConflictError(fmt.Sprintf("materialize intent %q was already committed with different content", req.AppendIntentID))
 		}
-		receipt, err := receiptFromJSON(receiptJSON)
+		receipt, err := receiptFromJSON(storedReceiptJSON)
 		if err != nil {
 			return MaterializationReceipt{}, err
 		}
