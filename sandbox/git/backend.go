@@ -245,6 +245,11 @@ type GitSandbox struct {
 	// none. Both are set by WithExec.
 	confiner  containment.Backend
 	placement containment.Placement
+
+	// cleanPolicy decides what Apply's `git clean -fd` is allowed to see:
+	// the zero value is CleanAll, the historical destructive behavior. Set
+	// by WithCleanPolicy (clean_policy.go).
+	cleanPolicy CleanPolicy
 }
 
 // Option configures a GitSandbox at construction.
@@ -620,13 +625,30 @@ func (g *GitSandbox) Apply(ctx context.Context, ws trace.WorkspaceState) error {
 // before tree_sha. It resets to the captured HEAD (rolling back commits made
 // after the capture), removes untracked files, then re-applies the captured
 // uncommitted changes from the minted stash commit.
-func (g *GitSandbox) applyState(ctx context.Context, headSHA, stashSHA string) error {
+func (g *GitSandbox) applyState(ctx context.Context, headSHA, stashSHA string) (err error) {
 	w := g.work()
+
+	// Under CleanPreserveUntracked this stretches a protective ring around
+	// the entire destructive sequence: content the target state does not hold
+	// is evacuated here and restored on the way out, whether the rewind
+	// succeeded or failed. Under CleanAll it is a no-op and nothing about
+	// this path changes. A legacy stash-identified state has no enumerable
+	// tree, so it passes no tree and every untracked path is preserved.
+	evacuated, err := g.evacuateUntracked(ctx, w, "")
+	if err != nil {
+		return fmt.Errorf("apply: %w", err)
+	}
+	defer func() { err = errors.Join(err, g.restoreEvacuated(evacuated)) }()
 
 	if err := w.resetHardTo(ctx, headSHA); err != nil {
 		return fmt.Errorf("apply: git reset --hard %s: %w", headSHA, err)
 	}
 
+	// The clean itself is unchanged in both policies — the policy decided
+	// above what it was allowed to see. Under CleanAll nothing was evacuated
+	// and every untracked path goes, exactly as before; under preserve only
+	// captured-untracked paths are still here and the stash apply restores
+	// them.
 	if err := w.cleanFiles(ctx); err != nil {
 		return fmt.Errorf("apply: git clean -fd: %w", err)
 	}
@@ -647,13 +669,25 @@ func (g *GitSandbox) applyState(ctx context.Context, headSHA, stashSHA string) e
 // lands as a deletion. Writing the tree's entries alone (checkout-index,
 // git restore --source) would leave the deleted file behind and Apply
 // would restore a superset of the captured state.
-func (g *GitSandbox) applyTree(ctx context.Context, headSHA, treeSHA string) error {
+func (g *GitSandbox) applyTree(ctx context.Context, headSHA, treeSHA string) (err error) {
 	w := g.work()
+
+	// See applyState: the preserve policy evacuates untracked content the
+	// target tree does not hold before the destructive sequence and restores
+	// it afterwards; CleanAll evacuates nothing.
+	evacuated, err := g.evacuateUntracked(ctx, w, treeSHA)
+	if err != nil {
+		return fmt.Errorf("apply: %w", err)
+	}
+	defer func() { err = errors.Join(err, g.restoreEvacuated(evacuated)) }()
 
 	if err := w.resetHardTo(ctx, headSHA); err != nil {
 		return fmt.Errorf("apply: git reset --hard %s: %w", headSHA, err)
 	}
 
+	// Unchanged in both policies, as in applyState: the clean only sees what
+	// the policy left for it, and the read-tree below re-materializes the
+	// captured tree — including captured untracked paths.
 	if err := w.cleanFiles(ctx); err != nil {
 		return fmt.Errorf("apply: git clean -fd: %w", err)
 	}
