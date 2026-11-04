@@ -249,7 +249,7 @@ registry := substrate.NewSubstrateRegistry()
 registry.Register(substrate.NewWorkspaceSubstrate(sandbox))  // or a KV, echo, custom substrate
 
 receipt, err := materialize.Materialize(ctx, store,
-    appendCtx.ToOperationContext(trace.OpMaterialize),
+    appendCtx.ToOperationContext(materialize.OpMaterialize),
     materialize.MaterializationRequest{
         AppendIntentID:            "run:42:materialize",
         TargetTraceOwnerID:        "agent:main",
@@ -465,7 +465,7 @@ err := registry.Register(substrate)               // Substrate interface: Substr
 substrate, err := registry.Get(substrateRef)      // ErrUnknownSubstrate when missing
 
 receipt, err := materialize.Materialize(ctx, store, opCtx, req, registry)
-// opCtx.Operation must be trace.OpMaterialize
+// opCtx.Operation must be materialize.OpMaterialize
 // req: AppendIntentID, TargetTraceOwnerID, TargetRecordIDs,
 //      TargetThroughOwnerOrdinal (materialize.MaxOwnerOrdinal), CaptureTraceOwnerID
 // receipt: Outcome (success | clean_failure | split_state), SubstrateRef,

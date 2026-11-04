@@ -73,7 +73,7 @@ type Substrate interface {
 	// into the retained context of the materialization captures.
 	Containment() trace.Containment
 	// Materialize applies the declarations and returns capture drafts.
-	Materialize(ctx context.Context, records []trace.Record) (trace.MaterializationResult, error)
+	Materialize(ctx context.Context, records []trace.Record) (MaterializationResult, error)
 }
 
 // SubstrateRegistry is a fail-closed process-local substrate registry.

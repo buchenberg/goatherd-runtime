@@ -78,8 +78,8 @@ func (n nonComparableSubstrate) SubstrateRef() string           { return "test.n
 func (n nonComparableSubstrate) DeclarationSchemas() []string   { return nil }
 func (n nonComparableSubstrate) CaptureSchemas() []string       { return nil }
 func (n nonComparableSubstrate) Containment() trace.Containment { return trace.ContainContained }
-func (n nonComparableSubstrate) Materialize(context.Context, []trace.Record) (trace.MaterializationResult, error) {
-	return trace.MaterializationResult{}, nil
+func (n nonComparableSubstrate) Materialize(context.Context, []trace.Record) (MaterializationResult, error) {
+	return MaterializationResult{}, nil
 }
 
 func TestSubstrateRegistryNonComparableFailsClosed(t *testing.T) {
@@ -118,7 +118,7 @@ func TestEchoSubstratePairsDeclarationsWithCaptures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != trace.MaterializationSuccess {
+	if result.Outcome != MaterializationSuccess {
 		t.Errorf("outcome = %q, want success", result.Outcome)
 	}
 	if len(result.CaptureDrafts) != 1 {
@@ -191,7 +191,7 @@ func TestKVSubstrateUpsertAndRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("materialize %q: %v", key, err)
 		}
-		if result.Outcome != trace.MaterializationSuccess || len(result.CaptureDrafts) != 1 {
+		if result.Outcome != MaterializationSuccess || len(result.CaptureDrafts) != 1 {
 			t.Fatalf("result = %+v", result)
 		}
 	}
@@ -325,7 +325,7 @@ func TestWorkspaceSubstrateCapabilityGatingFailsCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != trace.MaterializationCleanFailure {
+	if result.Outcome != MaterializationCleanFailure {
 		t.Errorf("outcome = %q, want clean_failure", result.Outcome)
 	}
 	if result.FailureReason == "" {
@@ -345,7 +345,7 @@ func TestWorkspaceSubstrateCapabilityGatingFailsCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize exec: %v", err)
 	}
-	if result.Outcome != trace.MaterializationCleanFailure || len(result.CaptureDrafts) != 0 {
+	if result.Outcome != MaterializationCleanFailure || len(result.CaptureDrafts) != 0 {
 		t.Errorf("result = %+v, want clean_failure with no captures", result)
 	}
 	if len(gitLike.execs) != 0 {
@@ -371,7 +371,7 @@ func TestWorkspaceSubstrateRoundTripsFileWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != trace.MaterializationSuccess {
+	if result.Outcome != MaterializationSuccess {
 		t.Fatalf("outcome = %q, want success (%s)", result.Outcome, result.FailureReason)
 	}
 	if len(result.CaptureDrafts) != 1 {
@@ -427,7 +427,7 @@ func TestWorkspaceSubstrateWritesEmptyFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != trace.MaterializationSuccess {
+	if result.Outcome != MaterializationSuccess {
 		t.Fatalf("outcome = %q, want success (%s)", result.Outcome, result.FailureReason)
 	}
 	got, err := sb.ReadFile(context.Background(), "empty.txt")
@@ -461,7 +461,7 @@ func TestWorkspaceSubstrateRecordsExecOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != trace.MaterializationSuccess {
+	if result.Outcome != MaterializationSuccess {
 		t.Fatalf("outcome = %q, want success even with a nonzero exit code", result.Outcome)
 	}
 	if len(sb.execs) != 1 {
@@ -524,7 +524,7 @@ func TestWorkspaceSubstrateWorldTouchedFailureIsSplitState(t *testing.T) {
 	// verifiably landed, but nothing was verifiably untouched either —
 	// chunked writes may have partially applied. split_state with zero
 	// captures is the honest report.
-	if result.Outcome != trace.MaterializationSplitState {
+	if result.Outcome != MaterializationSplitState {
 		t.Errorf("outcome = %q, want split_state (world-touched failure)", result.Outcome)
 	}
 	if len(result.CaptureDrafts) != 0 {
@@ -562,7 +562,7 @@ func TestWorkspaceSubstrateSplitStateAfterPartialApplication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != trace.MaterializationSplitState {
+	if result.Outcome != MaterializationSplitState {
 		t.Errorf("outcome = %q, want split_state", result.Outcome)
 	}
 	if len(result.CaptureDrafts) != 1 {
@@ -606,7 +606,7 @@ func TestWorkspaceSubstrateRejectsMalformedDeclarations(t *testing.T) {
 		}
 		// Substrate-level payload errors surface as clean_failure results
 		// (honest outcomes), not transport errors.
-		if result.Outcome != trace.MaterializationCleanFailure {
+		if result.Outcome != MaterializationCleanFailure {
 			t.Errorf("%s: outcome = %q, want clean_failure", tc.name, result.Outcome)
 		}
 		if result.FailureReason == "" {
@@ -633,7 +633,7 @@ func TestWorkspaceSubstrateTimeoutDiscipline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize without timeout: %v", err)
 	}
-	if result.Outcome != trace.MaterializationSuccess {
+	if result.Outcome != MaterializationSuccess {
 		t.Fatalf("outcome = %q, want success", result.Outcome)
 	}
 	if len(sb.execDeadlines) != 1 || sb.execDeadlines[0] {
@@ -650,7 +650,7 @@ func TestWorkspaceSubstrateTimeoutDiscipline(t *testing.T) {
 	}
 	// Rejected during payload validation, before the sandbox call: a clean
 	// failure, nothing touched.
-	if result.Outcome != trace.MaterializationCleanFailure {
+	if result.Outcome != MaterializationCleanFailure {
 		t.Errorf("outcome = %q, want clean_failure for a negative timeout", result.Outcome)
 	}
 	if len(sb.execs) != 1 {
@@ -668,7 +668,7 @@ func TestWorkspaceSubstrateRejectsUnknownSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != trace.MaterializationCleanFailure {
+	if result.Outcome != MaterializationCleanFailure {
 		t.Errorf("outcome = %q, want clean_failure for an unsupported schema", result.Outcome)
 	}
 	if len(result.CaptureDrafts) != 0 {
@@ -684,7 +684,7 @@ func TestWorkspaceSubstrateRejectsUnknownSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != trace.MaterializationSplitState || len(result.CaptureDrafts) != 1 || len(result.WorldSideAnchors) != 1 {
+	if result.Outcome != MaterializationSplitState || len(result.CaptureDrafts) != 1 || len(result.WorldSideAnchors) != 1 {
 		t.Errorf("result = %+v, want split_state with one capture and one anchor", result)
 	}
 }

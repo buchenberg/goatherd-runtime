@@ -108,7 +108,7 @@ func (w *WorkspaceSubstrate) Containment() trace.Containment {
 // code: the exit code is the observed result, recorded in the capture. Only
 // infrastructure failures (the command could not run, a write failed) are
 // substrate failures.
-func (w *WorkspaceSubstrate) Materialize(ctx context.Context, records []trace.Record) (trace.MaterializationResult, error) {
+func (w *WorkspaceSubstrate) Materialize(ctx context.Context, records []trace.Record) (MaterializationResult, error) {
 	caps := w.sandbox.Capabilities()
 
 	needsFileIO, needsExec := false, false
@@ -121,14 +121,14 @@ func (w *WorkspaceSubstrate) Materialize(ctx context.Context, records []trace.Re
 		}
 	}
 	if needsFileIO && !caps.FileIO {
-		return trace.MaterializationResult{
-			Outcome:       trace.MaterializationCleanFailure,
+		return MaterializationResult{
+			Outcome:       MaterializationCleanFailure,
 			FailureReason: fmt.Sprintf("sandbox backend %q does not support file IO", w.sandbox.Backend()),
 		}, nil
 	}
 	if needsExec && !caps.Exec {
-		return trace.MaterializationResult{
-			Outcome:       trace.MaterializationCleanFailure,
+		return MaterializationResult{
+			Outcome:       MaterializationCleanFailure,
 			FailureReason: fmt.Sprintf("sandbox backend %q does not support exec", w.sandbox.Backend()),
 		}, nil
 	}
@@ -157,8 +157,8 @@ func (w *WorkspaceSubstrate) Materialize(ctx context.Context, records []trace.Re
 			}), nil
 		}
 	}
-	return trace.MaterializationResult{
-		Outcome:          trace.MaterializationSuccess,
+	return MaterializationResult{
+		Outcome:          MaterializationSuccess,
 		CaptureDrafts:    captures,
 		WorldSideAnchors: anchors,
 	}, nil
@@ -181,18 +181,18 @@ func (w *WorkspaceSubstrate) Materialize(ctx context.Context, records []trace.Re
 // when nothing else landed either. The landed records keep their anchors as
 // well as their captures, so the receipt describes both halves of what
 // landed.
-func splitOrClean(captures []trace.RecordDraft, anchors []map[string]any, failed trace.Record, err error) trace.MaterializationResult {
+func splitOrClean(captures []trace.RecordDraft, anchors []map[string]any, failed trace.Record, err error) MaterializationResult {
 	reason := fmt.Sprintf("record %s: %v", failed.Envelope.RecordID, err)
 	var world *worldTouchedError
 	if len(captures) > 0 || errors.As(err, &world) {
-		return trace.MaterializationResult{
-			Outcome:          trace.MaterializationSplitState,
+		return MaterializationResult{
+			Outcome:          MaterializationSplitState,
 			CaptureDrafts:    captures,
 			WorldSideAnchors: anchors,
 			FailureReason:    reason,
 		}
 	}
-	return trace.MaterializationResult{Outcome: trace.MaterializationCleanFailure, FailureReason: reason}
+	return MaterializationResult{Outcome: MaterializationCleanFailure, FailureReason: reason}
 }
 
 // worldTouchedError marks a failure that occurred after a sandbox call was
