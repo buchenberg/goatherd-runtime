@@ -29,7 +29,7 @@ var materializeAppend = trace.AppendContext{
 
 // materializeContext mirrors the Python suite's MATERIALIZE context.
 func materializeContext() trace.OperationContext {
-	return materializeAppend.ToOperationContext(trace.OpMaterialize)
+	return materializeAppend.ToOperationContext(OpMaterialize)
 }
 
 func declareBatch(intent, owner, substrateRef string, drafts ...trace.RecordDraft) trace.AppendBatch {
@@ -76,7 +76,7 @@ func TestMaterializeDispatchesViaWitnessStampedSubstrate(t *testing.T) {
 		t.Fatalf("materialize: %v", err)
 	}
 
-	if receipt.Outcome != trace.MaterializationSuccess {
+	if receipt.Outcome != substrate.MaterializationSuccess {
 		t.Errorf("outcome = %q, want success", receipt.Outcome)
 	}
 	if receipt.SubstrateRef != "test.echo.v1" {
@@ -218,7 +218,7 @@ func TestMaterializeWithDeterministicSQLiteKVSubstrate(t *testing.T) {
 		t.Errorf("kv[answer] = %v, %v; want {n: 42}", got, err)
 	}
 
-	if receipt.Outcome != trace.MaterializationSuccess {
+	if receipt.Outcome != substrate.MaterializationSuccess {
 		t.Errorf("outcome = %q, want success", receipt.Outcome)
 	}
 	if receipt.SubstrateRef != substrate.KVSQLiteSubstrateRef {
@@ -268,10 +268,10 @@ func (c *countingSubstrate) DeclarationSchemas() []string   { return []string{"e
 func (c *countingSubstrate) CaptureSchemas() []string       { return []string{"example.write.applied.v1"} }
 func (c *countingSubstrate) Containment() trace.Containment { return trace.ContainContained }
 
-func (c *countingSubstrate) Materialize(_ context.Context, records []trace.Record) (trace.MaterializationResult, error) {
+func (c *countingSubstrate) Materialize(_ context.Context, records []trace.Record) (substrate.MaterializationResult, error) {
 	c.calls++
-	return trace.MaterializationResult{
-		Outcome: trace.MaterializationSuccess,
+	return substrate.MaterializationResult{
+		Outcome: substrate.MaterializationSuccess,
 		CaptureDrafts: []trace.RecordDraft{{
 			Mode:            trace.Capture,
 			SchemaRef:       "example.write.applied.v1",
@@ -352,10 +352,10 @@ func (a *anchorSubstrate) DeclarationSchemas() []string   { return []string{"exa
 func (a *anchorSubstrate) CaptureSchemas() []string       { return []string{"example.write.applied.v1"} }
 func (a *anchorSubstrate) Containment() trace.Containment { return trace.ContainContained }
 
-func (a *anchorSubstrate) Materialize(_ context.Context, records []trace.Record) (trace.MaterializationResult, error) {
+func (a *anchorSubstrate) Materialize(_ context.Context, records []trace.Record) (substrate.MaterializationResult, error) {
 	a.calls++
-	return trace.MaterializationResult{
-		Outcome: trace.MaterializationSuccess,
+	return substrate.MaterializationResult{
+		Outcome: substrate.MaterializationSuccess,
 		CaptureDrafts: []trace.RecordDraft{{
 			Mode:            trace.Capture,
 			SchemaRef:       "example.write.applied.v1",
@@ -554,7 +554,7 @@ func TestMaterializeRejectsRecordMissingFromTargetOwnerPath(t *testing.T) {
 // --- Go-only cases ---
 
 // TestMaterializeRejectsNonMaterializeOperationContext pins the operation
-// gate that makes trace.OpMaterialize enforceable — the inversion
+// gate that makes OpMaterialize enforceable — the inversion
 // TestReservedOperationKindsAreUnreachable anticipated (plan 03 §2).
 // lyingSubstrate claims nothing was applied while emitting capture drafts —
 // the self-contradicting result dispatch must reject rather than persist.
@@ -565,9 +565,9 @@ func (l *lyingSubstrate) DeclarationSchemas() []string   { return []string{"exam
 func (l *lyingSubstrate) CaptureSchemas() []string       { return []string{"example.write.applied.v1"} }
 func (l *lyingSubstrate) Containment() trace.Containment { return trace.ContainContained }
 
-func (l *lyingSubstrate) Materialize(_ context.Context, records []trace.Record) (trace.MaterializationResult, error) {
-	return trace.MaterializationResult{
-		Outcome: trace.MaterializationCleanFailure,
+func (l *lyingSubstrate) Materialize(_ context.Context, records []trace.Record) (substrate.MaterializationResult, error) {
+	return substrate.MaterializationResult{
+		Outcome: substrate.MaterializationCleanFailure,
 		CaptureDrafts: []trace.RecordDraft{{
 			Mode:            trace.Capture,
 			SchemaRef:       "example.write.applied.v1",
@@ -661,7 +661,7 @@ func TestMaterializeRejectsNonMaterializeOperationContext(t *testing.T) {
 	// And an untrusted materialize context is rejected too.
 	untrusted := trace.OperationContext{
 		ActorRef:               "runtime:test",
-		Operation:              trace.OpMaterialize,
+		Operation:              OpMaterialize,
 		PresentedAuthorityRefs: []string{"untrusted:other"},
 		SchemaEnvironmentRef:   "shepherd2-slice-a",
 	}
@@ -885,7 +885,7 @@ func jsonNumber(t *testing.T, n int) json.Number {
 // rejected. (Split out of the store's reserved-operation-kinds test when the
 // store moved to internal/trace; the helper lives here.)
 func TestMaterializeAuthorizationHelper(t *testing.T) {
-	trusted := trustedAppend.ToOperationContext(trace.OpMaterialize)
+	trusted := trustedAppend.ToOperationContext(OpMaterialize)
 	if err := ensureMaterializeAuthorized(trusted); err != nil {
 		t.Errorf("ensureMaterializeAuthorized rejected a trusted materialize context: %v", err)
 	}

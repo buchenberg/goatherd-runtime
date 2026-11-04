@@ -36,7 +36,7 @@ func (e *EchoSubstrate) Containment() trace.Containment { return e.SubstrateCont
 // Materialize copies each declaration into a same-schema capture draft,
 // caused by the declaration's own record id. The kind label mirrors the
 // declaration's fact kind; records read through the store always carry one.
-func (e *EchoSubstrate) Materialize(_ context.Context, records []trace.Record) (trace.MaterializationResult, error) {
+func (e *EchoSubstrate) Materialize(_ context.Context, records []trace.Record) (MaterializationResult, error) {
 	captures := make([]trace.RecordDraft, 0, len(records))
 	for _, record := range records {
 		kind := ""
@@ -51,5 +51,5 @@ func (e *EchoSubstrate) Materialize(_ context.Context, records []trace.Record) (
 			CausedByFactIDs: []string{record.Envelope.RecordID},
 		})
 	}
-	return trace.MaterializationResult{Outcome: trace.MaterializationSuccess, CaptureDrafts: captures}, nil
+	return MaterializationResult{Outcome: MaterializationSuccess, CaptureDrafts: captures}, nil
 }

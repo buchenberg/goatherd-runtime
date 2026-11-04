@@ -174,7 +174,7 @@ func TestMaterializeRequestDigestMatchesPython(t *testing.T) {
 		}
 		ctx := trace.OperationContext{
 			ActorRef:               v.Request.ActorRef,
-			Operation:              trace.OpMaterialize,
+			Operation:              OpMaterialize,
 			PresentedAuthorityRefs: v.Request.AuthorityRefs,
 			SchemaEnvironmentRef:   v.Request.SchemaEnvironmentRef,
 		}
@@ -347,10 +347,10 @@ func (c *vectorCountingSubstrate) CaptureSchemas() []string {
 }
 func (c *vectorCountingSubstrate) Containment() trace.Containment { return trace.ContainContained }
 
-func (c *vectorCountingSubstrate) Materialize(_ context.Context, records []trace.Record) (trace.MaterializationResult, error) {
+func (c *vectorCountingSubstrate) Materialize(_ context.Context, records []trace.Record) (substrate.MaterializationResult, error) {
 	c.calls++
-	return trace.MaterializationResult{
-		Outcome: trace.MaterializationSuccess,
+	return substrate.MaterializationResult{
+		Outcome: substrate.MaterializationSuccess,
 		CaptureDrafts: []trace.RecordDraft{{
 			Mode:            trace.Capture,
 			SchemaRef:       "vector.write.applied.v1",
@@ -373,7 +373,7 @@ func vectorAppendContext() trace.AppendContext {
 
 // vectorMaterializeContext mirrors the generator's MATERIALIZE context.
 func vectorMaterializeContext() trace.OperationContext {
-	return vectorAppendContext().ToOperationContext(trace.OpMaterialize)
+	return vectorAppendContext().ToOperationContext(OpMaterialize)
 }
 
 func vectorDeclarationBatch(decl materializeDeclaration) trace.AppendBatch {
@@ -412,7 +412,7 @@ func vectorRequest(req materializeSeqRequest, factIDs []string) MaterializationR
 	return out
 }
 
-func assertReceiptEquals(t *testing.T, got trace.MaterializationReceipt, want materializeSeqReceipt) {
+func assertReceiptEquals(t *testing.T, got MaterializationReceipt, want materializeSeqReceipt) {
 	t.Helper()
 	if string(got.Outcome) != want.Outcome {
 		t.Errorf("receipt outcome = %q, want %q", got.Outcome, want.Outcome)

@@ -90,13 +90,13 @@ func (k *KVSubstrate) Containment() trace.Containment { return trace.ContainCont
 // returns one applied capture per put. The whole batch is one transaction:
 // either every put lands (and every capture describes a landed put) or none
 // does.
-func (k *KVSubstrate) Materialize(_ context.Context, records []trace.Record) (trace.MaterializationResult, error) {
+func (k *KVSubstrate) Materialize(_ context.Context, records []trace.Record) (MaterializationResult, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
 	tx, err := k.db.Begin()
 	if err != nil {
-		return trace.MaterializationResult{}, fmt.Errorf("kv substrate begin: %w", err)
+		return MaterializationResult{}, fmt.Errorf("kv substrate begin: %w", err)
 	}
 
 	captures := make([]trace.RecordDraft, 0, len(records))
@@ -105,19 +105,19 @@ func (k *KVSubstrate) Materialize(_ context.Context, records []trace.Record) (tr
 		key, value, err := kvPutPayload(record)
 		if err != nil {
 			tx.Rollback()
-			return trace.MaterializationResult{}, err
+			return MaterializationResult{}, err
 		}
 		valueJSON, err := trace.CanonicalJSONASCIIBytes(value)
 		if err != nil {
 			tx.Rollback()
-			return trace.MaterializationResult{}, &SubstrateError{fmt.Sprintf("kv put value for key %q is not serializable", key)}
+			return MaterializationResult{}, &SubstrateError{fmt.Sprintf("kv put value for key %q is not serializable", key)}
 		}
 		if _, err := tx.Exec(
 			"INSERT INTO kv(key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json",
 			key, string(valueJSON),
 		); err != nil {
 			tx.Rollback()
-			return trace.MaterializationResult{}, fmt.Errorf("kv put %q: %w", key, err)
+			return MaterializationResult{}, fmt.Errorf("kv put %q: %w", key, err)
 		}
 		captures = append(captures, trace.RecordDraft{
 			Mode:            trace.Capture,
@@ -134,10 +134,10 @@ func (k *KVSubstrate) Materialize(_ context.Context, records []trace.Record) (tr
 	}
 
 	if err := tx.Commit(); err != nil {
-		return trace.MaterializationResult{}, fmt.Errorf("kv substrate commit: %w", err)
+		return MaterializationResult{}, fmt.Errorf("kv substrate commit: %w", err)
 	}
-	return trace.MaterializationResult{
-		Outcome:          trace.MaterializationSuccess,
+	return MaterializationResult{
+		Outcome:          MaterializationSuccess,
 		CaptureDrafts:    captures,
 		WorldSideAnchors: anchors,
 	}, nil
