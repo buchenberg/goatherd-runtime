@@ -20,7 +20,9 @@ import (
 )
 
 // openRegressionStore opens a file-backed trace store and a manager over
-// it, returning the path for reopen-and-recover tests.
+// it, returning the path for reopen-and-recover tests. The store is closed
+// by t.Cleanup — on Windows an open store file breaks TempDir removal, so
+// tests that close the store themselves to reopen it stay safe.
 func openRegressionStore(t *testing.T) (*trace.SQLiteTraceStore, *goatherd.ScopeManager, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "regression.db")
@@ -28,6 +30,7 @@ func openRegressionStore(t *testing.T) (*trace.SQLiteTraceStore, *goatherd.Scope
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
+	t.Cleanup(func() { _ = store.Close(context.Background()) })
 	return store, goatherd.NewScopeManager(store), path
 }
 
@@ -194,5 +197,94 @@ func TestSettle_ConcurrentSelects_LoserRefused(t *testing.T) {
 	}
 	if selected != 1 {
 		t.Fatalf("expected exactly one output selected, got %d", selected)
+	}
+}
+
+// A quarantined owner must not be resurrected by checkpoint or sealed-
+// output recovery either — a merged+halted owner normally carries a sealed
+// record, and resurrecting it as an active scope would re-arm a settle
+// recovery just declared untrustworthy. Its descendants are quarantined
+// with it (their fork evidence lives on the distrusted trace).
+func TestRecovery_QuarantineCascade_SkipsDescendantsCheckpointsAndOutputs(t *testing.T) {
+	ctx := context.Background()
+	store, mgr, path := openRegressionStore(t)
+
+	repo := gittest.NewTestRepo(t)
+	gittest.WriteFile(t, repo, "main.go", "package main\n")
+	gittest.MustGit(t, repo, "add", "-A")
+	gittest.MustGit(t, repo, "commit", "-m", "initial")
+
+	parent, err := mgr.Create("sub:c-parent", git.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	child, wt := forkWorktreeChild(t, mgr, parent.ID(), "sub:c-child", repo, "c-wt")
+	grandchild, _ := forkWorktreeChild(t, mgr, child.ID(), "sub:c-grandchild", repo, "c-wt-gc")
+	_ = grandchild
+
+	cp, err := mgr.CreateCheckpoint(ctx, child.ID(), []byte("snapshot"))
+	if err != nil {
+		t.Fatalf("checkpoint (child must still be active here): %v", err)
+	}
+	gittest.WriteFile(t, wt, "child-work.txt", "chosen work\n")
+	out, err := mgr.Seal(ctx, child.ID())
+	if err != nil {
+		t.Fatalf("seal child: %v", err)
+	}
+
+	if err := parent.Merge(child); err != nil {
+		t.Fatalf("merge child: %v", err)
+	}
+	// Forge the pre-fix corruption: a supervisor halt beside the merge
+	// record for the same owner.
+	if _, err := store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
+		AppendIntentID: "sub:c-child:halt:legacy",
+		Groups: []trace.AppendGroup{{
+			TraceOwnerID: "sub:c-child",
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Declaration,
+				SchemaRef: goatherd.SchemaSupervisorHalt,
+				KindLabel: "supervisor:halt",
+				Payload:   map[string]any{},
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("forge halt record: %v", err)
+	}
+	if err := store.Close(ctx); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	reopened, err := trace.NewSQLiteTraceStore(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close(ctx)
+
+	stats := &goatherd.RecoveryStats{}
+	recovered, err := goatherd.RecoverScopes(reopened, goatherd.RecoverOptions{Stats: stats})
+	if err != nil {
+		t.Fatalf("quarantine must not fail recovery: %v", err)
+	}
+	quarantined := map[string]bool{}
+	for _, o := range stats.Quarantined {
+		quarantined[o] = true
+	}
+	for _, owner := range []string{"sub:c-child", "sub:c-grandchild"} {
+		if !quarantined[owner] {
+			t.Fatalf("expected %s quarantined, got %v", owner, stats.Quarantined)
+		}
+		if _, ok := recovered.Get("scope:"+owner); ok {
+			t.Fatalf("quarantined owner %s must not be recovered as a scope", owner)
+		}
+	}
+	if _, ok := recovered.Get("scope:sub:c-parent"); !ok {
+		t.Fatalf("healthy parent missing from recovery")
+	}
+	if _, err := recovered.RestoreCheckpoint(ctx, cp.ID); err == nil {
+		t.Fatalf("checkpoint of quarantined owner must not be recoverable")
+	}
+	if _, ok := recovered.Output(out.ID()); ok {
+		t.Fatalf("sealed output of quarantined owner must not be recovered")
 	}
 }

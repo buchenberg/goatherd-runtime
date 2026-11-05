@@ -141,7 +141,6 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 	}
 	if stats != nil {
 		stats.TerminalRecords = terminalRecords
-		stats.Quarantined = quarantined
 	}
 
 	mgr := NewScopeManager(store)
@@ -156,11 +155,30 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 	}
 
 	// Quarantined owners get no scope at all: neither terminal state can be
-	// trusted, so the trace must not resurrect them (and their edges are
-	// dead ends).
+	// trusted, so the trace must not resurrect them — not via the fork scan
+	// below, and not via checkpoint/output recovery either.
 	quarantinedSet := make(map[string]bool, len(quarantined))
 	for _, owner := range quarantined {
 		quarantinedSet[owner] = true
+	}
+	// Cascade quarantine down the fork tree: a child of a quarantined owner
+	// cannot be reliably recovered on its own — its forkPoint and baseline
+	// live on a trace recovery just distrusted, so silently re-rooting it
+	// would lose its merge path and leak an isolated sandbox. Such children
+	// are quarantined with their parent and reported as such.
+	for changed := true; changed; {
+		changed = false
+		for _, e := range edges {
+			if quarantinedSet[e.parentOwner] && !quarantinedSet[e.childOwner] {
+				quarantinedSet[e.childOwner] = true
+				quarantined = append(quarantined, e.childOwner)
+				changed = true
+			}
+		}
+	}
+	for _, owner := range quarantined {
+		slog.Warn("recovery: quarantining owner with contradictory terminal records; scope is not recovered",
+			"owner", owner)
 	}
 
 	scopes := make(map[string]*Scope, len(owners))
@@ -206,19 +224,21 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 	}
 	mgr.mu.Unlock()
 
-	blobCount, err := recoverCheckpoints(ctx, mgr, store)
+	blobCount, err := recoverCheckpoints(ctx, mgr, store, quarantinedSet)
 	if err != nil {
 		return nil, err
 	}
 	if stats != nil {
 		stats.CheckpointBlobs = blobCount
 	}
-	sealedCount, err := recoverOutputs(ctx, mgr, store)
+	sealedCount, err := recoverOutputs(ctx, mgr, store, quarantinedSet)
 	if err != nil {
 		return nil, err
 	}
 	if stats != nil {
 		stats.SealedOutputs = sealedCount
+		// Quarantined is final only after the cascade below the scan.
+		stats.Quarantined = quarantined
 		stats.ScanDuration = time.Since(scanStart)
 	}
 
@@ -301,13 +321,17 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 
 // ensureScope returns the manager's scope for ownerID, creating and
 // registering a bare active root when it does not exist — the shape a
-// never-forked root recovers as.
-func ensureScope(mgr *ScopeManager, store *trace.SQLiteTraceStore, ownerID string) *Scope {
+// never-forked root recovers as. A quarantined owner returns nil: its
+// checkpoint/output rows must not resurrect it as an active scope.
+func ensureScope(mgr *ScopeManager, store *trace.SQLiteTraceStore, ownerID string, quarantined map[string]bool) *Scope {
 	scopeID := fmt.Sprintf("scope:%s", ownerID)
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
 	if scope, ok := mgr.scopes[scopeID]; ok {
 		return scope
+	}
+	if quarantined[ownerID] {
+		return nil
 	}
 	scope := &Scope{
 		id:      scopeID,
@@ -367,6 +391,7 @@ func scanTerminalStates(ctx context.Context, store *trace.SQLiteTraceStore) (map
 	// can fold into one owner's terminal state.
 	rawRecords := len(records)
 	states := make(map[string]ScopeState)
+	quarantinedSet := make(map[string]bool)
 	var quarantined []string
 	for _, rec := range records {
 		var owner string
@@ -390,30 +415,25 @@ func scanTerminalStates(ctx context.Context, store *trace.SQLiteTraceStore) (map
 		if owner == "" {
 			continue
 		}
+		// Once an owner is quarantined, every later record for it is
+		// equally untrustworthy: skip them all, and do not re-add the
+		// owner to the states map.
+		if quarantinedSet[owner] {
+			continue
+		}
 		if prior, ok := states[owner]; ok && prior != state {
 			// The trace is inconsistent for this owner, but that must not
 			// poison recovery for everyone else: skip the owner entirely
 			// (neither state is trusted) and surface it in the quarantine
 			// list.
 			delete(states, owner)
-			if !containsOwner(quarantined, owner) {
-				quarantined = append(quarantined, owner)
-			}
+			quarantinedSet[owner] = true
+			quarantined = append(quarantined, owner)
 			continue
 		}
 		states[owner] = state
 	}
 	return states, rawRecords, quarantined, nil
-}
-
-// containsOwner reports whether owners already lists owner.
-func containsOwner(owners []string, owner string) bool {
-	for _, o := range owners {
-		if o == owner {
-			return true
-		}
-	}
-	return false
 }
 
 // edgeFor returns the edge that made owner a child, or nil.
@@ -429,8 +449,9 @@ func edgeFor(edges []forkEdge, childOwner string) *forkEdge {
 // recoverCheckpoints rebuilds the checkpoint registry from the persisted
 // blobs. A checkpoint whose scope is unknown to the fork scan introduces a
 // bare root scope: the blob proves the scope existed even though it never
-// left a lifecycle record.
-func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteTraceStore) (int, error) {
+// left a lifecycle record. A checkpoint owned by a quarantined owner is
+// skipped — the blob must not resurrect a scope recovery dropped.
+func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteTraceStore, quarantined map[string]bool) (int, error) {
 	blobs, corrupt, err := trace.LoadCheckpointBlobs(ctx, store)
 	if err != nil {
 		return 0, fmt.Errorf("recover checkpoints: %w", err)
@@ -439,8 +460,13 @@ func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *trace.SQL
 		slog.Warn("recovery: skipping checkpoint with undecodable state row", "checkpoint", id)
 	}
 
+	skipped := 0
 	for _, b := range blobs {
-		ensureScope(mgr, store, strings.TrimPrefix(b.ScopeID, "scope:"))
+		if ensureScope(mgr, store, strings.TrimPrefix(b.ScopeID, "scope:"), quarantined) == nil {
+			skipped++
+			slog.Warn("recovery: skipping checkpoint owned by a quarantined scope", "checkpoint", b.CheckpointID, "scope", b.ScopeID)
+			continue
+		}
 
 		cp := &Checkpoint{
 			ID:        b.CheckpointID,
@@ -462,7 +488,7 @@ func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *trace.SQL
 	}
 	// The corrupt rows are part of the scan's cost even though they
 	// recover nothing; the stats surface reports what was read.
-	return len(blobs) + len(corrupt), nil
+	return len(blobs) + len(corrupt) - skipped, nil
 }
 
 // markStaleCheckpoints invalidates recovered checkpoints whose recorded
@@ -514,7 +540,7 @@ func markStaleCheckpoints(ctx context.Context, mgr *ScopeManager) error {
 // settled records. Sealed payloads carry the full states and change list,
 // so a recovered output is settle-able; settled records mark the terminal
 // ones.
-func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteTraceStore) (int, error) {
+func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteTraceStore, quarantined map[string]bool) (int, error) {
 	sealed, err := trace.ScanRecordsBySchema(ctx, store, SchemaRunOutputSealed)
 	if err != nil {
 		return 0, fmt.Errorf("recover outputs: scan sealed records: %w", err)
@@ -533,6 +559,8 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 		}
 	}
 
+	skippedOutputs := 0
+
 	for _, rec := range sealed {
 		id, _ := rec.Payload["output_id"].(string)
 		if id == "" {
@@ -540,7 +568,13 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 		}
 		scopeID, _ := rec.Payload["scope"].(string)
 		if owner := strings.TrimPrefix(scopeID, "scope:"); owner != "" {
-			ensureScope(mgr, store, owner)
+			if ensureScope(mgr, store, owner, quarantined) == nil {
+				// A quarantined scope keeps no settle-able output: its
+				// terminal state was just declared untrustworthy.
+				slog.Warn("recovery: skipping output sealed by a quarantined scope", "output", id, "scope", scopeID)
+				skippedOutputs++
+				continue
+			}
 		}
 
 		out := &RetainedOutput{
@@ -587,7 +621,7 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 		mgr.outputs[out.id] = out
 		mgr.mu.Unlock()
 	}
-	return len(sealed), nil
+	return len(sealed) - skippedOutputs, nil
 }
 
 // workspaceStateFromPayload decodes a state encoded by the lifecycle

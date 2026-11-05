@@ -360,25 +360,6 @@ func stateFor(action SettlementAction) (OutputState, error) {
 // holds the output's changes and the error says so; the output stays
 // unconsumed, so the caller can end its lifecycle with SettleRelease or
 // SettleDiscard rather than retry a physical effect that already happened.
-// lockParentSettle acquires the settle lock for a parent workspace and
-// returns its release function. Called only from Settle while the output
-// lock is already held, so the acquisition order is always output → parent
-// and can never invert.
-func (m *ScopeManager) lockParentSettle(parentID string) func() {
-	m.mu.Lock()
-	lock, ok := m.settleLocks[parentID]
-	if !ok {
-		if m.settleLocks == nil {
-			m.settleLocks = make(map[string]*sync.Mutex)
-		}
-		lock = &sync.Mutex{}
-		m.settleLocks[parentID] = lock
-	}
-	m.mu.Unlock()
-	lock.Lock()
-	return lock.Unlock
-}
-
 func (m *ScopeManager) Settle(ctx context.Context, outputID string, action SettlementAction) error {
 	m.mu.RLock()
 	out, ok := m.outputs[outputID]
@@ -506,6 +487,25 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 	out.settledAt = time.Now()
 	recordRunOutputSettled(ctx, scope, out, action)
 	return nil
+}
+
+// lockParentSettle acquires the settle lock for a parent workspace and
+// returns its release function. Called only from Settle while the output
+// lock is already held, so the acquisition order is always output → parent
+// and can never invert.
+func (m *ScopeManager) lockParentSettle(parentID string) func() {
+	m.mu.Lock()
+	lock, ok := m.settleLocks[parentID]
+	if !ok {
+		if m.settleLocks == nil {
+			m.settleLocks = make(map[string]*sync.Mutex)
+		}
+		lock = &sync.Mutex{}
+		m.settleLocks[parentID] = lock
+	}
+	m.mu.Unlock()
+	lock.Lock()
+	return lock.Unlock
 }
 
 // settleParent resolves and validates the parent side of a select or apply.

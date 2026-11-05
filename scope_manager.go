@@ -420,6 +420,9 @@ func (m *ScopeManager) PruneTerminal() int {
 	for id, scope := range m.scopes {
 		if state := scope.State(); state == ScopeMerged || state == ScopeDiscarded {
 			delete(m.scopes, id)
+			// The pruned scope is terminal: it can never settle again, so
+			// its settle lock would otherwise accumulate forever.
+			delete(m.settleLocks, id)
 			pruned++
 		}
 	}

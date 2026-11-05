@@ -82,15 +82,20 @@ func TestSupervisor_Close_JoinsAndKeepsBufferedReceivable(t *testing.T) {
 	closeDone := make(chan struct{})
 	go func() { defer close(closeDone); sup.Close() }()
 
-	// Close must be joining the loop (not returned while evaluate is stuck).
+	// Close must return immediately even while a rule is evaluating
+	// in-flight: blocking on the loop here would deadlock a rule that
+	// stops its own supervisor. (Regresses the pre-fix self-join.)
 	select {
 	case <-closeDone:
-		t.Fatal("Close returned while a rule was still evaluating in-flight — no join")
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close blocked while a rule was still evaluating in-flight")
 	}
 
 	close(release)
 	<-closeDone
+	// The closer goroutine joins the loop before closing the channel; the
+	// interim receive below would block only up to that close.
+	time.Sleep(50 * time.Millisecond)
 
 	// The closed channel still yields the buffered intervention.
 	select {
@@ -104,22 +109,64 @@ func TestSupervisor_Close_JoinsAndKeepsBufferedReceivable(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Interventions never yielded the buffered intervention")
 	}
-	if iv, ok := <-sup.Interventions(); ok {
-		t.Fatalf("expected channel closed after drain, got %v", iv)
+	select {
+	case iv, ok := <-sup.Interventions():
+		if ok {
+			t.Fatalf("expected channel closed after drain, got %v", iv)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Interventions never closed")
 	}
 }
 
-// Close's read of subscriberID must be synchronized against Start's write.
-// Run under -race: any unsynchronized access anywhere in the pair fails
-// the run. Exercises the Close-during-Start interleaving repeatedly.
+// Close fully bounds a supervisor: after Close, a subsequent (or racing)
+// Start must be refused, not silently re-activate a dead supervisor whose
+// Interventions channel is already closed.
+func TestSupervisor_StartAfterClose_Refused(t *testing.T) {
+	store := rttest.NewMemStore(t)
+	bus := trace.NewEffectBus(64)
+	defer bus.Close()
+	mgr := goatherd.NewScopeManager(store)
+
+	sup := supervisor.NewSupervisor(mgr, bus)
+	if err := sup.Start("never-gets-events"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	sup.Close()
+
+	if err := sup.Start("after-close"); err == nil {
+		t.Fatal("expected Start after Close to be refused")
+	}
+	select {
+	case _, ok := <-sup.Interventions():
+		if ok {
+			t.Fatal("refused Start must not deliver interventions")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Interventions never closed after post-Close Start attempt")
+	}
+}
+
+// Close's read of subscriberID must be synchronized against Start's write,
+// and a racing Close must never leave a Start subscribed onto an already
+// closed Interventions channel (a delivered event would panic with "send
+// on closed channel"). Run under -race, with events published after Close.
 func TestSupervisor_CloseDuringStart_IsRaceFree(t *testing.T) {
 	store := rttest.NewMemStore(t)
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 	mgr := goatherd.NewScopeManager(store)
 
+	matcher := supervisor.SupervisionRule{
+		Name:  "race_rule",
+		Match: func(e trace.EffectEvent) bool { return e.KindLabel == "bash" },
+		Action: func(e trace.EffectEvent) *supervisor.Intervention {
+			return &supervisor.Intervention{Type: supervisor.InterventionDeny}
+		},
+	}
 	for i := 0; i < 100; i++ {
 		sup := supervisor.NewSupervisor(mgr, bus)
+		sup.AddRule(matcher)
 		started := make(chan struct{})
 		go func() {
 			defer close(started)
@@ -127,5 +174,20 @@ func TestSupervisor_CloseDuringStart_IsRaceFree(t *testing.T) {
 		}()
 		sup.Close()
 		<-started
+		// Start must have been refused or been cleanly stoppable: either
+		// way, publishing now must never panic on a closed channel.
+		bus.Publish(trace.EffectEvent{RecordID: "sha256:race", KindLabel: "bash"})
+	}
+}
+
+// Close without Start: a later Start must be refused, since the
+// Interventions channel is already closed and no loop will ever run.
+func TestSupervisor_CloseThenStart_Refused(t *testing.T) {
+	mgr := goatherd.NewScopeManager(rttest.NewMemStore(t))
+
+	sup := supervisor.NewSupervisor(mgr, nil)
+	sup.Close()
+	if err := sup.Start("too-late"); err == nil {
+		t.Fatal("expected Start after Close-without-Start to be refused")
 	}
 }

@@ -63,7 +63,11 @@ type Supervisor struct {
 	done          chan struct{}
 	loopDone      chan struct{}
 	closeOnce     sync.Once
-	mu            sync.RWMutex
+	// closed is set under mu when Close runs, so a Start racing (or
+	// following) Close refuses instead of subscribing onto a supervisor
+	// whose Interventions channel is already closed.
+	closed bool
+	mu     sync.RWMutex
 }
 
 // NewSupervisor creates a supervisor that watches the given bus and
@@ -100,6 +104,9 @@ func (s *Supervisor) Start(subscriberID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.closed {
+		return fmt.Errorf("supervisor already closed")
+	}
 	if s.subscription != nil {
 		return nil // already started
 	}
@@ -119,26 +126,30 @@ func (s *Supervisor) Interventions() <-chan Intervention {
 }
 
 // Close stops the supervisor and closes the interventions channel.
-// It unsubscribes from the bus, joins the loop (so no in-flight evaluate
-// can send after Close returns), and then closes Interventions. Buffered
-// interventions stay receivable after the close. Safe to call multiple
-// times, including without a prior Start.
+// It unsubscribes from the bus and, once the loop has exited (so no
+// in-flight evaluate can send after the close), closes Interventions.
+// Buffered interventions stay receivable after the close. Safe to call
+// multiple times, without a prior Start, and from inside a rule action
+// running on the loop goroutine: the join happens on a separate goroutine,
+// so Close itself never blocks on the loop it is quitting.
 func (s *Supervisor) Close() {
 	s.closeOnce.Do(func() {
-		close(s.done)
-
-		s.mu.RLock()
+		s.mu.Lock()
+		s.closed = true
 		subscriberID := s.subscriberID
 		started := s.subscription != nil
-		s.mu.RUnlock()
-		if s.bus != nil && subscriberID != "" {
+		s.mu.Unlock()
+
+		close(s.done)
+		if s.bus != nil && started {
 			s.bus.Unsubscribe(subscriberID)
 		}
-
-		if started {
-			<-s.loopDone
-		}
-		close(s.interventions)
+		go func() {
+			if started {
+				<-s.loopDone
+			}
+			close(s.interventions)
+		}()
 	})
 }
 
