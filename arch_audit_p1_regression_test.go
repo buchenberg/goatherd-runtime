@@ -274,7 +274,7 @@ func TestRecovery_QuarantineCascade_SkipsDescendantsCheckpointsAndOutputs(t *tes
 		if !quarantined[owner] {
 			t.Fatalf("expected %s quarantined, got %v", owner, stats.Quarantined)
 		}
-		if _, ok := recovered.Get("scope:"+owner); ok {
+		if _, ok := recovered.Get("scope:" + owner); ok {
 			t.Fatalf("quarantined owner %s must not be recovered as a scope", owner)
 		}
 	}
