@@ -65,10 +65,11 @@ type RecoveryStats struct {
 	TerminalRecords int
 	CheckpointBlobs int
 	SealedOutputs   int
-	// Quarantined lists owners whose terminal records contradict each other
-	// (e.g. both a merge and a discard). One stale owner must not poison
-	// recovery for every other scope, so such owners are skipped and named
-	// here instead of failing the scan.
+	// Quarantined lists owners recovery dropped: owners whose terminal
+	// records contradict each other (e.g. both a merge and a discard), and
+	// their descendants, whose fork evidence lives on the distrusted trace.
+	// A stale owner must not poison recovery for every other scope, so
+	// such owners are skipped and named here instead of failing the scan.
 	Quarantined []string
 	// ScanDuration is the wall time of the whole scan phase.
 	ScanDuration time.Duration
@@ -177,7 +178,9 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 		}
 	}
 	for _, owner := range quarantined {
-		slog.Warn("recovery: quarantining owner with contradictory terminal records; scope is not recovered",
+		// The warning covers both shapes: an owner with contradictory
+		// terminal records, and a descendant quarantined with it.
+		slog.Warn("recovery: quarantining owner; its terminal records are contradictory or its ancestor's are, so the scope is not recovered",
 			"owner", owner)
 	}
 
@@ -379,7 +382,8 @@ func scanForkRecords(ctx context.Context, store *trace.SQLiteTraceStore) ([]fork
 // scanTerminalStates folds terminal records into per-owner ScopeStates.
 // An owner whose records contradict each other (both merged and discarded)
 // is quarantined — skipped and returned in the quarantined list — rather
-// than allowed to fail recovery for every scope.
+// than allowed to fail recovery for every scope. Cascade of descendants
+// (when any) is RecoverScopes' concern, not this scan's.
 func scanTerminalStates(ctx context.Context, store *trace.SQLiteTraceStore) (map[string]ScopeState, int, []string, error) {
 	records, err := trace.ScanRecordsBySchema(ctx, store, SchemaScopeMerged, SchemaScopeDiscarded, SchemaSupervisorHalt)
 	if err != nil {
@@ -460,10 +464,8 @@ func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *trace.SQL
 		slog.Warn("recovery: skipping checkpoint with undecodable state row", "checkpoint", id)
 	}
 
-	skipped := 0
 	for _, b := range blobs {
 		if ensureScope(mgr, store, strings.TrimPrefix(b.ScopeID, "scope:"), quarantined) == nil {
-			skipped++
 			slog.Warn("recovery: skipping checkpoint owned by a quarantined scope", "checkpoint", b.CheckpointID, "scope", b.ScopeID)
 			continue
 		}
@@ -486,9 +488,10 @@ func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *trace.SQL
 		mgr.checkpoints[cp.ID] = cp
 		mgr.mu.Unlock()
 	}
-	// The corrupt rows are part of the scan's cost even though they
-	// recover nothing; the stats surface reports what was read.
-	return len(blobs) + len(corrupt) - skipped, nil
+	// The corrupt rows and quarantine-skipped blobs are part of the
+	// scan's cost even though they recover nothing; the stats surface
+	// reports what was read.
+	return len(blobs) + len(corrupt), nil
 }
 
 // markStaleCheckpoints invalidates recovered checkpoints whose recorded
@@ -559,7 +562,6 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 		}
 	}
 
-	skippedOutputs := 0
 
 	for _, rec := range sealed {
 		id, _ := rec.Payload["output_id"].(string)
@@ -572,7 +574,6 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 				// A quarantined scope keeps no settle-able output: its
 				// terminal state was just declared untrustworthy.
 				slog.Warn("recovery: skipping output sealed by a quarantined scope", "output", id, "scope", scopeID)
-				skippedOutputs++
 				continue
 			}
 		}
@@ -621,7 +622,9 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 		mgr.outputs[out.id] = out
 		mgr.mu.Unlock()
 	}
-	return len(sealed) - skippedOutputs, nil
+	// Quarantine-skipped records are part of the scan's cost even though
+	// they recover nothing.
+	return len(sealed), nil
 }
 
 // workspaceStateFromPayload decodes a state encoded by the lifecycle
