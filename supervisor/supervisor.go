@@ -61,6 +61,7 @@ type Supervisor struct {
 	subscription  <-chan trace.EffectEvent
 	subscriberID  string
 	done          chan struct{}
+	loopDone      chan struct{}
 	closeOnce     sync.Once
 	mu            sync.RWMutex
 }
@@ -76,6 +77,7 @@ func NewSupervisor(manager *goatherd.ScopeManager, bus *trace.EffectBus) *Superv
 		bus:           bus,
 		interventions: make(chan Intervention, 64),
 		done:          make(chan struct{}),
+		loopDone:      make(chan struct{}),
 	}
 }
 
@@ -89,20 +91,26 @@ func (s *Supervisor) AddRule(rule SupervisionRule) {
 
 // Start begins watching the bus for effect events. It subscribes to the
 // bus and runs a background goroutine that evaluates rules.
-func (s *Supervisor) Start(subscriberID string) {
+//
+// It returns an error when the supervisor cannot be activated — notably
+// when it was built without an effect bus — instead of silently no-op'ing
+// (a silent no-op left Close with nothing to stop and a never-closed
+// Interventions channel).
+func (s *Supervisor) Start(subscriberID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.subscription != nil {
-		return // already started
+		return nil // already started
 	}
 	if s.bus == nil {
-		return // no bus to watch
+		return fmt.Errorf("supervisor has no effect bus to watch")
 	}
 
 	s.subscriberID = subscriberID
 	s.subscription = s.bus.Subscribe(subscriberID)
 	go s.loop()
+	return nil
 }
 
 // Interventions returns a receive-only channel of interventions.
@@ -111,18 +119,31 @@ func (s *Supervisor) Interventions() <-chan Intervention {
 }
 
 // Close stops the supervisor and closes the interventions channel.
-// It unsubscribes from the bus. Safe to call multiple times.
+// It unsubscribes from the bus, joins the loop (so no in-flight evaluate
+// can send after Close returns), and then closes Interventions. Buffered
+// interventions stay receivable after the close. Safe to call multiple
+// times, including without a prior Start.
 func (s *Supervisor) Close() {
 	s.closeOnce.Do(func() {
 		close(s.done)
-		if s.bus != nil && s.subscriberID != "" {
-			s.bus.Unsubscribe(s.subscriberID)
+
+		s.mu.RLock()
+		subscriberID := s.subscriberID
+		started := s.subscription != nil
+		s.mu.RUnlock()
+		if s.bus != nil && subscriberID != "" {
+			s.bus.Unsubscribe(subscriberID)
 		}
+
+		if started {
+			<-s.loopDone
+		}
+		close(s.interventions)
 	})
 }
 
 func (s *Supervisor) loop() {
-	defer close(s.interventions)
+	defer close(s.loopDone)
 
 	for {
 		select {

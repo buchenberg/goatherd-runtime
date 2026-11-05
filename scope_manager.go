@@ -20,6 +20,11 @@ type ScopeManager struct {
 	scopes      map[string]*Scope
 	checkpoints map[string]*Checkpoint
 	outputs     map[string]*RetainedOutput
+	// settleLocks serializes settling across all outputs of one parent: the
+	// parent workspace is the contended resource, and per-output locking
+	// alone lets concurrent SettleSelect/SettleApply pass their digest and
+	// overlap checks against an unmodified parent and then diverge.
+	settleLocks map[string]*sync.Mutex
 	mu          sync.RWMutex
 }
 
@@ -32,6 +37,7 @@ func NewScopeManager(store *trace.SQLiteTraceStore) *ScopeManager {
 		scopes:      make(map[string]*Scope),
 		checkpoints: make(map[string]*Checkpoint),
 		outputs:     make(map[string]*RetainedOutput),
+		settleLocks: make(map[string]*sync.Mutex),
 	}
 }
 

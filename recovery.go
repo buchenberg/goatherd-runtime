@@ -65,6 +65,11 @@ type RecoveryStats struct {
 	TerminalRecords int
 	CheckpointBlobs int
 	SealedOutputs   int
+	// Quarantined lists owners whose terminal records contradict each other
+	// (e.g. both a merge and a discard). One stale owner must not poison
+	// recovery for every other scope, so such owners are skipped and named
+	// here instead of failing the scan.
+	Quarantined []string
 	// ScanDuration is the wall time of the whole scan phase.
 	ScanDuration time.Duration
 }
@@ -130,12 +135,13 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 	if stats != nil {
 		stats.ForkRecords = len(edges)
 	}
-	terminal, terminalRecords, err := scanTerminalStates(ctx, store)
+	terminal, terminalRecords, quarantined, err := scanTerminalStates(ctx, store)
 	if err != nil {
 		return nil, err
 	}
 	if stats != nil {
 		stats.TerminalRecords = terminalRecords
+		stats.Quarantined = quarantined
 	}
 
 	mgr := NewScopeManager(store)
@@ -149,8 +155,19 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 		childOwners[e.childOwner] = true
 	}
 
+	// Quarantined owners get no scope at all: neither terminal state can be
+	// trusted, so the trace must not resurrect them (and their edges are
+	// dead ends).
+	quarantinedSet := make(map[string]bool, len(quarantined))
+	for _, owner := range quarantined {
+		quarantinedSet[owner] = true
+	}
+
 	scopes := make(map[string]*Scope, len(owners))
 	for owner := range owners {
+		if quarantinedSet[owner] {
+			continue
+		}
 		state := ScopeActive
 		if t, ok := terminal[owner]; ok {
 			state = t
@@ -168,6 +185,9 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 	for _, e := range edges {
 		parent := scopes[e.parentOwner]
 		child := scopes[e.childOwner]
+		if parent == nil || child == nil {
+			continue // one side was quarantined
+		}
 		child.parent = parent
 		child.forkPoint = e.forkPoint
 		child.baseline = e.baseline
@@ -332,14 +352,14 @@ func scanForkRecords(ctx context.Context, store *trace.SQLiteTraceStore) ([]fork
 	return edges, nil
 }
 
-// scanTerminalStates folds merged/discarded/halt records into a per-owner
-// terminal state. A child merged then somehow discarded cannot happen (the
-// state machine rejects it), so a collision is a corrupt trace and fails
-// the recovery loudly.
-func scanTerminalStates(ctx context.Context, store *trace.SQLiteTraceStore) (map[string]ScopeState, int, error) {
+// scanTerminalStates folds terminal records into per-owner ScopeStates.
+// An owner whose records contradict each other (both merged and discarded)
+// is quarantined — skipped and returned in the quarantined list — rather
+// than allowed to fail recovery for every scope.
+func scanTerminalStates(ctx context.Context, store *trace.SQLiteTraceStore) (map[string]ScopeState, int, []string, error) {
 	records, err := trace.ScanRecordsBySchema(ctx, store, SchemaScopeMerged, SchemaScopeDiscarded, SchemaSupervisorHalt)
 	if err != nil {
-		return nil, 0, fmt.Errorf("scan terminal records: %w", err)
+		return nil, 0, nil, fmt.Errorf("scan terminal records: %w", err)
 	}
 
 	// The raw record count rides beside the folded states: the stats
@@ -347,6 +367,7 @@ func scanTerminalStates(ctx context.Context, store *trace.SQLiteTraceStore) (map
 	// can fold into one owner's terminal state.
 	rawRecords := len(records)
 	states := make(map[string]ScopeState)
+	var quarantined []string
 	for _, rec := range records {
 		var owner string
 		var state ScopeState
@@ -370,11 +391,29 @@ func scanTerminalStates(ctx context.Context, store *trace.SQLiteTraceStore) (map
 			continue
 		}
 		if prior, ok := states[owner]; ok && prior != state {
-			return nil, 0, fmt.Errorf("owner %s is recorded both %s and %s: the trace is inconsistent", owner, prior, state)
+			// The trace is inconsistent for this owner, but that must not
+			// poison recovery for everyone else: skip the owner entirely
+			// (neither state is trusted) and surface it in the quarantine
+			// list.
+			delete(states, owner)
+			if !containsOwner(quarantined, owner) {
+				quarantined = append(quarantined, owner)
+			}
+			continue
 		}
 		states[owner] = state
 	}
-	return states, rawRecords, nil
+	return states, rawRecords, quarantined, nil
+}
+
+// containsOwner reports whether owners already lists owner.
+func containsOwner(owners []string, owner string) bool {
+	for _, o := range owners {
+		if o == owner {
+			return true
+		}
+	}
+	return false
 }
 
 // edgeFor returns the edge that made owner a child, or nil.
