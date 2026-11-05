@@ -167,7 +167,9 @@ sup.AddRule(supervisor.DestructiveToolRule())          // advisory warning on de
 sup.AddRule(supervisor.DestructiveToolGuard())         // deny blockable destructive calls at check time
 sup.AddRule(supervisor.HighErrorRateRule(0.5, 10))     // alert at 50% errors
 sup.AddRule(supervisor.StuckDetectionRule(3))          // detect loops
-sup.Start("orchestrator")
+if err := sup.Start("orchestrator"); err != nil {
+    log.Fatal(err) // e.g. the supervisor was built without an effect bus
+}
 
 for iv := range sup.Interventions() {
     switch iv.Type {
@@ -446,7 +448,9 @@ sup := supervisor.NewSupervisor(mgr, bus)
 sup.AddRule(supervisor.DestructiveToolRule())
 sup.AddRule(supervisor.HighErrorRateRule(0.5, 10))
 sup.AddRule(supervisor.StuckDetectionRule(3))
-sup.Start("orchestrator")
+if err := sup.Start("orchestrator"); err != nil {
+    log.Fatal(err) // e.g. the supervisor was built without an effect bus
+}
 defer sup.Close()
 
 for iv := range sup.Interventions() { ... }

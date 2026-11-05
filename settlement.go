@@ -409,6 +409,12 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 		if err != nil {
 			return err
 		}
+		// Serialize against settles of every other output of this parent:
+		// the digest check and the apply below must see the same parent
+		// workspace, or two selects both pass against an unchanged parent
+		// and the tree silently keeps only the last apply.
+		unlockParent := m.lockParentSettle(parent.ID())
+		defer unlockParent()
 		// Fast-forward-only, strictly: the parent's workspace must be
 		// bit-identical to the fork baseline, content and timeline.
 		// Digest equality is the honest test: since plan 06's content
@@ -448,6 +454,8 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 		if err != nil {
 			return err
 		}
+		unlockParent := m.lockParentSettle(parent.ID())
+		defer unlockParent()
 		// The parent's concurrent changes are what it holds now that the
 		// baseline does not. Path overlap with the output's own changes
 		// means the three-way merge would clobber, so refuse before trying.
@@ -479,6 +487,25 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 	out.settledAt = time.Now()
 	recordRunOutputSettled(ctx, scope, out, action)
 	return nil
+}
+
+// lockParentSettle acquires the settle lock for a parent workspace and
+// returns its release function. Called only from Settle while the output
+// lock is already held, so the acquisition order is always output → parent
+// and can never invert.
+func (m *ScopeManager) lockParentSettle(parentID string) func() {
+	m.mu.Lock()
+	lock, ok := m.settleLocks[parentID]
+	if !ok {
+		if m.settleLocks == nil {
+			m.settleLocks = make(map[string]*sync.Mutex)
+		}
+		lock = &sync.Mutex{}
+		m.settleLocks[parentID] = lock
+	}
+	m.mu.Unlock()
+	lock.Lock()
+	return lock.Unlock
 }
 
 // settleParent resolves and validates the parent side of a select or apply.

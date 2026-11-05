@@ -480,7 +480,9 @@ func (s *Scope) Inject(guidance string) error {
 // to force-stop a sub-agent.
 //
 // Halt is idempotent — calling it on an already-discarded scope
-// returns nil.
+// returns nil. A merged scope is terminal: halting it would append a
+// halt record beside the merge record, leave a trace that recovery
+// cannot fold, so Halt refuses instead.
 //
 // If the scope owns its sandbox, the sandbox is destroyed so a force-stopped
 // sub-agent does not leak its worktree.
@@ -497,6 +499,9 @@ func (s *Scope) halt() error {
 
 	if s.state == ScopeDiscarded {
 		return nil // already halted
+	}
+	if s.state == ScopeMerged {
+		return fmt.Errorf("cannot halt scope %s: it is merged (terminal); recovery cannot fold a halt beside a merge record", s.id)
 	}
 
 	_, err := s.store.Append(context.Background(), trace.TrustedAppendContext, trace.AppendBatch{
