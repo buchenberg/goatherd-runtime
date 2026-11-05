@@ -562,7 +562,6 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 		}
 	}
 
-
 	for _, rec := range sealed {
 		id, _ := rec.Payload["output_id"].(string)
 		if id == "" {
