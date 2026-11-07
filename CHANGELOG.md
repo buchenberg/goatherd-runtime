@@ -4,7 +4,7 @@ Notable changes to `goatherd-runtime`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
-## [Unreleased]
+## [v0.24.0] - 2026-11-07
 
 ### Added
 - **Seal carries the execution state**: `SealOptions{Snapshot, Metadata,
