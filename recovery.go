@@ -14,15 +14,15 @@ import (
 	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 )
 
-// Recovery: rebuild the scope tree, checkpoints, and retained outputs from
-// the durable trace after a process restart (plan 05 §4).
+// Recovery: rebuild the scope tree, checkpoints, retained outputs, and review
+// provenance from the durable trace after a process restart (plan 05 §4).
 //
-// The trace is the registry. Scope lifecycle events, checkpoint blobs, and
-// settlement records are all durably recorded, so a restarted process loses
-// only what was never recorded: conversation snapshots (deliberately opaque,
-// deliberately not persisted beyond checkpoint blobs), timestamps on
-// recovered outputs, and any root scope that never forked — a root with no
-// fork record is invisible to the trace and must be re-created by the host.
+// The trace is the registry. Scope lifecycle events, checkpoint blobs, sealed
+// outputs (including fork snapshots and output lineage), and settlement
+// records are all durably recorded, so a restarted process loses only what was
+// never recorded: timestamps on recovered outputs, and any root scope that
+// never forked — a root with no fork record is invisible to the trace and must
+// be re-created by the host.
 
 // RecoverOptions configures scope recovery.
 type RecoverOptions struct {
@@ -67,6 +67,8 @@ type RecoveryStats struct {
 	TerminalRecords int
 	CheckpointBlobs int
 	SealedOutputs   int
+	MergeProposals  int
+	MergeDecisions  int
 	// Quarantined lists owners recovery dropped: owners whose terminal
 	// records contradict each other (e.g. both a merge and a discard), and
 	// their descendants, whose fork evidence lives on the distrusted trace.
@@ -94,6 +96,7 @@ type forkEdge struct {
 	path        string
 	baseline    trace.WorkspaceState
 	snapshot    any
+	derivedFrom string
 	forkPoint   string
 }
 
@@ -121,9 +124,14 @@ type forkEdge struct {
 //     checkpoints Valid — restore re-validates against the live workspace
 //     anyway.
 //   - Retained outputs recover settle-able: the sealed payload carries the
-//     full sealed and baseline states and the change list. A recovered
-//     output's Diff is empty (the diff body was never recorded) and its
-//     SealedAt/SettledAt are zero times — the records carry no timestamps.
+//     full sealed and baseline states, the change list, the retained
+//     snapshot/metadata/diff, and lineage edges. The reverse SupersededBy
+//     edge is derived from the newer output's supersedes value. SealedAt and
+//     SettledAt are zero times — the records carry no timestamps.
+//   - Review provenance recovers as a pair: a proposal on the child's owner
+//     path and its decision on the parent's. A recovered proposal carries the
+//     change list (not the full diff, which was only digested), which is
+//     enough for a host to record the decision after a restart.
 //
 // Sandboxes are never invented: the resolver decides what is re-adopted,
 // and a recovery without a resolver rebuilds the causal tree only.
@@ -216,6 +224,7 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 		child.forkPoint = e.forkPoint
 		child.baseline = e.baseline
 		child.snapshot = e.snapshot
+		child.derivedFrom = e.derivedFrom
 		parent.mu.Lock()
 		parent.children = append(parent.children, child)
 		parent.mu.Unlock()
@@ -242,8 +251,14 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 	if err != nil {
 		return nil, err
 	}
+	proposalCount, decisionCount, err := recoverReviews(ctx, mgr, store, quarantinedSet)
+	if err != nil {
+		return nil, err
+	}
 	if stats != nil {
 		stats.SealedOutputs = sealedCount
+		stats.MergeProposals = proposalCount
+		stats.MergeDecisions = decisionCount
 		// Quarantined is final only after the cascade below the scan.
 		stats.Quarantined = quarantined
 		stats.ScanDuration = time.Since(scanStart)
@@ -379,6 +394,7 @@ func scanForkRecords(ctx context.Context, store *trace.SQLiteTraceStore) ([]fork
 			edge.baseline = workspaceStateFromPayload(baselineRaw)
 		}
 		edge.snapshot = forkSnapshotFromPayload(rec.Payload)
+		edge.derivedFrom, _ = rec.Payload["derived_from"].(string)
 		edges = append(edges, edge)
 	}
 	return edges, nil
@@ -631,6 +647,8 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 			}
 		}
 		recoverSealValues(ctx, store, out, rec.OwnerID, rec.Payload)
+		out.derivedFrom, _ = rec.Payload["derived_from"].(string)
+		out.supersedes, _ = rec.Payload["supersedes"].(string)
 		out.sealedFactID = rec.RecordID
 
 		if action, ok := terminals[id]; ok {
@@ -655,7 +673,114 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 	}
 	// Quarantine-skipped records are part of the scan's cost even though
 	// they recover nothing.
+	linkSupersededOutputs(mgr)
 	return len(sealed), nil
+}
+
+// linkSupersededOutputs derives the reverse lineage edge from each output's
+// supersedes value. The trace records the edge once, on the newer output; the
+// older output reports it through SupersededBy().
+func linkSupersededOutputs(mgr *ScopeManager) {
+	mgr.mu.RLock()
+	outputs := make(map[string]*RetainedOutput, len(mgr.outputs))
+	for id, out := range mgr.outputs {
+		outputs[id] = out
+	}
+	mgr.mu.RUnlock()
+
+	for _, out := range outputs {
+		if out.supersedes == "" {
+			continue
+		}
+		target, ok := outputs[out.supersedes]
+		if !ok {
+			slog.Warn("recovery: output supersedes an unknown output",
+				"output", out.id, "supersedes", out.supersedes)
+			continue
+		}
+		target.mu.Lock()
+		target.supersededBy = out.id
+		target.mu.Unlock()
+	}
+}
+
+// recoverReviews rebuilds the review provenance pair that the trace keeps on
+// two paths: the proposal on the child's owner path and the decision on the
+// parent's. The proposal's full diff is not stored (only its digest), so a
+// recovered proposal carries the change list but no per-file diff text — which
+// is all RecordMergeDecision needs after a restart. A proposal whose child
+// scope was quarantined or never recovered is skipped rather than resurrecting
+// a review for a scope recovery dropped.
+func recoverReviews(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteTraceStore, quarantined map[string]bool) (int, int, error) {
+	proposed, err := trace.ScanRecordsBySchema(ctx, store, SchemaMergeProposed)
+	if err != nil {
+		return 0, 0, fmt.Errorf("recover reviews: scan merge proposals: %w", err)
+	}
+	decided, err := trace.ScanRecordsBySchema(ctx, store, SchemaSupervisorDecision)
+	if err != nil {
+		return 0, 0, fmt.Errorf("recover reviews: scan merge decisions: %w", err)
+	}
+
+	reviews := make(map[string]*MergeReview, len(proposed))
+	byFact := make(map[string]*MergeReview, len(proposed))
+	for _, rec := range proposed {
+		childID, _ := rec.Payload["child_scope"].(string)
+		if childID == "" {
+			continue
+		}
+		if owner := strings.TrimPrefix(childID, "scope:"); owner != "" && quarantined[owner] {
+			continue
+		}
+		if _, ok := mgr.Get(childID); !ok {
+			// The child did not recover; a decision recorded against it
+			// could not be acted on anyway.
+			continue
+		}
+		proposal := &MergeProposal{ChildScopeID: childID}
+		proposal.BaselineDigest, _ = rec.Payload["baseline_digest"].(string)
+		if changesRaw, ok := rec.Payload["changes"].([]any); ok {
+			for _, cRaw := range changesRaw {
+				c, ok := cRaw.(map[string]any)
+				if !ok {
+					continue
+				}
+				path, _ := c["path"].(string)
+				kind, _ := c["kind"].(string)
+				if path == "" {
+					continue
+				}
+				proposal.Changes = append(proposal.Changes, ProposedChange{Path: path, Kind: kind})
+			}
+		}
+		review := &MergeReview{Proposal: proposal, ProposedFactID: rec.RecordID}
+		reviews[childID] = review
+		byFact[rec.RecordID] = review
+	}
+
+	decisionCount := 0
+	for _, rec := range decided {
+		childID, _ := rec.Payload["child_scope"].(string)
+		proposedID, _ := rec.Payload["proposed_fact_id"].(string)
+		review := byFact[proposedID]
+		if review == nil && childID != "" {
+			review = reviews[childID]
+		}
+		if review == nil {
+			continue
+		}
+		approved, _ := rec.Payload["approved"].(bool)
+		reason, _ := rec.Payload["reason"].(string)
+		action, _ := rec.Payload["action"].(string)
+		review.Decision = &MergeDecision{Approved: approved, Reason: reason, Action: action}
+		decisionCount++
+	}
+
+	mgr.mu.Lock()
+	for childID, review := range reviews {
+		mgr.reviews[childID] = review
+	}
+	mgr.mu.Unlock()
+	return len(reviews), decisionCount, nil
 }
 
 // workspaceStateFromPayload decodes a state encoded by the lifecycle

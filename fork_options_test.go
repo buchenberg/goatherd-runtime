@@ -36,6 +36,14 @@ func newForkWorktree(t *testing.T, repo, leaf string) (sandbox.Sandbox, string) 
 // each isolated child to its recorded worktree path and every root to repo.
 func recoverForkScopes(t *testing.T, store *trace.SQLiteTraceStore, path, repo string, worktrees map[string]string) *ScopeManager {
 	t.Helper()
+	recovered, _ := recoverForkScopesWithStore(t, store, path, repo, worktrees)
+	return recovered
+}
+
+// recoverForkScopesWithStore is recoverForkScopes plus the reopened store, for
+// tests that inspect records after recovery.
+func recoverForkScopesWithStore(t *testing.T, store *trace.SQLiteTraceStore, path, repo string, worktrees map[string]string) (*ScopeManager, *trace.SQLiteTraceStore) {
+	t.Helper()
 	reopened := reopenStore(t, store, path)
 	recovered, err := RecoverScopes(reopened, RecoverOptions{
 		Resolver: func(scopeID, backend, addr string) (sandbox.Sandbox, error) {
@@ -48,7 +56,7 @@ func recoverForkScopes(t *testing.T, store *trace.SQLiteTraceStore, path, repo s
 	if err != nil {
 		t.Fatalf("RecoverScopes: %v", err)
 	}
-	return recovered
+	return recovered, reopened
 }
 
 func digestOf(t *testing.T, ws trace.WorkspaceState) string {

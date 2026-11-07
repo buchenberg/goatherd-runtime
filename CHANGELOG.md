@@ -24,6 +24,17 @@ contain breaking changes, which are called out below.
   (`[]byte` as bytes, other values as normalized JSON). `ForkFromOutput` seeds
   an isolated child from a sealed output's frozen workspace and snapshot, with
   no parent capture in between. Zero options keep the previous behavior.
+- **Output lineage**: `SealOptions{DerivedFrom, Supersedes}` records
+  `derived_from` / `supersedes` on sealed and settled facts. `ForkFromOutput`
+  sets `derived_from` automatically. `RetainedOutput` gains `DerivedFrom()`,
+  `Supersedes()`, and `SupersededBy()` (the reverse edge is linked live by
+  `ScopeManager.Seal` and rebuilt by recovery). `ForkOptions.DerivedFrom`
+  carries output lineage through the fork record.
+- **Recoverable review provenance**: recovery rebuilds the merge proposal and
+  supervisor decision pair. `ScopeManager.MergeReview(childID)` returns the
+  proposal, its fact id, and the decision when one exists, so a host can record
+  a settlement decision for a recovered worktree output. Decision records now
+  carry `proposed_fact_id` for exact pairing.
 
 ## [v0.21.0] - 2026-10-29
 

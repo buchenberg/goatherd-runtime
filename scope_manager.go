@@ -20,6 +20,9 @@ type ScopeManager struct {
 	scopes      map[string]*Scope
 	checkpoints map[string]*Checkpoint
 	outputs     map[string]*RetainedOutput
+	// reviews is the recovered/recorded review provenance, keyed by child
+	// scope id. It holds the proposal and, once recorded, its decision.
+	reviews map[string]*MergeReview
 	// settleLocks serializes settling across all outputs of one parent: the
 	// parent workspace is the contended resource, and per-output locking
 	// alone lets concurrent SettleSelect/SettleApply pass their digest and
@@ -37,6 +40,7 @@ func NewScopeManager(store *trace.SQLiteTraceStore) *ScopeManager {
 		scopes:      make(map[string]*Scope),
 		checkpoints: make(map[string]*Checkpoint),
 		outputs:     make(map[string]*RetainedOutput),
+		reviews:     make(map[string]*MergeReview),
 		settleLocks: make(map[string]*sync.Mutex),
 	}
 }
@@ -111,7 +115,9 @@ func (m *ScopeManager) ForkIsolated(parentID, childOwnerID string, snapshot any,
 
 // ForkFromOutput creates an isolated child from a sealed output: the output's
 // frozen workspace seeds the child's sandbox and is also the settlement
-// baseline, and the output's snapshot becomes the child's fork snapshot.
+// baseline, and the output's snapshot becomes the child's fork snapshot. The
+// fork records the output as the child's derived_from lineage, which any
+// output sealed from the child then carries.
 // Nothing is captured from the parent, so the parent cannot move between the
 // baseline decision and the seed — that window is the reason this convenience
 // exists.
@@ -148,6 +154,9 @@ func (m *ScopeManager) ForkFromOutput(ctx context.Context, parentID, childOwnerI
 		if snapshot := out.Snapshot(); snapshot != nil {
 			opt.Snapshot = snapshot
 		}
+	}
+	if opt.DerivedFrom == "" {
+		opt.DerivedFrom = out.ID()
 	}
 	return m.forkScope(ctx, parentID, childOwnerID, nil, true, sb, []ForkOptions{opt})
 }
@@ -223,7 +232,7 @@ func (m *ScopeManager) forkScope(ctx context.Context, parentID, childOwnerID str
 		return nil, fmt.Errorf("scope %s already exists", childID)
 	}
 
-	child, err := parent.forkWithBaseline(childOwnerID, snapshot, baseline, isolated, backend, address)
+	child, err := parent.forkWithBaseline(childOwnerID, snapshot, baseline, opt.DerivedFrom, isolated, backend, address)
 	if err != nil {
 		return nil, err
 	}
@@ -303,16 +312,34 @@ func (m *ScopeManager) AllScopes() []*Scope {
 // is what makes the output settle-able: Settle and RetainedOutput.Settle
 // resolve the output and its scopes through the manager. The scope stays
 // active — sealing does not merge. SealOptions adds the caller's opaque
-// snapshot/metadata and bounds the retained diff.
+// snapshot/metadata, bounds the retained diff, and records lineage.
+//
+// A Supersedes value must name an output the manager already knows: the seal
+// validates it before appending anything, then links the older output's
+// SupersededBy live. A direct Scope.Seal records the same edge but cannot link
+// in memory; recovery rebuilds it.
 func (m *ScopeManager) Seal(ctx context.Context, scopeID string, opts ...SealOptions) (*RetainedOutput, error) {
+	opt, err := singleSealOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	m.mu.RLock()
 	scope, ok := m.scopes[scopeID]
 	m.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("scope %s not found", scopeID)
 	}
+	if opt.Supersedes != "" {
+		m.mu.RLock()
+		_, exists := m.outputs[opt.Supersedes]
+		m.mu.RUnlock()
+		if !exists {
+			return nil, fmt.Errorf("seal scope %s: supersedes unknown output %s", scopeID, opt.Supersedes)
+		}
+	}
 
-	out, err := scope.Seal(ctx, opts...)
+	out, err := scope.Seal(ctx, opt)
 	if err != nil {
 		return nil, err
 	}
@@ -325,6 +352,20 @@ func (m *ScopeManager) Seal(ctx context.Context, scopeID string, opts ...SealOpt
 	out.mgr = m
 	m.outputs[out.id] = out
 	m.mu.Unlock()
+
+	// Link the reverse edge without holding the registry lock: Settle takes
+	// an output lock before reading the registry, so acquiring manager then
+	// output here would invert the lock order.
+	if opt.Supersedes != "" {
+		m.mu.RLock()
+		target := m.outputs[opt.Supersedes]
+		m.mu.RUnlock()
+		if target != nil {
+			target.mu.Lock()
+			target.supersededBy = out.id
+			target.mu.Unlock()
+		}
+	}
 
 	return out, nil
 }

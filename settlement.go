@@ -46,7 +46,8 @@ const (
 )
 
 // SealOptions carries caller state into a seal. The zero value adds nothing:
-// no execution snapshot, no metadata, and the default diff cap.
+// no execution snapshot, no metadata, no explicit lineage, and the default
+// diff cap.
 //
 // The snapshot is the opaque execution state the caller wants to keep beside
 // the output (a sub-agent's conversation, a replay checkpoint). Metadata is
@@ -69,6 +70,14 @@ type SealOptions struct {
 	// a marker in the text plus diff_truncated/diff_original_size in the
 	// sealed payload.
 	DiffCap int
+	// DerivedFrom is the retained output this one was forked or continued
+	// from. Empty uses the scope's fork lineage (set by ForkFromOutput);
+	// an explicit value overrides it.
+	DerivedFrom string
+	// Supersedes is the retained output this one replaces. The superseded
+	// output's SupersededBy() reports this output after the seal: live when
+	// sealed through ScopeManager.Seal, or rebuilt on recovery.
+	Supersedes string
 }
 
 // sealBlobRef names a blob written for an output, so a failed seal can remove
@@ -173,7 +182,13 @@ type RetainedOutput struct {
 	// diffOriginalSize is the pre-truncation length in bytes.
 	diffTruncated    bool
 	diffOriginalSize int
-	state            OutputState
+	// Lineage output ids: derivedFrom is the output this one came from,
+	// supersedes is the output it replaces, and supersededBy is filled on
+	// the older output when a newer one supersedes it.
+	derivedFrom  string
+	supersedes   string
+	supersededBy string
+	state        OutputState
 	// action is the settlement that consumed the output; zero until settled.
 	action    SettlementAction
 	sealedAt  time.Time
@@ -239,6 +254,30 @@ func (o *RetainedOutput) DiffOriginalSize() int {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.diffOriginalSize
+}
+
+// DerivedFrom returns the retained output this one was forked or continued
+// from, or "" when it has no recorded lineage.
+func (o *RetainedOutput) DerivedFrom() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.derivedFrom
+}
+
+// Supersedes returns the retained output this one replaces, or "".
+func (o *RetainedOutput) Supersedes() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.supersedes
+}
+
+// SupersededBy returns the retained output that superseded this one, or "".
+// It is linked live by ScopeManager.Seal and rebuilt by recovery from the
+// later output's supersedes edge.
+func (o *RetainedOutput) SupersededBy() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.supersededBy
 }
 
 // Snapshot returns the opaque execution snapshot frozen at seal time, or nil
@@ -329,6 +368,7 @@ func (s *Scope) Seal(ctx context.Context, opts ...SealOptions) (*RetainedOutput,
 	ownerID := s.ownerID
 	scopeID := s.id
 	baseline := s.baseline
+	derivedFrom := s.derivedFrom
 	s.mu.RUnlock()
 
 	if state != ScopeActive {
@@ -339,6 +379,9 @@ func (s *Scope) Seal(ctx context.Context, opts ...SealOptions) (*RetainedOutput,
 	}
 	if baseline.Backend == "" {
 		return nil, fmt.Errorf("scope %s has no fork baseline: it was forked from a parent without a sandbox, so its changes have no base to settle onto", scopeID)
+	}
+	if opt.DerivedFrom != "" {
+		derivedFrom = opt.DerivedFrom
 	}
 
 	ws, err := sb.Capture(ctx)
@@ -375,6 +418,8 @@ func (s *Scope) Seal(ctx context.Context, opts ...SealOptions) (*RetainedOutput,
 		metadata:         append([]byte(nil), opt.Metadata...),
 		diffTruncated:    diffTruncated,
 		diffOriginalSize: len(diff),
+		derivedFrom:      derivedFrom,
+		supersedes:       opt.Supersedes,
 		state:            OutputUnconsumed,
 		sealedAt:         time.Now(),
 	}
@@ -404,6 +449,15 @@ func (s *Scope) Seal(ctx context.Context, opts ...SealOptions) (*RetainedOutput,
 			"data":     baseline.Data,
 		},
 		"changes": changesPayload(out.changes),
+	}
+	// Lineage is recorded on the output's own fact; the reverse edge
+	// (supersededBy) is derived from a later output's supersedes value at
+	// seal time or on recovery.
+	if out.derivedFrom != "" {
+		payload["derived_from"] = out.derivedFrom
+	}
+	if out.supersedes != "" {
+		payload["supersedes"] = out.supersedes
 	}
 
 	// The retained diff and the caller's opaque values are frozen beside
@@ -821,6 +875,18 @@ func recordRunOutputSettled(ctx context.Context, scope *Scope, out *RetainedOutp
 	}
 	stateDigest, _ := out.workspace.Digest()
 
+	payload := map[string]any{
+		"output_id":    out.id,
+		"action":       string(action),
+		"state_digest": stateDigest,
+	}
+	if out.derivedFrom != "" {
+		payload["derived_from"] = out.derivedFrom
+	}
+	if out.supersedes != "" {
+		payload["supersedes"] = out.supersedes
+	}
+
 	_, err := scope.store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:settle:%s:%d", ownerID, action, nextCheckpointSeq.Add(1)),
 		Groups: []trace.AppendGroup{{
@@ -830,11 +896,7 @@ func recordRunOutputSettled(ctx context.Context, scope *Scope, out *RetainedOutp
 				Mode:      trace.Capture,
 				SchemaRef: SchemaRunOutputSettled,
 				KindLabel: "run_output:settled",
-				Payload: map[string]any{
-					"output_id":    out.id,
-					"action":       string(action),
-					"state_digest": stateDigest,
-				},
+				Payload:   payload,
 			}},
 		}},
 	})

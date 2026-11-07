@@ -82,7 +82,11 @@ type Scope struct {
 	// verb compares the parent against. Empty for pure-causal forks (no
 	// sandbox) — such children cannot propose merges.
 	baseline trace.WorkspaceState
-	mu       sync.RWMutex
+	// derivedFrom is the retained output this scope was forked from, carried
+	// into any output sealed from it. Empty when the fork was not from an
+	// output.
+	derivedFrom string
+	mu          sync.RWMutex
 }
 
 // NewScope creates a root scope (no parent) for the given trace owner.
@@ -157,6 +161,15 @@ func (s *Scope) Baseline() (trace.WorkspaceState, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.baseline, s.baseline.Backend != ""
+}
+
+// DerivedFrom returns the retained output this scope was forked from, or ""
+// when the fork was not output-derived. Any output sealed from this scope
+// carries the same id unless SealOptions.DerivedFrom overrides it.
+func (s *Scope) DerivedFrom() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.derivedFrom
 }
 
 // WithSandbox attaches an execution substrate to the scope and reports whether
@@ -234,6 +247,11 @@ type ForkOptions struct {
 	// as normalized JSON (structs recover as maps/arrays) because the trace
 	// is canonical JSON. A value JSON cannot represent fails the fork.
 	Snapshot any
+	// DerivedFrom is the retained output this fork continues. It is
+	// recorded on the fork and carried into any output sealed from the
+	// child. ForkFromOutput defaults it to the source output's id; empty
+	// means no output lineage.
+	DerivedFrom string
 }
 
 // singleForkOptions accepts the variadic call shape and rejects more than one
@@ -281,7 +299,7 @@ func (s *Scope) Fork(childOwnerID string, snapshot any, opts ...ForkOptions) (*S
 			return nil, err
 		}
 	}
-	return s.forkWithBaseline(childOwnerID, snapshot, baseline, false, "", "")
+	return s.forkWithBaseline(childOwnerID, snapshot, baseline, opt.DerivedFrom, false, "", "")
 }
 
 // forkWithBaseline is Fork after the baseline decision, so the scope
@@ -289,11 +307,12 @@ func (s *Scope) Fork(childOwnerID string, snapshot any, opts ...ForkOptions) (*S
 // a subprocess bounded by gitTimeout; the registry must not wait on it)
 // and still register atomically. isolated records that the child was
 // forked with its own substrate, which is what recovery needs to know
-// whether a re-adopted sandbox belongs to the child alone. sandboxPath is
+// whether a re-adopted sandbox belongs to the child alone. derivedFrom is
+// the retained output this fork continues (empty for none). sandboxPath is
 // the substrate's durable address, extracted by the manager from the
 // sandbox's Addressed capability (empty for unaddressed backends) and
 // recorded so recovery can hand it to the host's resolver.
-func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline trace.WorkspaceState, isolated bool, sandboxBackend, sandboxPath string) (*Scope, error) {
+func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline trace.WorkspaceState, derivedFrom string, isolated bool, sandboxBackend, sandboxPath string) (*Scope, error) {
 	s.mu.Lock()
 	if s.state != ScopeActive {
 		s.mu.Unlock()
@@ -312,6 +331,9 @@ func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline tra
 
 	forkPayload := map[string]any{
 		"child_owner": childOwnerID,
+	}
+	if derivedFrom != "" {
+		forkPayload["derived_from"] = derivedFrom
 	}
 	snapshot = normalizeForkSnapshot(snapshot)
 	if isolated {
@@ -378,6 +400,7 @@ func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline tra
 		sandbox:     inheritedSandbox,
 		ownsSandbox: false,
 		baseline:    baseline,
+		derivedFrom: derivedFrom,
 	}
 
 	s.mu.Lock()

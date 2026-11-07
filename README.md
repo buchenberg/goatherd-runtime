@@ -400,7 +400,7 @@ child, err := mgr.Fork("parent-scope-id", "child-owner-id", nil)    // inherits 
 child, err := mgr.ForkIsolated("parent-scope-id", "child-owner-id", nil, sb)
 child, err := mgr.ForkFromOutput(ctx, "parent-scope-id", "child-owner-id", out, sb) // seeds from a sealed output
 err := parent.Merge(child)                                          // takes *Scope, not an ID
-err := parent.Discard(child)
+review, ok := mgr.MergeReview("child-scope-id")                     // recovered proposal/decision pairerr := parent.Discard(child)
 err := mgr.DestroyScopeSandbox(ctx, "scope-id")                     // release provisioned resources
 scope, ok := mgr.Get("scope-id")
 active := mgr.ActiveScopes()
