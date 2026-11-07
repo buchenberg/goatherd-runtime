@@ -2,6 +2,8 @@ package goatherd
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -599,6 +601,7 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 				out.changes = append(out.changes, ProposedChange{Path: path, Kind: kind})
 			}
 		}
+		recoverSealValues(ctx, store, out, rec.OwnerID, rec.Payload)
 		out.sealedFactID = rec.RecordID
 
 		if action, ok := terminals[id]; ok {
@@ -639,4 +642,77 @@ func workspaceStateFromPayload(raw map[string]any) trace.WorkspaceState {
 		return trace.WorkspaceState{}
 	}
 	return ws
+}
+
+// recoverSealValues rebuilds a sealed output's snapshot, metadata, and diff
+// from the sealed fact: small values inline (snapshot/metadata base64, diff as
+// readable text), larger ones from a kernel named blob whose digest the kernel
+// verifies. A missing or corrupt blob is reported and leaves that one value
+// absent rather than failing recovery for every other scope; the fact still
+// names the digest, so the loss is inspectable.
+func recoverSealValues(ctx context.Context, store *trace.SQLiteTraceStore, out *RetainedOutput, ownerID string, payload map[string]any) {
+	out.snapshot = recoverSealBytes(ctx, store, out.id, ownerID, sealBlobSnapshot, "snapshot", payload)
+	out.metadata = recoverSealBytes(ctx, store, out.id, ownerID, sealBlobMetadata, "metadata", payload)
+
+	out.diffTruncated, _ = payload["diff_truncated"].(bool)
+	if n, ok := payloadInt(payload["diff_original_size"]); ok {
+		out.diffOriginalSize = n
+	}
+
+	if digest, _ := payload["diff_digest"].(string); digest != "" {
+		data, _, err := trace.GetBlob(ctx, store, ownerID, sealBlobDiff, out.id)
+		if err != nil {
+			slog.Warn("recovery: read sealed diff blob failed", "output", out.id, "digest", digest, "err", err)
+			return
+		}
+		out.diff = string(data)
+		return
+	}
+	if text, ok := payload["diff"].(string); ok {
+		out.diff = text
+	}
+}
+
+// recoverSealBytes reads one inline-or-blob sealed value.
+func recoverSealBytes(ctx context.Context, store *trace.SQLiteTraceStore, outputID, ownerID, blobKind, prefix string, payload map[string]any) []byte {
+	if digest, _ := payload[prefix+"_digest"].(string); digest != "" {
+		data, _, err := trace.GetBlob(ctx, store, ownerID, blobKind, outputID)
+		if err != nil {
+			slog.Warn("recovery: read sealed blob failed", "output", outputID, "kind", blobKind, "digest", digest, "err", err)
+			return nil
+		}
+		return data
+	}
+	encoded, ok := payload[prefix].(string)
+	if !ok || encoded == "" {
+		return nil
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		slog.Warn("recovery: decode inline sealed value failed", "output", outputID, "kind", blobKind, "err", err)
+		return nil
+	}
+	return data
+}
+
+// payloadInt decodes an integer from a scanned payload. The kernel keeps the
+// int/float distinction with json.Number; hand-built payloads may carry a
+// plain int or float64.
+func payloadInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(i), true
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	default:
+		return 0, false
+	}
 }

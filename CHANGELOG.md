@@ -4,6 +4,20 @@ Notable changes to `goatherd-runtime`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [Unreleased]
+
+### Added
+- **Seal carries the execution state**: `SealOptions{Snapshot, Metadata,
+  DiffCap}` on `Scope.Seal` / `ScopeManager.Seal` freezes the caller's opaque
+  execution snapshot and metadata beside the output and retains the diff in the
+  sealed fact. Recovery rebuilds all three, so a settled output no longer comes
+  back with an empty diff. Values over 4 KiB ride the kernel's named-blob store
+  with a digest in the fact; smaller values inline. The diff is bounded by
+  `DefaultDiffCap` (1 MiB) when the caller sets no cap, and a truncated diff
+  carries a marker plus `diff_truncated` / `diff_original_size` in the payload.
+- **`RetainedOutput` accessors**: `Snapshot()`, `Metadata()`,
+  `DiffTruncated()`, and `DiffOriginalSize()`.
+
 ## [v0.21.0] - 2026-10-29
 
 ### Added

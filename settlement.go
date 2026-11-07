@@ -2,6 +2,7 @@ package goatherd
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	trace "github.com/buchenberg/goatherd-kernel"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Settlement schema refs for trace recording (plan 04 §2). These are
@@ -23,6 +25,71 @@ const (
 	// output is settled, citing the sealed record.
 	SchemaRunOutputSettled = "goatherd.run_output.settled.v1"
 )
+
+// DefaultDiffCap bounds the diff text persisted by Seal when the caller does
+// not set SealOptions.DiffCap: 1 MiB. A diff under the cap is retained
+// verbatim; a larger one is truncated with a marker, and the sealed payload
+// records both the stored and original sizes so the loss is visible.
+const DefaultDiffCap = 1 << 20
+
+// sealInlineLimit is the largest snapshot, metadata, or diff payload stored
+// inline in the sealed fact. Larger values ride the kernel's named-blob store
+// with only a digest and size in the fact, so a workspace snapshot cannot
+// inline megabytes into the append-only trace.
+const sealInlineLimit = 4 << 10
+
+// Named-blob kinds for seal payloads. The blob key is the output id.
+const (
+	sealBlobSnapshot = "sealed_snapshot"
+	sealBlobMetadata = "sealed_metadata"
+	sealBlobDiff     = "sealed_diff"
+)
+
+// SealOptions carries caller state into a seal. The zero value adds nothing:
+// no execution snapshot, no metadata, and the default diff cap.
+//
+// The snapshot is the opaque execution state the caller wants to keep beside
+// the output (a sub-agent's conversation, a replay checkpoint). Metadata is
+// arbitrary caller bytes with no contract. Both are frozen at seal time and
+// returned byte-identically by a recovered output.
+//
+// Snapshot and metadata are durable: they are written to the trace, inline or
+// in the blob store, and outlive the process. They are caller-opaque and are
+// not redacted, so a caller must not put secrets there unless the trace is
+// trusted with them.
+type SealOptions struct {
+	// Snapshot is the opaque execution snapshot to retain with the output. It
+	// is persisted durably (inline or as a blob); treat it as trace-visible.
+	Snapshot []byte
+	// Metadata is opaque caller bytes to retain with the output. It is
+	// persisted durably (inline or as a blob); treat it as trace-visible.
+	Metadata []byte
+	// DiffCap bounds the diff text retained in bytes, marker included. Zero
+	// or negative uses DefaultDiffCap. A diff over the cap is truncated with
+	// a marker in the text plus diff_truncated/diff_original_size in the
+	// sealed payload.
+	DiffCap int
+}
+
+// sealBlobRef names a blob written for an output, so a failed seal can remove
+// the bytes it wrote before failing.
+type sealBlobRef struct {
+	kind string
+	key  string
+}
+
+// singleSealOptions accepts the variadic call shape and rejects more than one
+// option set rather than silently ignoring the rest.
+func singleSealOptions(opts []SealOptions) (SealOptions, error) {
+	switch len(opts) {
+	case 0:
+		return SealOptions{}, nil
+	case 1:
+		return opts[0], nil
+	default:
+		return SealOptions{}, fmt.Errorf("seal accepts at most one SealOptions, got %d", len(opts))
+	}
+}
 
 // SettlementAction is how a sealed output is consumed exactly once.
 type SettlementAction string
@@ -98,7 +165,15 @@ type RetainedOutput struct {
 	baseline trace.WorkspaceState
 	changes  []ProposedChange
 	diff     string
-	state    OutputState
+	// snapshot and metadata are the caller's opaque seal-time bytes. They
+	// are frozen copies, never aliases of the caller's slices.
+	snapshot []byte
+	metadata []byte
+	// diffTruncated reports whether Diff() was bounded by the seal's cap;
+	// diffOriginalSize is the pre-truncation length in bytes.
+	diffTruncated    bool
+	diffOriginalSize int
+	state            OutputState
 	// action is the settlement that consumed the output; zero until settled.
 	action    SettlementAction
 	sealedAt  time.Time
@@ -142,11 +217,51 @@ func (o *RetainedOutput) Changes() []ProposedChange {
 	return cp
 }
 
-// Diff returns the sealed output's full diff against the baseline.
+// Diff returns the sealed output's full diff against the baseline. When the
+// seal's DiffCap truncated it, Diff() returns the truncated text plus the
+// marker, and DiffTruncated reports the loss.
 func (o *RetainedOutput) Diff() string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.diff
+}
+
+// DiffTruncated reports whether the retained diff was truncated by the seal's
+// DiffCap.
+func (o *RetainedOutput) DiffTruncated() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.diffTruncated
+}
+
+// DiffOriginalSize returns the diff's size in bytes before any truncation.
+func (o *RetainedOutput) DiffOriginalSize() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.diffOriginalSize
+}
+
+// Snapshot returns the opaque execution snapshot frozen at seal time, or nil
+// when the caller supplied none. The returned slice is a copy: mutating it
+// cannot change the retained output.
+func (o *RetainedOutput) Snapshot() []byte {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.snapshot == nil {
+		return nil
+	}
+	return append([]byte(nil), o.snapshot...)
+}
+
+// Metadata returns the opaque caller metadata frozen at seal time, or nil
+// when the caller supplied none. The returned slice is a copy.
+func (o *RetainedOutput) Metadata() []byte {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.metadata == nil {
+		return nil
+	}
+	return append([]byte(nil), o.metadata...)
 }
 
 // State returns the consume-once lifecycle state.
@@ -192,11 +307,22 @@ func (o *RetainedOutput) Settle(ctx context.Context, action SettlementAction) er
 // at fork time); a scope without a baseline has nothing to diff against and
 // sealing it would freeze changes with no base to settle them onto.
 //
+// SealOptions adds the caller's opaque execution snapshot and metadata and
+// bounds the retained diff. The diff is always retained (DefaultDiffCap when
+// the caller sets none), which fixes the recovered-output-with-no-diff gap.
+// Large values are written to the kernel's named-blob store and referenced by
+// digest; small values inline in the fact.
+//
 // Records goatherd.run_output.sealed.v1 on the scope's owner path. The append
 // is hard, not advisory: the sealed record is the durable half of the output
 // (plan 05 §4 rebuilds metadata from it), so a trace that cannot carry it
 // must not hand out an output whose settlement would be unrecordable.
-func (s *Scope) Seal(ctx context.Context) (*RetainedOutput, error) {
+func (s *Scope) Seal(ctx context.Context, opts ...SealOptions) (*RetainedOutput, error) {
+	opt, err := singleSealOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	s.mu.RLock()
 	state := s.state
 	sb := s.sandbox
@@ -235,21 +361,86 @@ func (s *Scope) Seal(ctx context.Context) (*RetainedOutput, error) {
 	if err != nil {
 		return nil, fmt.Errorf("seal scope %s: diff against baseline: %w", scopeID, err)
 	}
+	retainedDiff, diffTruncated := boundDiff(diff, opt.DiffCap)
 
 	seq := nextCheckpointSeq.Add(1)
 	out := &RetainedOutput{
-		id:        fmt.Sprintf("out:%s:%d", ownerID, seq),
-		scopeID:   scopeID,
-		workspace: ws,
-		baseline:  baseline,
-		changes:   classifyChanges(diff, files),
-		diff:      diff,
-		state:     OutputUnconsumed,
-		sealedAt:  time.Now(),
+		id:               fmt.Sprintf("out:%s:%d", ownerID, seq),
+		scopeID:          scopeID,
+		workspace:        ws,
+		baseline:         baseline,
+		changes:          classifyChanges(diff, files),
+		diff:             retainedDiff,
+		snapshot:         append([]byte(nil), opt.Snapshot...),
+		metadata:         append([]byte(nil), opt.Metadata...),
+		diffTruncated:    diffTruncated,
+		diffOriginalSize: len(diff),
+		state:            OutputUnconsumed,
+		sealedAt:         time.Now(),
 	}
 
 	stateDigest, _ := ws.Digest()
 	baselineDigest, _ := baseline.Digest()
+	payload := map[string]any{
+		"output_id":       out.id,
+		"scope":           scopeID,
+		"backend":         ws.Backend,
+		"revision":        ws.Revision,
+		"state_digest":    stateDigest,
+		"baseline_digest": baselineDigest,
+		"change_count":    len(out.changes),
+		// The full states and the change list ride in the payload so
+		// recovery (plan 05 section 4) rebuilds settle-able outputs:
+		// digests alone cannot restore a WorkspaceState, and the
+		// overlap guard needs the paths.
+		"state": map[string]any{
+			"backend":  ws.Backend,
+			"revision": ws.Revision,
+			"data":     ws.Data,
+		},
+		"baseline": map[string]any{
+			"backend":  baseline.Backend,
+			"revision": baseline.Revision,
+			"data":     baseline.Data,
+		},
+		"changes": changesPayload(out.changes),
+	}
+
+	// The retained diff and the caller's opaque values are frozen beside
+	// the output. Blobs are written before the fact so the fact never
+	// references missing bytes. Track them so a failed seal removes what it
+	// wrote instead of leaking unreferenced bytes. A process crash between a
+	// PutBlob and the append can still leave unreferenced blobs (there is no
+	// garbage collector); recovery is unaffected because no fact names them.
+	var written []sealBlobRef
+	cleanup := func() {
+		for _, b := range written {
+			if err := trace.DeleteBlob(ctx, s.store, ownerID, b.kind, b.key); err != nil {
+				slog.Warn("seal: failed to remove blob after a failed seal", "output", out.id, "kind", b.kind, "err", err)
+			}
+		}
+	}
+
+	payload["diff_size"] = len(retainedDiff)
+	payload["diff_original_size"] = len(diff)
+	payload["diff_truncated"] = diffTruncated
+	if err := putSealText(ctx, s.store, ownerID, out.id, sealBlobDiff, "diff", payload, retainedDiff, &written); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("seal scope %s: persist diff: %w", scopeID, err)
+	}
+	if len(out.snapshot) > 0 {
+		if err := putSealValue(ctx, s.store, ownerID, out.id, sealBlobSnapshot, "snapshot", payload, out.snapshot, &written); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("seal scope %s: persist snapshot: %w", scopeID, err)
+		}
+	}
+	if len(out.metadata) > 0 {
+		if err := putSealValue(ctx, s.store, ownerID, out.id, sealBlobMetadata, "metadata", payload, out.metadata, &written); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("seal scope %s: persist metadata: %w", scopeID, err)
+		}
+	}
+
 	receipt, err := s.store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:seal:%d", ownerID, seq),
 		Groups: []trace.AppendGroup{{
@@ -258,34 +449,12 @@ func (s *Scope) Seal(ctx context.Context) (*RetainedOutput, error) {
 				Mode:      trace.Declaration,
 				SchemaRef: SchemaRunOutputSealed,
 				KindLabel: "run_output:sealed",
-				Payload: map[string]any{
-					"output_id":       out.id,
-					"scope":           scopeID,
-					"backend":         ws.Backend,
-					"revision":        ws.Revision,
-					"state_digest":    stateDigest,
-					"baseline_digest": baselineDigest,
-					"change_count":    len(out.changes),
-					// The full states and the change list ride in the payload so
-					// recovery (plan 05 section 4) rebuilds settle-able outputs:
-					// digests alone cannot restore a WorkspaceState, and the
-					// overlap guard needs the paths.
-					"state": map[string]any{
-						"backend":  ws.Backend,
-						"revision": ws.Revision,
-						"data":     ws.Data,
-					},
-					"baseline": map[string]any{
-						"backend":  baseline.Backend,
-						"revision": baseline.Revision,
-						"data":     baseline.Data,
-					},
-					"changes": changesPayload(out.changes),
-				},
+				Payload:   payload,
 			}},
 		}},
 	})
 	if err != nil {
+		cleanup()
 		return nil, fmt.Errorf("seal scope %s: record sealed output: %w", scopeID, err)
 	}
 	if len(receipt.FactIDs) > 0 {
@@ -301,6 +470,75 @@ func changesPayload(changes []ProposedChange) []map[string]any {
 		out = append(out, map[string]any{"path": c.Path, "kind": c.Kind})
 	}
 	return out
+}
+
+// boundDiff applies the seal's diff cap. A diff at or under the cap is
+// returned verbatim. A larger one is truncated on a rune boundary and gets a
+// marker naming the loss; the sealed payload records diff_truncated and the
+// original size, so a reader never has to guess. The marker is part of the
+// retained text, so the result is never larger than the cap: when the cap is
+// too small for content plus marker, the marker's own prefix is retained and
+// the payload still carries the full sizes.
+func boundDiff(diff string, cap int) (string, bool) {
+	if cap <= 0 {
+		cap = DefaultDiffCap
+	}
+	if len(diff) <= cap {
+		return diff, false
+	}
+	marker := fmt.Sprintf("\n\n[goatherd: diff truncated; original was %d bytes]\n", len(diff))
+	keep := cap - len(marker)
+	if keep < 0 {
+		return trimToRuneBoundary(marker, cap), true
+	}
+	return trimToRuneBoundary(diff, keep) + marker, true
+}
+
+// trimToRuneBoundary returns at most n bytes of s without splitting a UTF-8
+// rune, so the retained text stays valid when it is inlined in canonical JSON.
+func trimToRuneBoundary(s string, n int) string {
+	if n >= len(s) {
+		return s
+	}
+	if n <= 0 {
+		return ""
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
+// putSealValue writes one sealed value into the fact payload: base64 inline
+// when it fits sealInlineLimit, otherwise a kernel named blob referenced by
+// digest and size. prefix selects the payload keys: prefix, prefix_digest,
+// and prefix_size.
+func putSealValue(ctx context.Context, store *trace.SQLiteTraceStore, ownerID, outputID, blobKind, prefix string, payload map[string]any, data []byte, written *[]sealBlobRef) error {
+	if len(data) <= sealInlineLimit {
+		payload[prefix] = base64.StdEncoding.EncodeToString(data)
+		payload[prefix+"_size"] = len(data)
+		return nil
+	}
+	digest, err := trace.PutBlob(ctx, store, ownerID, blobKind, outputID, data)
+	if err != nil {
+		return err
+	}
+	payload[prefix+"_digest"] = digest
+	payload[prefix+"_size"] = len(data)
+	*written = append(*written, sealBlobRef{kind: blobKind, key: outputID})
+	return nil
+}
+
+// putSealText writes an already-textual value: inline as the string itself
+// when it fits sealInlineLimit (so the diff is readable in the fact), else as
+// a named blob referenced by digest and size.
+func putSealText(ctx context.Context, store *trace.SQLiteTraceStore, ownerID, outputID, blobKind, prefix string, payload map[string]any, text string, written *[]sealBlobRef) error {
+	if len(text) <= sealInlineLimit {
+		payload[prefix] = text
+		payload[prefix+"_size"] = len(text)
+		return nil
+	}
+	return putSealValue(ctx, store, ownerID, outputID, blobKind, prefix, payload, []byte(text), written)
 }
 
 // stateFor maps a settlement action to its terminal output state.
