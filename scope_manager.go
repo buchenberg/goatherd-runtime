@@ -214,8 +214,9 @@ func (m *ScopeManager) AllScopes() []*Scope {
 // Seal seals a scope's workspace as a retained output and registers it, which
 // is what makes the output settle-able: Settle and RetainedOutput.Settle
 // resolve the output and its scopes through the manager. The scope stays
-// active — sealing does not merge.
-func (m *ScopeManager) Seal(ctx context.Context, scopeID string) (*RetainedOutput, error) {
+// active — sealing does not merge. SealOptions adds the caller's opaque
+// snapshot/metadata and bounds the retained diff.
+func (m *ScopeManager) Seal(ctx context.Context, scopeID string, opts ...SealOptions) (*RetainedOutput, error) {
 	m.mu.RLock()
 	scope, ok := m.scopes[scopeID]
 	m.mu.RUnlock()
@@ -223,7 +224,7 @@ func (m *ScopeManager) Seal(ctx context.Context, scopeID string) (*RetainedOutpu
 		return nil, fmt.Errorf("scope %s not found", scopeID)
 	}
 
-	out, err := scope.Seal(ctx)
+	out, err := scope.Seal(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
