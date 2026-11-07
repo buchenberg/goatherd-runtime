@@ -93,6 +93,7 @@ type forkEdge struct {
 	backend     string
 	path        string
 	baseline    trace.WorkspaceState
+	snapshot    any
 	forkPoint   string
 }
 
@@ -214,6 +215,7 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 		child.parent = parent
 		child.forkPoint = e.forkPoint
 		child.baseline = e.baseline
+		child.snapshot = e.snapshot
 		parent.mu.Lock()
 		parent.children = append(parent.children, child)
 		parent.mu.Unlock()
@@ -376,9 +378,32 @@ func scanForkRecords(ctx context.Context, store *trace.SQLiteTraceStore) ([]fork
 		if baselineRaw, ok := rec.Payload["baseline"].(map[string]any); ok {
 			edge.baseline = workspaceStateFromPayload(baselineRaw)
 		}
+		edge.snapshot = forkSnapshotFromPayload(rec.Payload)
 		edges = append(edges, edge)
 	}
 	return edges, nil
+}
+
+// forkSnapshotFromPayload restores the snapshot written by
+// forkSnapshotPayload. A record from before snapshots were persisted (or one
+// with no snapshot) yields nil. An invalid base64 payload is reported and
+// treated as absent rather than failing the whole recovery.
+func forkSnapshotFromPayload(payload map[string]any) any {
+	raw, ok := payload["snapshot"]
+	if !ok {
+		return nil
+	}
+	encoding, _ := payload["snapshot_encoding"].(string)
+	if encoding != "base64" {
+		return raw
+	}
+	encoded, _ := raw.(string)
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		slog.Warn("recovery: decode fork snapshot failed", "err", err)
+		return nil
+	}
+	return data
 }
 
 // scanTerminalStates folds terminal records into per-owner ScopeStates.

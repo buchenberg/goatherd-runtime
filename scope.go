@@ -1,7 +1,10 @@
 package goatherd
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	trace "github.com/buchenberg/goatherd-kernel"
 	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
@@ -125,7 +128,10 @@ func (s *Scope) ForkPoint() string {
 // scopes this is nil. For forked scopes, it's the value passed to Fork.
 //
 // The caller knows the concrete type — typically []types.Message for
-// yaah conversation history, or []byte for serialized state.
+// yaah conversation history, or []byte for serialized state. The snapshot is
+// persisted in the fork record, so a recovered scope returns the stored form:
+// []byte stays []byte, while structs and other JSON values come back as their
+// JSON-decoded shapes (map[string]any, []any, json.Number).
 func (s *Scope) Snapshot() any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -205,6 +211,43 @@ func (s *Scope) forkBaseline() (trace.WorkspaceState, error) {
 	return ws, nil
 }
 
+// ForkOptions carries explicit state for a fork that should not use the
+// default "capture the parent's current workspace" behavior.
+//
+// The zero value is the pre-option fork: the parent is captured as the
+// baseline, nothing is seeded, and the positional snapshot argument is used.
+// At most one set of options is accepted per fork.
+type ForkOptions struct {
+	// Baseline is the state the child's changes are measured against. A zero
+	// Baseline captures the parent's current workspace at fork time.
+	Baseline trace.WorkspaceState
+	// Seed, when its Backend is set, is applied to the child's own sandbox
+	// before the fork is recorded. A seed requires an isolated fork with a
+	// provided sandbox: seeding a shared fork would rewrite the parent's
+	// workspace. Seeding is applied before the fork record, so a failed seed
+	// leaves no ghost child behind.
+	Seed trace.WorkspaceState
+	// Snapshot, when non-nil, overrides the positional snapshot argument.
+	// It is persisted in the fork record and restored by recovery: a
+	// top-level []byte round-trips as bytes, while other values are stored
+	// as normalized JSON (structs recover as maps/arrays) because the trace
+	// is canonical JSON. A value JSON cannot represent fails the fork.
+	Snapshot any
+}
+
+// singleForkOptions accepts the variadic call shape and rejects more than one
+// option set rather than silently ignoring the rest.
+func singleForkOptions(opts []ForkOptions) (ForkOptions, error) {
+	switch len(opts) {
+	case 0:
+		return ForkOptions{}, nil
+	case 1:
+		return opts[0], nil
+	default:
+		return ForkOptions{}, fmt.Errorf("fork accepts at most one ForkOptions, got %d", len(opts))
+	}
+}
+
 // Fork creates a child scope branched from the current scope's state.
 // The child gets a new trace owner ID and inherits the parent's causal
 // context — its first record cites the parent's head as a causal parent.
@@ -216,10 +259,26 @@ func (s *Scope) forkBaseline() (trace.WorkspaceState, error) {
 // When the parent has a sandbox, its workspace state is captured as the
 // fork baseline (see Baseline). A "scope.forked" declaration is recorded in
 // the parent's trace.
-func (s *Scope) Fork(childOwnerID string, snapshot any) (*Scope, error) {
-	baseline, err := s.forkBaseline()
+//
+// ForkOptions can replace the captured baseline and override the snapshot.
+// A seed is rejected here: there is no child-owned sandbox to apply it to.
+func (s *Scope) Fork(childOwnerID string, snapshot any, opts ...ForkOptions) (*Scope, error) {
+	opt, err := singleForkOptions(opts)
 	if err != nil {
 		return nil, err
+	}
+	if opt.Seed.Backend != "" {
+		return nil, fmt.Errorf("fork scope %s: a seed requires an isolated fork with its own sandbox", s.id)
+	}
+	if opt.Snapshot != nil {
+		snapshot = opt.Snapshot
+	}
+	baseline := opt.Baseline
+	if baseline.Backend == "" {
+		baseline, err = s.forkBaseline()
+		if err != nil {
+			return nil, err
+		}
 	}
 	return s.forkWithBaseline(childOwnerID, snapshot, baseline, false, "", "")
 }
@@ -276,6 +335,13 @@ func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline tra
 			"data":     baseline.Data,
 		}
 	}
+	snapshotFields, err := forkSnapshotPayload(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range snapshotFields {
+		forkPayload[k] = v
+	}
 
 	// Record the fork event in the parent's trace to get a fork-point record.
 	forkReceipt, err := s.store.Append(context.Background(), trace.TrustedAppendContext, trace.AppendBatch{
@@ -321,6 +387,38 @@ func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline tra
 	s.mu.Unlock()
 
 	return child, nil
+}
+
+// forkSnapshotPayload renders an opaque fork snapshot into canonical-JSON-safe
+// payload entries. []byte is base64-tagged so it round-trips as bytes; other
+// values are JSON-normalized (structs become maps/arrays, numbers keep their
+// token text as json.Number) because the trace stores canonical JSON, not Go
+// types. A value JSON cannot represent fails the fork before anything is
+// recorded.
+func forkSnapshotPayload(snapshot any) (map[string]any, error) {
+	if snapshot == nil {
+		return nil, nil
+	}
+	if data, ok := snapshot.([]byte); ok {
+		return map[string]any{
+			"snapshot":          base64.StdEncoding.EncodeToString(data),
+			"snapshot_encoding": "base64",
+		}, nil
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("fork: snapshot is not JSON-encodable: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var decoded any
+	if err := dec.Decode(&decoded); err != nil {
+		return nil, fmt.Errorf("fork: snapshot is not JSON-decodable: %w", err)
+	}
+	return map[string]any{
+		"snapshot":          decoded,
+		"snapshot_encoding": "json",
+	}, nil
 }
 
 // Merge propagates the child's effects into this (parent) scope.
