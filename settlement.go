@@ -52,14 +52,22 @@ const (
 // the output (a sub-agent's conversation, a replay checkpoint). Metadata is
 // arbitrary caller bytes with no contract. Both are frozen at seal time and
 // returned byte-identically by a recovered output.
+//
+// Snapshot and metadata are durable: they are written to the trace, inline or
+// in the blob store, and outlive the process. They are caller-opaque and are
+// not redacted, so a caller must not put secrets there unless the trace is
+// trusted with them.
 type SealOptions struct {
-	// Snapshot is the opaque execution snapshot to retain with the output.
+	// Snapshot is the opaque execution snapshot to retain with the output. It
+	// is persisted durably (inline or as a blob); treat it as trace-visible.
 	Snapshot []byte
-	// Metadata is opaque caller bytes to retain with the output.
+	// Metadata is opaque caller bytes to retain with the output. It is
+	// persisted durably (inline or as a blob); treat it as trace-visible.
 	Metadata []byte
-	// DiffCap bounds the diff text retained in bytes. Zero or negative uses
-	// DefaultDiffCap. A diff over the cap is truncated with a marker in the
-	// text plus diff_truncated/diff_original_size in the sealed payload.
+	// DiffCap bounds the diff text retained in bytes, marker included. Zero
+	// or negative uses DefaultDiffCap. A diff over the cap is truncated with
+	// a marker in the text plus diff_truncated/diff_original_size in the
+	// sealed payload.
 	DiffCap int
 }
 
@@ -399,8 +407,11 @@ func (s *Scope) Seal(ctx context.Context, opts ...SealOptions) (*RetainedOutput,
 	}
 
 	// The retained diff and the caller's opaque values are frozen beside
-	// the output. Track blob writes so a failed seal removes what it wrote
-	// instead of leaking unreferenced bytes.
+	// the output. Blobs are written before the fact so the fact never
+	// references missing bytes. Track them so a failed seal removes what it
+	// wrote instead of leaking unreferenced bytes. A process crash between a
+	// PutBlob and the append can still leave unreferenced blobs (there is no
+	// garbage collector); recovery is unaffected because no fact names them.
 	var written []sealBlobRef
 	cleanup := func() {
 		for _, b := range written {
@@ -464,7 +475,10 @@ func changesPayload(changes []ProposedChange) []map[string]any {
 // boundDiff applies the seal's diff cap. A diff at or under the cap is
 // returned verbatim. A larger one is truncated on a rune boundary and gets a
 // marker naming the loss; the sealed payload records diff_truncated and the
-// original size, so a reader never has to guess.
+// original size, so a reader never has to guess. The marker is part of the
+// retained text, so the result is never larger than the cap: when the cap is
+// too small for content plus marker, the marker's own prefix is retained and
+// the payload still carries the full sizes.
 func boundDiff(diff string, cap int) (string, bool) {
 	if cap <= 0 {
 		cap = DefaultDiffCap
@@ -472,15 +486,27 @@ func boundDiff(diff string, cap int) (string, bool) {
 	if len(diff) <= cap {
 		return diff, false
 	}
-	marker := fmt.Sprintf("\n\n[goatherd: diff truncated; %d of %d bytes retained]\n", cap, len(diff))
+	marker := fmt.Sprintf("\n\n[goatherd: diff truncated; original was %d bytes]\n", len(diff))
 	keep := cap - len(marker)
 	if keep < 0 {
-		keep = 0
+		return trimToRuneBoundary(marker, cap), true
 	}
-	for keep > 0 && keep < len(diff) && !utf8.RuneStart(diff[keep]) {
-		keep--
+	return trimToRuneBoundary(diff, keep) + marker, true
+}
+
+// trimToRuneBoundary returns at most n bytes of s without splitting a UTF-8
+// rune, so the retained text stays valid when it is inlined in canonical JSON.
+func trimToRuneBoundary(s string, n int) string {
+	if n >= len(s) {
+		return s
 	}
-	return diff[:keep] + marker, true
+	if n <= 0 {
+		return ""
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // putSealValue writes one sealed value into the fact payload: base64 inline

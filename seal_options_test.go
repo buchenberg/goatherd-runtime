@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	trace "github.com/buchenberg/goatherd-kernel"
 	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
@@ -228,6 +229,28 @@ func TestSealOptions_DiffCapTruncatesWithMarker(t *testing.T) {
 	}
 	if got.Diff() != out.Diff() {
 		t.Errorf("recovered Diff = %q, want %q", got.Diff(), out.Diff())
+	}
+}
+
+func TestBoundDiff_NeverExceedsCap(t *testing.T) {
+	diff := strings.Repeat("line: the quick brown fox\n", 100)
+	for _, cap := range []int{1, 2, 5, 17, 64, 128, 256, 512} {
+		got, truncated := boundDiff(diff, cap)
+		if !truncated {
+			t.Fatalf("cap %d: large diff reported untruncated", cap)
+		}
+		if len(got) > cap {
+			t.Errorf("cap %d: retained %d bytes, over the cap", cap, len(got))
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("cap %d: retained text is not valid UTF-8", cap)
+		}
+	}
+	if got, truncated := boundDiff(diff, len(diff)); truncated || got != diff {
+		t.Error("diff exactly at the cap was not returned verbatim")
+	}
+	if got, truncated := boundDiff("small diff", 0); truncated || got != "small diff" {
+		t.Error("small diff under the default cap was not returned verbatim")
 	}
 }
 
