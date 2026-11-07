@@ -145,7 +145,9 @@ func (m *ScopeManager) ForkFromOutput(ctx context.Context, parentID, childOwnerI
 		opt.Seed = base
 	}
 	if opt.Snapshot == nil {
-		opt.Snapshot = out.Snapshot()
+		if snapshot := out.Snapshot(); snapshot != nil {
+			opt.Snapshot = snapshot
+		}
 	}
 	return m.forkScope(ctx, parentID, childOwnerID, nil, true, sb, []ForkOptions{opt})
 }

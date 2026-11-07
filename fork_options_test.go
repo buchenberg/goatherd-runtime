@@ -7,6 +7,7 @@ package goatherd
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -354,6 +355,98 @@ func TestFork_SeedFailureLeavesNoGhostChild(t *testing.T) {
 	}
 	if forks := findRecords(t, store, "forkfail:parent", SchemaScopeForked); len(forks) != 0 {
 		t.Errorf("failed seed left %d fork records, want 0", len(forks))
+	}
+}
+
+func TestForkFromOutput_NoSnapshotStaysNil(t *testing.T) {
+	store, path := fileStore(t)
+	mgr := NewScopeManager(store)
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	parent, err := mgr.Create("forknil:parent", git.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	src, srcWt := forkWorktreeChild(t, mgr, parent.ID(), "forknil:source", repo, "wt-src")
+	if err := os.WriteFile(filepath.Join(srcWt, "out.txt"), []byte("no snapshot\n"), 0o644); err != nil {
+		t.Fatalf("write source file: %v", err)
+	}
+	out, err := mgr.Seal(ctx, src.ID()) // deliberately no snapshot
+	if err != nil {
+		t.Fatalf("seal source: %v", err)
+	}
+
+	sb, wt := newForkWorktree(t, repo, "wt-nil")
+	child, err := mgr.ForkFromOutput(ctx, parent.ID(), "forknil:child", out, sb)
+	if err != nil {
+		t.Fatalf("ForkFromOutput: %v", err)
+	}
+	if got := child.Snapshot(); got != nil {
+		t.Errorf("live Snapshot = %#v, want nil for a snapshot-less output", got)
+	}
+
+	forks := findRecords(t, store, "forknil:parent", SchemaScopeForked)
+	var payload map[string]any
+	for _, f := range forks {
+		if f.Body.Payload["child_owner"] == "forknil:child" {
+			payload = f.Body.Payload
+		}
+	}
+	if payload == nil {
+		t.Fatal("no fork record for the child")
+	}
+	if _, ok := payload["snapshot"]; ok {
+		t.Error("snapshot-less output recorded a snapshot entry")
+	}
+
+	recovered := recoverForkScopes(t, store, path, repo, map[string]string{
+		"scope:forknil:source": srcWt,
+		"scope:forknil:child":  wt,
+	})
+	gotScope, ok := recovered.Get(child.ID())
+	if !ok {
+		t.Fatal("child not recovered")
+	}
+	if got := gotScope.Snapshot(); got != nil {
+		t.Errorf("recovered Snapshot = %#v, want nil", got)
+	}
+}
+
+func TestFork_NilByteSnapshotStaysAbsent(t *testing.T) {
+	store := newMemStore(t)
+	mgr := NewScopeManager(store)
+	repo := newTestRepo(t)
+	parent, err := mgr.Create("forknilbytes:parent", git.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	child, err := mgr.Fork(parent.ID(), "forknilbytes:child", nil, ForkOptions{Snapshot: []byte(nil)})
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	if got := child.Snapshot(); got != nil {
+		t.Errorf("Snapshot = %#v, want nil for a typed-nil []byte", got)
+	}
+	forks := findRecords(t, store, "forknilbytes:parent", SchemaScopeForked)
+	if len(forks) != 1 {
+		t.Fatalf("fork records = %d, want 1", len(forks))
+	}
+	if _, ok := forks[0].Body.Payload["snapshot"]; ok {
+		t.Error("typed-nil []byte recorded a snapshot entry")
+	}
+}
+
+func TestForkSnapshotFromPayload_NonStringBase64IsAbsent(t *testing.T) {
+	if got := forkSnapshotFromPayload(map[string]any{"snapshot": 42, "snapshot_encoding": "base64"}); got != nil {
+		t.Errorf("non-string base64 payload = %#v, want nil", got)
+	}
+	want := []byte("bytes")
+	got, ok := forkSnapshotFromPayload(map[string]any{
+		"snapshot":          base64.StdEncoding.EncodeToString(want),
+		"snapshot_encoding": "base64",
+	}).([]byte)
+	if !ok || !bytes.Equal(got, want) {
+		t.Errorf("valid base64 payload = %#v, want %v", got, want)
 	}
 }
 

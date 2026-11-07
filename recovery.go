@@ -397,7 +397,11 @@ func forkSnapshotFromPayload(payload map[string]any) any {
 	if encoding != "base64" {
 		return raw
 	}
-	encoded, _ := raw.(string)
+	encoded, ok := raw.(string)
+	if !ok {
+		slog.Warn("recovery: fork snapshot is tagged base64 but is not a string", "value_type", fmt.Sprintf("%T", raw))
+		return nil
+	}
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		slog.Warn("recovery: decode fork snapshot failed", "err", err)

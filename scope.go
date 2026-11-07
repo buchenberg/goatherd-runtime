@@ -8,6 +8,7 @@ import (
 	"fmt"
 	trace "github.com/buchenberg/goatherd-kernel"
 	sandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	"reflect"
 	"sync"
 )
 
@@ -312,6 +313,7 @@ func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline tra
 	forkPayload := map[string]any{
 		"child_owner": childOwnerID,
 	}
+	snapshot = normalizeForkSnapshot(snapshot)
 	if isolated {
 		forkPayload["isolated"] = true
 		if sandboxBackend != "" {
@@ -389,6 +391,23 @@ func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline tra
 	return child, nil
 }
 
+// normalizeForkSnapshot maps a typed-nil snapshot (nil slice, map, pointer,
+// or interface) to untyped nil, so it is never persisted or reported as a
+// value a caller provided.
+func normalizeForkSnapshot(snapshot any) any {
+	if snapshot == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(snapshot)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if rv.IsNil() {
+			return nil
+		}
+	}
+	return snapshot
+}
+
 // forkSnapshotPayload renders an opaque fork snapshot into canonical-JSON-safe
 // payload entries. []byte is base64-tagged so it round-trips as bytes; other
 // values are JSON-normalized (structs become maps/arrays, numbers keep their
@@ -400,6 +419,9 @@ func forkSnapshotPayload(snapshot any) (map[string]any, error) {
 		return nil, nil
 	}
 	if data, ok := snapshot.([]byte); ok {
+		if data == nil {
+			return nil, nil
+		}
 		return map[string]any{
 			"snapshot":          base64.StdEncoding.EncodeToString(data),
 			"snapshot_encoding": "base64",
@@ -414,6 +436,11 @@ func forkSnapshotPayload(snapshot any) (map[string]any, error) {
 	var decoded any
 	if err := dec.Decode(&decoded); err != nil {
 		return nil, fmt.Errorf("fork: snapshot is not JSON-decodable: %w", err)
+	}
+	// A typed-nil pointer, map, or slice marshals to null; treat it as no
+	// snapshot rather than persisting a null marker.
+	if decoded == nil {
+		return nil, nil
 	}
 	return map[string]any{
 		"snapshot":          decoded,
