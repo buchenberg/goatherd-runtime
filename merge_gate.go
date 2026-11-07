@@ -128,7 +128,8 @@ func (m *ScopeManager) recordReview(childID string, proposal *MergeProposal, fac
 		}
 	}
 	if decision != nil {
-		review.Decision = decision
+		stored := *decision
+		review.Decision = &stored
 	}
 }
 

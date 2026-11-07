@@ -226,6 +226,21 @@ func TestLineage_SurvivesRecovery(t *testing.T) {
 // TestRecover_MergeReviewPair covers a proposal recorded before a restart:
 // recovery exposes it with its fact id so the host can still record the
 // decision, and the live manager reflects the decision immediately.
+func TestLinkSupersededOutputs_LastInScanOrderWins(t *testing.T) {
+	a := &RetainedOutput{id: "out:chain:a"}
+	b := &RetainedOutput{id: "out:chain:b", supersedes: a.id}
+	c := &RetainedOutput{id: "out:chain:c", supersedes: a.id}
+
+	linkSupersededOutputs([]*RetainedOutput{a, b, c})
+	if a.supersededBy != c.id {
+		t.Errorf("SupersededBy = %q, want the last scan-order superseder %q", a.supersededBy, c.id)
+	}
+	linkSupersededOutputs([]*RetainedOutput{a, c, b})
+	if a.supersededBy != b.id {
+		t.Errorf("SupersededBy = %q after reorder, want %q", a.supersededBy, b.id)
+	}
+}
+
 func TestRecover_MergeReviewPair(t *testing.T) {
 	store, path := fileStore(t)
 	mgr := NewScopeManager(store)

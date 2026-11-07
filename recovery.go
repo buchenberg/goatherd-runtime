@@ -609,6 +609,7 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 		}
 	}
 
+	recovered := make([]*RetainedOutput, 0, len(sealed))
 	for _, rec := range sealed {
 		id, _ := rec.Payload["output_id"].(string)
 		if id == "" {
@@ -670,36 +671,39 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 		out.mgr = mgr
 		mgr.outputs[out.id] = out
 		mgr.mu.Unlock()
+		recovered = append(recovered, out)
 	}
 	// Quarantine-skipped records are part of the scan's cost even though
 	// they recover nothing.
-	linkSupersededOutputs(mgr)
+	linkSupersededOutputs(recovered)
 	return len(sealed), nil
 }
 
 // linkSupersededOutputs derives the reverse lineage edge from each output's
 // supersedes value. The trace records the edge once, on the newer output; the
-// older output reports it through SupersededBy().
-func linkSupersededOutputs(mgr *ScopeManager) {
-	mgr.mu.RLock()
-	outputs := make(map[string]*RetainedOutput, len(mgr.outputs))
-	for id, out := range mgr.outputs {
-		outputs[id] = out
-	}
-	mgr.mu.RUnlock()
-
+// older output reports it through SupersededBy(). Outputs are walked in scan
+// order, so if several supersede one target the deterministically last one
+// wins.
+func linkSupersededOutputs(outputs []*RetainedOutput) {
+	byID := make(map[string]*RetainedOutput, len(outputs))
 	for _, out := range outputs {
-		if out.supersedes == "" {
+		byID[out.id] = out
+	}
+	for _, out := range outputs {
+		out.mu.Lock()
+		id, supersedes := out.id, out.supersedes
+		out.mu.Unlock()
+		if supersedes == "" {
 			continue
 		}
-		target, ok := outputs[out.supersedes]
+		target, ok := byID[supersedes]
 		if !ok {
 			slog.Warn("recovery: output supersedes an unknown output",
-				"output", out.id, "supersedes", out.supersedes)
+				"output", id, "supersedes", supersedes)
 			continue
 		}
 		target.mu.Lock()
-		target.supersededBy = out.id
+		target.supersededBy = id
 		target.mu.Unlock()
 	}
 }
@@ -757,7 +761,6 @@ func recoverReviews(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 		byFact[rec.RecordID] = review
 	}
 
-	decisionCount := 0
 	for _, rec := range decided {
 		childID, _ := rec.Payload["child_scope"].(string)
 		proposedID, _ := rec.Payload["proposed_fact_id"].(string)
@@ -772,7 +775,6 @@ func recoverReviews(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 		reason, _ := rec.Payload["reason"].(string)
 		action, _ := rec.Payload["action"].(string)
 		review.Decision = &MergeDecision{Approved: approved, Reason: reason, Action: action}
-		decisionCount++
 	}
 
 	mgr.mu.Lock()
@@ -780,7 +782,9 @@ func recoverReviews(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 		mgr.reviews[childID] = review
 	}
 	mgr.mu.Unlock()
-	return len(reviews), decisionCount, nil
+	// The counters report raw records read, matching RecoveryStats' contract,
+	// not only the reviews that survived quarantine/scope checks.
+	return len(proposed), len(decided), nil
 }
 
 // workspaceStateFromPayload decodes a state encoded by the lifecycle
