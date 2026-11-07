@@ -17,6 +17,13 @@ contain breaking changes, which are called out below.
   carries a marker plus `diff_truncated` / `diff_original_size` in the payload.
 - **`RetainedOutput` accessors**: `Snapshot()`, `Metadata()`,
   `DiffTruncated()`, and `DiffOriginalSize()`.
+- **Explicit fork state**: `ForkOptions{Baseline, Seed, Snapshot}` on `Fork` /
+  `ForkIsolated` replaces the captured baseline, applies a seed to the child's
+  own sandbox before the fork is recorded, and overrides the snapshot. Fork
+  snapshots are persisted in the fork record and restored by recovery
+  (`[]byte` as bytes, other values as normalized JSON). `ForkFromOutput` seeds
+  an isolated child from a sealed output's frozen workspace and snapshot, with
+  no parent capture in between. Zero options keep the previous behavior.
 
 ## [v0.21.0] - 2026-10-29
 

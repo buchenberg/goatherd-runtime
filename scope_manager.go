@@ -79,10 +79,14 @@ func (m *ScopeManager) Get(id string) (*Scope, bool) {
 // forkWithBaseline, so a parent discarded during the capture still fails
 // the fork.
 //
+// ForkOptions can replace the captured baseline and override the snapshot.
+// A seed is rejected: a shared fork has no child-owned sandbox to apply it
+// to, and seeding the inherited one would rewrite the parent's workspace.
+//
 // Returns an error if the parent doesn't exist or a scope with the
 // child owner ID already exists.
-func (m *ScopeManager) Fork(parentID, childOwnerID string, snapshot any) (*Scope, error) {
-	return m.forkScope(parentID, childOwnerID, snapshot, false, nil)
+func (m *ScopeManager) Fork(parentID, childOwnerID string, snapshot any, opts ...ForkOptions) (*Scope, error) {
+	return m.forkScope(context.Background(), parentID, childOwnerID, snapshot, false, nil, opts)
 }
 
 // ForkIsolated creates a child scope with its own execution substrate instead of
@@ -92,28 +96,113 @@ func (m *ScopeManager) Fork(parentID, childOwnerID string, snapshot any) (*Scope
 // fork payload, which is what recovery uses to decide that a re-adopted
 // sandbox belongs to this child alone.
 //
+// ForkOptions.Seed, when set, is applied to sb before the fork is recorded, so
+// the child starts from the seeded state instead of whatever sb held before.
+// Apply happens before the registry lock and before the fork fact: a failed
+// seed leaves no ghost child, and the registry never waits on a backend
+// subprocess. If the fork fails after the seed, sb remains seeded; the caller
+// owns it and may discard it.
+//
 // Returns an error if the parent doesn't exist or a scope with the child owner
 // ID already exists.
-func (m *ScopeManager) ForkIsolated(parentID, childOwnerID string, snapshot any, sb sandbox.Sandbox) (*Scope, error) {
-	return m.forkScope(parentID, childOwnerID, snapshot, true, sb)
+func (m *ScopeManager) ForkIsolated(parentID, childOwnerID string, snapshot any, sb sandbox.Sandbox, opts ...ForkOptions) (*Scope, error) {
+	return m.forkScope(context.Background(), parentID, childOwnerID, snapshot, true, sb, opts)
 }
 
-// forkScope is the shared fork path: resolve the parent, capture the fork
-// baseline outside the registry lock, then register atomically. isolated
+// ForkFromOutput creates an isolated child from a sealed output: the output's
+// frozen workspace seeds the child's sandbox and is also the settlement
+// baseline, and the output's snapshot becomes the child's fork snapshot.
+// Nothing is captured from the parent, so the parent cannot move between the
+// baseline decision and the seed — that window is the reason this convenience
+// exists.
+//
+// opts override the output-derived defaults field by field: a non-zero
+// Baseline replaces the output state (for example, settling a child seeded
+// from an output against the parent's current tree), a non-zero Seed replaces
+// the seed, and a non-nil Snapshot replaces the output's snapshot.
+//
+// sb must be provided and owned by the caller; ForkFromOutput applies the
+// seed to it.
+func (m *ScopeManager) ForkFromOutput(ctx context.Context, parentID, childOwnerID string, out *RetainedOutput, sb sandbox.Sandbox, opts ...ForkOptions) (*Scope, error) {
+	if out == nil {
+		return nil, fmt.Errorf("fork: a retained output is required")
+	}
+	if sb == nil {
+		return nil, fmt.Errorf("fork from output %s: an isolated sandbox is required", out.ID())
+	}
+	base := out.Workspace()
+	if base.Backend == "" {
+		return nil, fmt.Errorf("fork from output %s: the output has no workspace state", out.ID())
+	}
+	opt, err := singleForkOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	if opt.Baseline.Backend == "" {
+		opt.Baseline = base
+	}
+	if opt.Seed.Backend == "" {
+		opt.Seed = base
+	}
+	if opt.Snapshot == nil {
+		if snapshot := out.Snapshot(); snapshot != nil {
+			opt.Snapshot = snapshot
+		}
+	}
+	return m.forkScope(ctx, parentID, childOwnerID, nil, true, sb, []ForkOptions{opt})
+}
+
+// forkScope is the shared fork path: resolve the parent, decide the baseline,
+// apply any seed outside the registry lock, then register atomically. isolated
 // forks record their own substrate (sb may be nil for shared forks).
-func (m *ScopeManager) forkScope(parentID, childOwnerID string, snapshot any, isolated bool, sb sandbox.Sandbox) (*Scope, error) {
+func (m *ScopeManager) forkScope(ctx context.Context, parentID, childOwnerID string, snapshot any, isolated bool, sb sandbox.Sandbox, opts []ForkOptions) (*Scope, error) {
+	opt, err := singleForkOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	if opt.Snapshot != nil {
+		snapshot = opt.Snapshot
+	}
+
+	childID := fmt.Sprintf("scope:%s", childOwnerID)
 	m.mu.RLock()
 	parent, ok := m.scopes[parentID]
+	_, childExists := m.scopes[childID]
 	m.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("parent scope %s not found", parentID)
 	}
-
-	baseline, err := parent.forkBaseline()
-	if err != nil {
-		return nil, err
+	// Check before applying a seed: a duplicate owner must fail without
+	// mutating the caller's sandbox. The check is repeated under the write
+	// lock below to close the race with a concurrent fork.
+	if childExists {
+		return nil, fmt.Errorf("scope %s already exists", childID)
 	}
 
+	baseline := opt.Baseline
+	if baseline.Backend == "" {
+		baseline, err = parent.forkBaseline()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// A seed belongs to the child's own substrate. Applying it here, before
+	// the fork fact and outside the registry lock, is what removes the
+	// host's capture-then-Apply window: a failed apply leaves no child
+	// record, and a slow backend does not stall the manager.
+	if opt.Seed.Backend != "" {
+		if !isolated || sb == nil {
+			return nil, fmt.Errorf("fork scope %s: a seed requires an isolated fork with its own sandbox", childOwnerID)
+		}
+		if err := sb.Apply(ctx, opt.Seed); err != nil {
+			return nil, fmt.Errorf("fork scope %s: apply seed: %w", childOwnerID, err)
+		}
+	}
+
+	// The address is read after Apply: a snapshot-backed backend may rebind
+	// its identity when it applies a state, and the fork record must name
+	// the substrate the child actually owns.
 	backend := ""
 	address := ""
 	if isolated && sb != nil {
@@ -130,7 +219,6 @@ func (m *ScopeManager) forkScope(parentID, childOwnerID string, snapshot any, is
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	childID := fmt.Sprintf("scope:%s", childOwnerID)
 	if _, exists := m.scopes[childID]; exists {
 		return nil, fmt.Errorf("scope %s already exists", childID)
 	}
