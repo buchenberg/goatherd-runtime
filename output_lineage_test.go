@@ -223,9 +223,8 @@ func TestLineage_SurvivesRecovery(t *testing.T) {
 	}
 }
 
-// TestRecover_MergeReviewPair covers a proposal recorded before a restart:
-// recovery exposes it with its fact id so the host can still record the
-// decision, and the live manager reflects the decision immediately.
+// TestLinkSupersededOutputs_LastInScanOrderWins pins the deterministic rule
+// for multiple superseders: the last output in scan order wins.
 func TestLinkSupersededOutputs_LastInScanOrderWins(t *testing.T) {
 	a := &RetainedOutput{id: "out:chain:a"}
 	b := &RetainedOutput{id: "out:chain:b", supersedes: a.id}
@@ -241,6 +240,9 @@ func TestLinkSupersededOutputs_LastInScanOrderWins(t *testing.T) {
 	}
 }
 
+// TestRecover_MergeReviewPair covers a proposal recorded before a restart:
+// recovery exposes it with its fact id so the host can still record the
+// decision, and the live manager reflects the decision immediately.
 func TestRecover_MergeReviewPair(t *testing.T) {
 	store, path := fileStore(t)
 	mgr := NewScopeManager(store)
