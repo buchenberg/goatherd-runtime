@@ -53,6 +53,86 @@ type MergeProposal struct {
 	Diff string
 }
 
+// MergeDecision is the recorded outcome of a merge review.
+type MergeDecision struct {
+	// Approved reports whether the reviewer allowed the work through.
+	Approved bool
+	// Reason is the reviewer's denial text (empty on approval).
+	Reason string
+	// Action names what the caller did: "selected", "applied", "discarded",
+	// "released", or a host-defined verb.
+	Action string
+}
+
+// MergeReview is the review provenance recorded for one child scope: the
+// proposal and, once the reviewer has decided, its outcome. Recovery rebuilds
+// it from the proposal record on the child's path and the decision record on
+// the parent's, so a host can record a decision after a restart.
+//
+// The proposal's Diff is not part of the record (only diff_digest is), so a
+// recovered review carries the change list without per-file diff text.
+type MergeReview struct {
+	Proposal       *MergeProposal
+	ProposedFactID string
+	Decision       *MergeDecision
+}
+
+// MergeReview returns the recorded review provenance for a child scope, or
+// false when no proposal was recorded (or the child did not recover). A
+// review with a nil Decision is open: the host can still call
+// RecordMergeDecision with the returned proposal and ProposedFactID.
+func (m *ScopeManager) MergeReview(childID string) (*MergeReview, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	review, ok := m.reviews[childID]
+	if !ok {
+		return nil, false
+	}
+	out := &MergeReview{ProposedFactID: review.ProposedFactID}
+	if review.Proposal != nil {
+		out.Proposal = cloneMergeProposal(review.Proposal)
+	}
+	if review.Decision != nil {
+		decision := *review.Decision
+		out.Decision = &decision
+	}
+	return out, true
+}
+
+// cloneMergeProposal copies a proposal so live caller mutations cannot change
+// what the manager records.
+func cloneMergeProposal(proposal *MergeProposal) *MergeProposal {
+	if proposal == nil {
+		return nil
+	}
+	cp := *proposal
+	cp.Changes = append([]ProposedChange(nil), proposal.Changes...)
+	return &cp
+}
+
+// recordReview installs or updates the manager's view of a review. Proposal
+// and decision pointers are copied so the caller's values cannot mutate it.
+func (m *ScopeManager) recordReview(childID string, proposal *MergeProposal, factID string, decision *MergeDecision) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	review, ok := m.reviews[childID]
+	if !ok {
+		review = &MergeReview{Proposal: cloneMergeProposal(proposal), ProposedFactID: factID}
+		m.reviews[childID] = review
+	} else {
+		if review.Proposal == nil {
+			review.Proposal = cloneMergeProposal(proposal)
+		}
+		if review.ProposedFactID == "" {
+			review.ProposedFactID = factID
+		}
+	}
+	if decision != nil {
+		stored := *decision
+		review.Decision = &stored
+	}
+}
+
 // MergeReviewer decides whether a proposed merge may proceed. Approve by
 // returning nil; deny by returning an error whose text becomes the denial
 // reason recorded in the trace and carried on SupervisorDeniedError.
@@ -153,7 +233,12 @@ func (m *ScopeManager) RecordMergeProposal(ctx context.Context, proposal *MergeP
 	if child.State() != ScopeActive {
 		return "", fmt.Errorf("cannot record a proposal for scope %s in state %s", proposal.ChildScopeID, child.State())
 	}
-	return recordMergeProposed(ctx, child, proposal)
+	factID, err := recordMergeProposed(ctx, child, proposal)
+	if err != nil {
+		return "", err
+	}
+	m.recordReview(child.ID(), proposal, factID, nil)
+	return factID, nil
 }
 
 // RecordMergeDecision records the review outcome on the parent's owner path,
@@ -182,7 +267,16 @@ func (m *ScopeManager) RecordMergeDecision(ctx context.Context, proposal *MergeP
 	if parent == nil {
 		return "", fmt.Errorf("scope %s has no parent (root scope)", proposal.ChildScopeID)
 	}
-	return recordSupervisorDecision(ctx, parent, proposal, approved, reason, action, proposedFactID)
+	factID, err := recordSupervisorDecision(ctx, parent, proposal, approved, reason, action, proposedFactID)
+	if err != nil {
+		return "", err
+	}
+	m.recordReview(proposal.ChildScopeID, proposal, proposedFactID, &MergeDecision{
+		Approved: approved,
+		Reason:   reason,
+		Action:   action,
+	})
+	return factID, nil
 }
 
 // recordMergeProposed appends the proposal record on the child's owner path.
@@ -255,10 +349,11 @@ func recordSupervisorDecision(
 	parent.mu.RUnlock()
 
 	payload := map[string]any{
-		"approved":     approved,
-		"child_scope":  proposal.ChildScopeID,
-		"action":       action,
-		"change_count": len(proposal.Changes),
+		"approved":         approved,
+		"child_scope":      proposal.ChildScopeID,
+		"action":           action,
+		"change_count":     len(proposal.Changes),
+		"proposed_fact_id": proposedFactID,
 	}
 	if reason != "" {
 		payload["reason"] = reason
