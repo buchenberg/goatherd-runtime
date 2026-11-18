@@ -1,8 +1,8 @@
 # goatherd-runtime
 
-The runtime layer of the Shepherd kernel: the execution scope tree, the merge gate, settlement and recovery, the sandbox backends, the substrate/materialize layer, the task runtime, and the supervision rules engine.
+The runtime layer of the [`Goatherd kernel`](https://github.com/buchenberg/goatherd-kernel): the execution scope tree, the merge gate, settlement and recovery, the sandbox backends, the substrate/materialize layer, the task runtime, and the supervision rules engine.
 
-It composes [`github.com/buchenberg/goatherd-kernel`](https://github.com/buchenberg/goatherd-kernel) — the trace kernel (record model, canonical JSON, SQLite store, effect bus, projections) — and adds the primitives that *use* a trace: branching execution, workspace capture/restore, reversible settlement, and supervised task handles.
+It composes the trace kernel (record model, canonical JSON, SQLite store, effect bus, projections) — and adds the primitives that *use* a trace: branching execution, workspace capture/restore, reversible settlement, and supervised task handles.
 
 > **Module scope.** The kernel module owns the durable trace: the record model, the store, the effect bus, and the execution/history projections. This module owns everything above it. Trace types (`trace.Record`, `trace.SQLiteTraceStore`, `trace.WorkspaceState`, …) come from `github.com/buchenberg/goatherd-kernel` (package `trace`, the kernel's module root).
 
